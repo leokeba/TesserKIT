@@ -117,7 +117,7 @@ void Network::describe(tesser::Object& o) {
                          .persist()
                          .ui("advanced");
 
-    auto& w = o.object("wifi").label("Wi-Fi");
+    auto& w = o.object("wifi").label("Wi-Fi").ui("card");
     auto& st = w.object("status").label("Connection");
     staStatus_ = &st;
     st.value("connected", static_cast<const bool&>(linkUp_));
@@ -147,7 +147,8 @@ void Network::describe(tesser::Object& o) {
          scanWaiters_.push_back(std::move(p));
          scanWanted_ = true;
      }).label("Scan");
-    // Its own card: the access point is set up apart from the station.
+    // Cards of their own, like Wi-Fi: the access point is set up apart from
+    // the station.
     auto& ap = o.object("ap").label("Access point").ui("form").ui("card");
     ap.value("mode", apMode_, {"always", "fallback", "never"})
         .persist()
