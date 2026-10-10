@@ -25,14 +25,7 @@ Check checkIp(const std::string& text) {
 
 // An IPv4 field of a static configuration: empty, or a.b.c.d.
 void ipField(tesser::Object& o, const char* name, const char* label, std::string& field) {
-    o.value(name, [&field] { return field; },
-            [&field](const std::string& v) -> Check {
-                Check c = checkIp(v);
-                if (c.isOk()) field = v;
-                return c;
-            })
-        .label(label)
-        .ui("visibleWhen", "enabled=true");
+    o.value(name, field).validate(checkIp).label(label).ui("visibleWhen", "enabled=true");
 }
 
 bool validHostname(const std::string& h) {
@@ -115,14 +108,12 @@ void Network::describe(tesser::Object& o) {
     Device& dev = dev_;
     o.label("Network").writeAccess(Access::Admin);
     hostnameNode_ = &o.value("hostname", [&dev] { return dev.hostname(); },
-                             [&dev](const std::string& h) -> Check {
-                                 if (!validHostname(h)) {
-                                     return Check::fail(Status::InvalidValue,
-                                                        "1 to 32 letters, digits and inner hyphens");
-                                 }
-                                 dev.hostname(h.c_str());
-                                 return Check::ok();
-                             })
+                             [&dev](const std::string& h) { dev.hostname(h.c_str()); })
+                         .validate([](const std::string& h) {
+                             return validHostname(h)
+                                        ? Check::ok()
+                                        : Check::fail(Status::InvalidValue, "1 to 32 letters, digits and inner hyphens");
+                         })
                          .persist()
                          .ui("advanced");
 
@@ -162,14 +153,12 @@ void Network::describe(tesser::Object& o) {
         .ui("labels", "Always,When offline,Never");
     apNodes_.clear();
     apNodes_.push_back(&ap.value("ssid", apSsid_).persist().label("Name").ui("placeholder", "the hostname"));
-    apNodes_.push_back(&ap.value("password", [this] { return apPassword_; },
-                                 [this](const std::string& v) -> Check {
-                                     if (!v.empty() && (v.size() < 8 || v.size() > 63)) {
-                                         return Check::fail(Status::InvalidValue, "empty, or 8 to 63 characters");
-                                     }
-                                     apPassword_ = v;
-                                     return Check::ok();
-                                 })
+    apNodes_.push_back(&ap.value("password", apPassword_)
+                           .validate([](const std::string& v) {
+                               return v.empty() || (v.size() >= 8 && v.size() <= 63)
+                                          ? Check::ok()
+                                          : Check::fail(Status::InvalidValue, "empty, or 8 to 63 characters");
+                           })
                            .secret()
                            .persist()
                            .ui("placeholder", "none: an open network"));

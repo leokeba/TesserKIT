@@ -18,6 +18,7 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_rom_sys.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -149,6 +150,7 @@ public:
 #endif
     }
     void restart() override { esp_restart(); }
+    void random(uint8_t* out, size_t len) override { esp_fill_random(out, len); }
     bool spawn(const char* name, uint32_t stackBytes, std::function<void()> fn) override {
         auto* arg = new std::function<void()>(std::move(fn));
         if (xTaskCreate(taskMain, name, stackBytes, arg, 2, nullptr) == pdPASS) return true;

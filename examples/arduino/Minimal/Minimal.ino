@@ -4,6 +4,10 @@
 // Add your Wi-Fi network there, then find the device at http://minimal-xxxx.local/.
 #include <TesserKIT.h>
 
+#if __has_include("secrets.h")
+#include "secrets.h"  // gitignored: WIFI_SSID, WIFI_PASSWORD for development
+#endif
+
 struct Lamp {
     bool on = false;
     int brightness = 128;
@@ -20,9 +24,14 @@ tesserkit::Network net(dev);
 tesserkit::Time timekeeper(dev);
 tesserkit::Firmware firmware(dev);
 tesserkit::Backup backup(dev);
+tesserkit::Timers timers(dev);
+tesserkit::Auth auth(dev);  // open until an admin account exists
 
 void setup() {
     Serial.begin(115200);
+#if defined(WIFI_SSID) && defined(WIFI_PASSWORD)
+    net.defaultNetwork(WIFI_SSID, WIFI_PASSWORD);
+#endif
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");
     dev.api().mount("lamp", lamp).label("Lamp");
     dev.onState([](tesserkit::State s) { Serial.printf("state: %s\n", tesserkit::toString(s)); });

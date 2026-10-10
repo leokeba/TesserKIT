@@ -5,6 +5,7 @@
 
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
+#include "esp_partition.h"
 
 namespace tesserkit {
 
@@ -23,14 +24,19 @@ public:
         abort();
         target_ = esp_ota_get_next_update_partition(nullptr);
         if (!target_) return Check::fail(Status::NotAllowed, "no OTA slot");
-        // A known size is erased at once, in 64 KB blocks: a 1 MB upload
-        // took 14 s instead of 25 s erasing sector by sector as it arrived
-        // (ESP32, 2026-10-10). An unknown one is erased as it is written.
+        // A known size is erased in 64 KB blocks just ahead of the bytes
+        // written (write()): a 1 MB upload took 14 s instead of 25 s erasing
+        // sector by sector as it arrived (ESP32, 2026-10-10), and no erase
+        // starves the idle task long enough for the task watchdog, as erasing
+        // a whole image at once does. An unknown size is erased as written.
+        size_ = size > target_->size ? target_->size : size;
+        erased_ = size_ ? kBlock : 0;
 #ifdef OTA_WITH_SEQUENTIAL_WRITES
-        esp_err_t err = esp_ota_begin(target_, size ? size : OTA_WITH_SEQUENTIAL_WRITES, &handle_);
+        esp_err_t err = esp_ota_begin(target_, size_ ? kBlock : OTA_WITH_SEQUENTIAL_WRITES, &handle_);
 #else
-        esp_err_t err = esp_ota_begin(target_, size ? size : OTA_SIZE_UNKNOWN, &handle_);
+        esp_err_t err = esp_ota_begin(target_, size_ ? kBlock : OTA_SIZE_UNKNOWN, &handle_);
 #endif
+        written_ = 0;
         if (err != ESP_OK) {
             handle_ = 0;
             return Check::fail(Status::Internal, "couldn't start the update");
@@ -39,6 +45,14 @@ public:
     }
     Check write(const uint8_t* data, size_t len) override {
         if (!handle_) return Check::fail(Status::Internal, "no update in progress");
+        while (size_ && written_ + len > erased_ && erased_ < target_->size) {
+            uint32_t n = target_->size - erased_ < kBlock ? target_->size - erased_ : kBlock;
+            if (esp_partition_erase_range(target_, erased_, n) != ESP_OK) {
+                return Check::fail(Status::Internal, "flash erase failed");
+            }
+            erased_ += n;
+        }
+        written_ += len;
         esp_err_t err = esp_ota_write(handle_, data, len);
         if (err == ESP_ERR_OTA_VALIDATE_FAILED) return Check::fail(Status::InvalidValue, "not an app image for this chip");
         if (err == ESP_ERR_INVALID_SIZE) return Check::fail(Status::TooLarge, "image larger than the slot");
@@ -81,11 +95,22 @@ public:
     }
 
 private:
+    static constexpr uint32_t kBlock = 0x10000;  // erased at once
     esp_ota_handle_t handle_ = 0;
+    uint32_t size_ = 0;     // announced; 0: unknown, erased by esp_ota_write
+    uint32_t erased_ = 0;   // bytes of the slot erased
+    uint32_t written_ = 0;
     const esp_partition_t* target_ = nullptr;
 };
 
 }  // namespace
+
+#if defined(ARDUINO)
+// Arduino-ESP32 confirms a new image at boot unless the sketch defines this:
+// Firmware confirms it itself once the device has been online (DESIGN.md
+// §5.4), so a crashing update still rolls back.
+extern "C" bool verifyRollbackLater() { return true; }
+#endif
 
 Ota* espOta() {
     static EspOta ota;

@@ -141,7 +141,7 @@ Platform callbacks (Wi-Fi events, SNTP sync) only post to a small queue that the
 
 ## 5. Services
 
-Each service lists its tree, its behaviour and its access levels (§7). "Admin" means the node's `writeAccess(Admin)`; reads are public unless stated. Persisted nodes are marked *(p)*.
+Each service lists its tree, its behaviour and its access levels (§7). "Admin" means the node's `writeAccess(Admin)`; reads are public unless stated. Persisted nodes are marked *(p)*. Settings are checked with TesserAPI validators (`.validate()`), before anything is applied, so a refused patch, form or list write changes nothing, and a boot load or a restore skips what no longer passes.
 
 ### 5.1 System
 
@@ -247,9 +247,9 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
     update      action: download the latest release's asset
 ```
 
-- **Upload:** a `PUT /api/sys/firmware/image` with the raw `.bin` as body, streamed to the next OTA slot through a TesserAPI file node (§14). TesserUI's file widget shows progress. The image header is checked on the first chunk (wrong chip or not an app image is `invalid_value` before anything is written). A completed upload sets the boot slot and restarts after the reply. The announced size is erased at once, in 64 KB blocks: a 1 MB image uploads in about 14 s on a classic ESP32 (25 s erasing sector by sector as it arrives), 4 s of it erasing.
+- **Upload:** a `PUT /api/sys/firmware/image` with the raw `.bin` as body, streamed to the next OTA slot through a TesserAPI file node (§14). TesserUI's file widget shows progress. The image header is checked on the first chunk (wrong chip or not an app image is `invalid_value` before anything is written). A completed upload sets the boot slot and restarts after the reply. The announced size is erased in 64 KB blocks just ahead of the bytes written: a 1 MB image uploads in 12 to 15 s on a classic ESP32 (25 s erasing sector by sector as it arrives). Erasing the whole image at once is as fast but keeps the idle task from running for over 5 s, which trips the task watchdog (a panic on Arduino).
 - **Download** (`fw.downloads()`, before `begin()`): `esp_http_client` in a task of its own (8 KB of stack), following redirects (release assets redirect to a CDN), streaming through the same checks as an upload, with progress in `progress`. HTTPS uses ESP-IDF's certificate bundle (`CONFIG_MBEDTLS_CERTIFICATE_BUNDLE`). TLS and the client cost about 130 KB of flash, hence the opt-in: without `downloads()`, neither the action nor the client is linked. The action replies at once; completion shows in `state`.
-- **Rollback:** with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, a new image starts as `pending`. It is confirmed automatically once the device has been `online` (or serving, without Wi-Fi) for 60 s, or by `confirm`. A crash or reset before that boots the previous image. `rollback` makes the previous image boot next; it then starts `pending` too. ESP-IDF refuses an update while the running image is unconfirmed, so starting one confirms it: it is evidently working.
+- **Rollback:** with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, a new image starts as `pending`. It is confirmed automatically once the device has been `online` (or serving, without Wi-Fi) for 60 s, or by `confirm`. A crash or reset before that boots the previous image. `rollback` makes the previous image boot next; it then starts `pending` too. ESP-IDF refuses an update while the running image is unconfirmed, so starting one confirms it: it is evidently working. Arduino-ESP32 confirms every new image at boot unless the application defines `verifyRollbackLater()`; TesserKIT defines it (returning true) whenever Firmware is linked, so the same rule applies there.
 - **GitHub releases** *(later)*: the device asks GitHub's API for the latest release (so the browser needs no internet, unlike ESP32-sveltekit), compares its tag with `version` (semver), and installs the asset whose name matches the pattern with `{target}` replaced (`esp32`, `esp32c3`...).
 - **Fleets:** a gateway reaches its Wi-Fi peers' `/sys/firmware/download` like any other path (`/peers/<name>/sys/firmware/download`), so "update all" is one write per peer, without the browser fanning out (spin-seq's Remotes page). NowTP-only peers need NowTP streaming *(later, §14)*.
 
@@ -275,12 +275,14 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
   days          integer bitmask, bit 0 = Monday, ui.widget "flags", ui.labels "Mon,Tue,Wed,Thu,Fri,Sat,Sun"
   path          string: the node to set or call
   value         string: its JSON value or argument ("null" for an action without one)
+  last          string, read-only: the last run's result
 /sys/timersCatchUp *(p)  boolean: at boot, run each timer's most recent missed occurrence of today
 ```
 
 - At the given local time on the given days, a timer performs `set <path> <value>` through the API, as an Admin local client, exactly as if a client had sent it. Its result is logged and kept in a read-only `last` (`"ok"` or the error).
-- A write to a timer checks that `path` resolves and that `value` parses; whether the value fits the node is checked when it runs (the node may accept different values by then).
-- Timers wait for a valid time (§5.3). They are checked every second, and a time change (DST, a sync) never runs a timer twice in one minute.
+- A write to a timer checks that `path` resolves and that `value` parses; whether the value fits the node is checked when it runs (the node may accept different values by then). Below a list, an array or a remote node, the path can't be checked further and is accepted. The check applies once the service has started: a boot load keeps stored timers whose node the application adds after `begin()`, and a run then reports `not_found`.
+- Timers wait for a valid time (§5.3). They are checked every second, and a time change (DST, a sync) never runs a timer twice in one minute: a run is remembered by its local date and minute.
+- Factory defaults: `timers.add(timer)`, `timers.catchUp(true)`.
 - This generalizes spin-seq's daily timers: any action or value of the tree can be scheduled, not just sequencer commands.
 
 ### 5.7 Auth
@@ -298,9 +300,10 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 
 - **Levels:** TesserAPI's access levels (§7): `public`, `user`, `admin`. A node requires its ancestors' levels too, so `/sys/auth` itself stays public and only `users` is protected. Without the Auth service, every client is Admin (the device is open, as ESP32-sveltekit with `FT_SECURITY=0`).
 - **The UI** finds `login` and `whoami` by their `ui.auth` hints (TesserUI §7.4): its sign-in dialog shows `login`'s fields, and it asks `whoami` for its level to disable what it can't change.
-- **Tokens** are stateless: `<name>.<expiry>.<HMAC-SHA256 of both, truncated to 16 bytes, hex>`, signed with a random key kept in the persisted state. They survive restarts; `logoutAll` revokes them all. The device registers a token check with TesserAPI (`api.authenticate()`), so HTTP and WebSocket clients present it as `Authorization: Bearer` or `?token=` (TesserAPI §13).
-- **First boot:** until an admin user exists, every client is Admin and `/sys/auth/open` is `true`, which TesserUI shows as a warning card ("Set an admin password"). A compile-time default (`dev.defaultAdmin("admin", "secret")`) avoids the open window for devices shipped to others.
-- **Brute force:** after 5 failed logins, `login` answers `busy` for 30 s.
+- **Passwords** are stored as `$pbkdf2-sha256$<iterations>$<salt>$<hash>` (2000 iterations, 16-byte random salt): a sign-in takes about 280 ms on a classic ESP32, network included. Writing a password stores its hash; writing a stored hash (a restored backup) keeps it. SHA-256, HMAC and PBKDF2 are TesserKIT's own (`crypto.h`, checked against the RFC vectors), so the host tests run the chip's code.
+- **Tokens** are stateless: `<name>.<expiry>.<HMAC-SHA256 of both, truncated to 16 bytes, hex>`, signed with a random key kept in the persisted state (`/sys/auth/key`, a hidden secret). They survive restarts; `logoutAll` revokes them all, and removing an account revokes its. The expiry is the clock's time plus `sessionHours`; a token issued while the clock isn't set has none (0) and lasts until `logoutAll`. The device registers a token check with TesserAPI (`api.authenticate()`), so HTTP and WebSocket clients present it as `Authorization: Bearer` or `?token=` (TesserAPI §13).
+- **First boot:** until an admin user exists, every client is Admin and `/sys/auth/open` is `true` (hidden, for conditions); `openWarning`, a read-only text with `ui.style "warning"` and `visibleWhen "open=true"`, is TesserUI's warning callout. A factory default account (`auth.defaultAdmin("admin", "secret")`, before `begin()`) avoids the open window for devices shipped to others.
+- **Brute force:** after 5 failed logins, `login` answers `busy` for 30 s. An unknown name costs a hash like a wrong password, so timing doesn't tell which names exist.
 - Passwords are never readable: secret values render as `null` (TesserAPI §4.1). ESP32-sveltekit returned them in plain text.
 - Serial clients stay Admin (physical access). NowTP peers are Admin when trusted (TesserAPI §13): a gateway's own access checks apply to its browser clients before it forwards.
 
@@ -467,7 +470,7 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 
 1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), time and DST, timers (catch-up, no double runs), firmware upload checks, backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge's topic mapping.
 2. **Golden schemas:** each service's schema with its hints, checked in as `fixtures/*.json`. TesserUI renders them in its golden-model tests, so a hint change shows as a diff in both repositories.
-3. **On target:** `examples/idf/minimal`, driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. *(later)* a test firmware with every service and serial scripts.
+3. **On target:** `examples/idf/minimal` (and `examples/arduino/Minimal`, with `--app /lamp`), driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, sign-in with tokens over HTTP and WebSocket, a timer running, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. *(later)* a test firmware with every service and serial scripts.
 4. **CI:** host tests, ESP-IDF builds (5.1, 5.4, 5.5, latest × ESP32, ESP32-C3, ESP32-S3), Arduino-ESP32 3.x builds of the examples, the footprint budgets.
 
 ## 13. Packaging
@@ -532,8 +535,8 @@ TesserKIT/
 | Phase | Content | Acceptance |
 |---|---|---|
 | 0 | TesserAPI follow-ups of §14 | Host-tested; the HTTP and WebSocket parts checked on hardware. |
-| 1 | Device, System, Network, Time, Firmware (upload, download, rollback), Backup; the TesserUI widgets they need | A fresh classic ESP32 is provisioned from a phone through the captive portal, updated from the browser, rolled back after a crashing image, backed up and restored. Footprint within §11, compared with ESP32-sveltekit. |
-| 2 | Timers, Auth | spin-seq's timers and a locked-down device. |
+| 1 *(done)* | Device, System, Network, Time, Firmware (upload, download, rollback), Backup; the TesserUI widgets they need | A fresh classic ESP32 is provisioned from a phone through the captive portal, updated from the browser, rolled back after a crashing image, backed up and restored. Footprint within §11, compared with ESP32-sveltekit. |
+| 2 *(done)* | Timers, Auth | spin-seq's timers and a locked-down device. |
 | 3 | helionext on TesserKIT | Every helionext page usable, with custom elements only for the keyframes and the sky. |
 | 4 | spin-seq on TesserKIT, NowTP channel following and pairing, shared clock | A master and three remotes run a synchronized sequence; fleet update through the master. |
 | 5 | Mqtt, GitHub releases, Battery, Sleep, Ethernet, Log | *(later)* |

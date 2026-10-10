@@ -2,7 +2,7 @@
 """End-to-end checks of a TesserKIT device over HTTP and WebSocket.
 
 Usage:
-  python3 test/e2e_device.py http://<ip> [--image app.bin] [--crash-image crash.bin] [--only test_a,test_b]
+  python3 test/e2e_device.py http://<ip> [--image app.bin] [--crash-image crash.bin] [--only test_a,test_b] [--app /led]
 
 The device runs examples/idf/minimal (or anything with the same services and
 an application value at /led/brightness). It restarts several times. With
@@ -23,6 +23,7 @@ import urllib.request
 
 PASS = 0
 FAIL = 0
+APP = '/led'  # the application's object, with `on` and `brightness`
 
 
 def check(name, ok, detail=''):
@@ -41,11 +42,16 @@ class Device:
         self.base = base.rstrip('/')
         self.host = self.base.split('://', 1)[1].split('/')[0]
 
+    token = None  # sent as Authorization: Bearer when set
+
     def request(self, method, path, body=None, raw=False, headers=None, timeout=20):
+        headers = dict(headers or {})
+        if self.token:
+            headers['Authorization'] = 'Bearer ' + self.token
         data = None
         if body is not None:
             data = body if isinstance(body, (bytes, bytearray)) else json.dumps(body).encode()
-        req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers or {})
+        req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 payload = r.read()
@@ -230,12 +236,12 @@ def test_time(d):
 def test_persistence(d):
     level = random.randint(1, 250)
     old_tz = d.value('/sys/time/tz')
-    check('set_value', d.set('/led/brightness', level)[0] == 200)
+    check('set_value', d.set(APP + '/brightness', level)[0] == 200)
     check('set_setting', d.set('/sys/time/tz', 'EST5EDT')[0] == 200)
     time.sleep(3)  # the debounce
     check('restart', d.set('/sys/restart')[0] == 200)
     check('restart_back', d.wait_restart() and d.wait_online())
-    check('persisted_value', d.value('/led/brightness') == level, d.value('/led/brightness'))
+    check('persisted_value', d.value(APP + '/brightness') == level, d.value(APP + '/brightness'))
     check('persisted_setting', d.value('/sys/time/tz') == 'EST5EDT')
     check('reset_reason', d.value('/sys/status/resetReason') == 'software', d.value('/sys/status/resetReason'))
     d.set('/sys/time/tz', old_tz)
@@ -243,17 +249,17 @@ def test_persistence(d):
 
 def test_backup(d):
     status, headers, raw = d.get('/sys/backup/settings', raw=True)
-    check('backup_download', status == 200 and b'"led"' in raw, raw[:200])
+    check('backup_download', status == 200 and ('"' + APP[1:] + '"').encode() in raw, raw[:200])
     disposition = headers.get('Content-Disposition', '')
     check('backup_filename', '-settings.json' in disposition, disposition)
     backup = json.loads(raw)
     check('backup_has_secrets', any(n.get('password') for n in backup['sys']['network']['wifi']['networks']))
     d.set('/sys/backup/restartAfter', False)
-    backup['led']['brightness'] = 42
-    backup['led']['gone'] = 1
+    backup[APP[1:]]['brightness'] = 42
+    backup[APP[1:]]['gone'] = 1
     status, _, body = d.request('PUT', '/api/sys/backup/settings', json.dumps(backup).encode())
-    check('restore', status == 200 and body == {'skipped': ['/led/gone'], 'restart': False}, (status, body))
-    check('restored_value', d.value('/led/brightness') == 42)
+    check('restore', status == 200 and body == {'skipped': [APP + '/gone'], 'restart': False}, (status, body))
+    check('restored_value', d.value(APP + '/brightness') == 42)
     status, _, body = d.request('PUT', '/api/sys/backup/settings', b'not json')
     check('restore_garbage', status == 400, (status, body))
     d.set('/sys/backup/restartAfter', True)
@@ -273,6 +279,59 @@ def test_coredump(d):
     if present is False:
         status, _, _ = d.get('/sys/coredump', raw=True)
         check('coredump_none', status == 404, status)
+
+
+def test_auth(d):
+    check('auth_open', d.value('/sys/auth/open') is True)
+    status, _, body = d.request('PUT', '/api/sys/auth/users', [{'name': 'e2e', 'password': 'e2e-pass', 'role': 'admin'}])
+    check('auth_add_admin', status == 200, (status, body))
+    check('auth_closed', d.value('/sys/auth/open') is False)
+    status, _, _ = d.set('/sys/restart')
+    check('auth_needs_token', status == 403, status)
+    status, _, body = d.set('/sys/auth/login', {'name': 'e2e', 'password': 'nope'})
+    check('auth_wrong_password', status == 403, (status, body))
+    start = time.time()
+    status, _, body = d.set('/sys/auth/login', {'name': 'e2e', 'password': 'e2e-pass'})
+    print(f'     login took {(time.time() - start) * 1000:.0f} ms')
+    check('auth_login', status == 200 and body['access'] == 'admin' and body['token'].startswith('e2e.'), (status, body))
+    d.token = body.get('token') if status == 200 else None
+    check('auth_whoami', d.set('/sys/auth/whoami')[2] == {'access': 'admin'})
+    check('auth_users_hidden_without_token', 'users' not in (Device(d.base).value('/sys/auth') or {}))
+    try:
+        ws = WebSocket(d.host, path='/ws?token=' + (d.token or ''))
+        ws.send({'id': 1, 'op': 'get', 'path': '/sys/auth/users'})
+        m = ws.recv()
+        check('auth_websocket_token', m.get('status') == 'ok', m)
+        ws.close()
+    except OSError as e:
+        check('auth_websocket_token', False, e)
+    # Open again for the other tests.
+    status, _, body = d.request('PUT', '/api/sys/auth/users', [])
+    check('auth_reopen', status == 200 and d.value('/sys/auth/open') is True, (status, body))
+    d.token = None
+
+
+def test_timers(d):
+    # Due at the next minute, local time.
+    now = d.value('/sys/time/now')  # "2026-10-10T20:11:57+02:00"
+    h, m, sec = int(now[11:13]), int(now[14:16]), int(now[17:19])
+    if sec > 50:  # too close: aim for the one after
+        time.sleep(61 - sec)
+        now = d.value('/sys/time/now')
+        h, m = int(now[11:13]), int(now[14:16])
+    m += 1
+    h, m = (h + m // 60) % 24, m % 60
+    target = not d.value(APP + '/on')
+    status, _, body = d.request('PUT', '/api/sys/timers', [
+        {'name': 'e2e', 'time': f'{h:02d}:{m:02d}', 'days': 127, 'path': APP + '/on', 'value': json.dumps(target)}])
+    check('timer_set', status == 200, (status, body))
+    status, _, _ = d.request('PUT', '/api/sys/timers', [{'name': 'bad', 'path': APP + '/nope'}])
+    check('timer_bad_path', status == 404, status)
+    deadline = time.time() + 75
+    while time.time() < deadline and d.value('/sys/timers/e2e/last') != 'ok':
+        time.sleep(1)
+    check('timer_ran', d.value('/sys/timers/e2e/last') == 'ok' and d.value(APP + '/on') == target)
+    d.request('PUT', '/api/sys/timers', [])
 
 
 def upload(d, path):
@@ -327,12 +386,15 @@ def main():
     if '--crash-image' in args:
         crash = args[args.index('--crash-image') + 1]
     only = args[args.index('--only') + 1].split(',') if '--only' in args else None
+    global APP
+    if '--app' in args:
+        APP = args[args.index('--app') + 1]
     d = Device(args[0])
     if not d.wait_online():
         print('device not online')
         return 1
     tests = [test_status, test_ui, test_websocket, test_scan, test_time, test_coredump, test_backup, test_bad_image,
-             test_persistence]
+             test_auth, test_timers, test_persistence]
     for t in tests:
         if not only or t.__name__ in only:
             t(d)

@@ -68,14 +68,12 @@ void Time::describe(tesser::Object& o) {
         .ui("advanced");
     syncedNode_ = &o.value("synced", static_cast<const bool&>(synced_));
     sourceNode_ = &o.value("source", source_, {"none", "sntp", "set", "external"}).readOnly();
-    tzNode_ = &o.value("tz", [this] { return tz_; },
-                       [this](const std::string& v) -> Check {
-                           if (v.empty() || v.size() > 63) {
-                               return Check::fail(Status::InvalidValue, "a POSIX TZ string of 1 to 63 characters");
-                           }
-                           tz_ = v;
-                           return Check::ok();
-                       })
+    tzNode_ = &o.value("tz", tz_)
+                   .validate([](const std::string& v) {
+                       return !v.empty() && v.size() <= 63
+                                  ? Check::ok()
+                                  : Check::fail(Status::InvalidValue, "a POSIX TZ string of 1 to 63 characters");
+                   })
                    .label("Time zone")
                    .writeAccess(Access::Admin)
                    .persist()

@@ -70,6 +70,8 @@ public:
     // False on chips without a sensor.
     virtual bool temperature(float& celsius) = 0;
     virtual void restart() = 0;
+    // Cryptographically random bytes (salts, keys).
+    virtual void random(uint8_t* out, size_t len) = 0;
     // Runs `fn` in a task of its own (downloads), which ends with it.
     virtual bool spawn(const char* name, uint32_t stackBytes, std::function<void()> fn) = 0;
 };

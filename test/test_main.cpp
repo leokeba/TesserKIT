@@ -4,5 +4,7 @@
 #include "time_cases.h"
 #include "firmware_cases.h"
 #include "backup_cases.h"
+#include "auth_cases.h"
+#include "timer_cases.h"
 
 int main(int argc, char** argv) { return check::run(argc > 1 ? argv[1] : nullptr) ? 1 : 0; }

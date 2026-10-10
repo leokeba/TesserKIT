@@ -36,6 +36,10 @@ struct Core : tesserkit::Core {
         return hasSensor;
     }
     void restart() override { restarts++; }
+    uint8_t seed = 1;
+    void random(uint8_t* out, size_t len) override {
+        for (size_t i = 0; i < len; i++) out[i] = static_cast<uint8_t>(seed++ * 37 + 11);
+    }
     bool spawn(const char*, uint32_t, std::function<void()> fn) override;
     void runTasks();
 };

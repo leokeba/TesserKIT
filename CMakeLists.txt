@@ -6,7 +6,10 @@ set(TESSERKIT_CORE_SRCS
     src/tesserkit/network.cpp
     src/tesserkit/time_service.cpp
     src/tesserkit/firmware.cpp
-    src/tesserkit/backup.cpp)
+    src/tesserkit/backup.cpp
+    src/tesserkit/crypto.cpp
+    src/tesserkit/auth.cpp
+    src/tesserkit/timers.cpp)
 
 if(ESP_PLATFORM)
     # TesserAPI and TesserUI are hard dependencies. Their component names

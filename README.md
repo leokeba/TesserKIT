@@ -2,7 +2,7 @@
 
 A device framework for ESP32 firmware with a rich web interface and a small footprint. It provides what every connected device needs besides its own function, network setup, time, firmware updates, backups, users, MQTT and system status, as subtrees of a [TesserAPI](https://github.com/leokeba/TesserAPI) tree, drawn by [TesserUI](https://github.com/leokeba/TesserUI)'s generic renderer with no UI code.
 
-> **Status: phase 1.** Device, System, Network, Time, Firmware and Backup work, on the host (55 tests) and on hardware (classic ESP32, `test/e2e_device.py`). Timers, Auth and Mqtt come next. The specification is [docs/DESIGN.md](docs/DESIGN.md).
+> **Status: phase 2.** Device, System, Network, Time, Firmware, Backup, Timers and Auth work, on the host (73 tests) and on hardware (classic ESP32, ESP-IDF and Arduino, `test/e2e_device.py`). Porting helionext comes next. The specification is [docs/DESIGN.md](docs/DESIGN.md).
 
 ```cpp
 #include <TesserKIT.h>
@@ -13,6 +13,8 @@ tesserkit::Network net(dev);          // Wi-Fi, access point, captive portal, mD
 tesserkit::Time timekeeper(dev);      // SNTP, time zone, set from the browser
 tesserkit::Firmware firmware(dev);    // upload, rollback; firmware.downloads() for URLs
 tesserkit::Backup backup(dev);        // download and restore the settings
+tesserkit::Timers timers(dev);        // daily schedules over the whole tree
+tesserkit::Auth auth(dev);            // accounts, roles, sign-in
 
 void setup() {
     dev.api().mount("heliostat", heliostat);   // the application's own tree
@@ -34,8 +36,10 @@ It aims at most of [ESP32-sveltekit](https://github.com/theelims/ESP32-sveltekit
 | `Time` | `/sys/time` | SNTP, POSIX time zone (the interface picks it from IANA names), set from the browser's clock, external sources (GPS, RTC) |
 | `Firmware` | `/sys/firmware` | Upload with progress, checked for the chip before anything is written; download from a URL (opt-in); confirmation after a minute online, rollback |
 | `Backup` | `/sys/backup` | The persisted state as JSON, secrets included (Admin only), restored leniently across firmware versions |
+| `Timers` | `/sys/timers` | Daily schedules on chosen weekdays: set any value or call any action of the tree at a local time |
+| `Auth` | `/sys/auth` | Accounts with user and admin roles, salted PBKDF2 hashes, stateless signed tokens, sign-in from TesserUI's dialog |
 
-Without the Auth service (phase 2) the device is open: every client is Admin.
+Without the Auth service, or until it holds an admin account, the device is open: every client is Admin.
 
 ## Footprint
 

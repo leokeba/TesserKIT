@@ -9,6 +9,7 @@
 #include "TesserUI.h"
 #endif
 
+#include "tesserkit/auth.h"
 #include "tesserkit/backup.h"
 #include "tesserkit/device.h"
 #include "tesserkit/firmware.h"
@@ -16,3 +17,4 @@
 #include "tesserkit/network.h"
 #include "tesserkit/system.h"
 #include "tesserkit/time_service.h"
+#include "tesserkit/timers.h"

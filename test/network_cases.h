@@ -263,6 +263,9 @@ TEST(network_access_point_settings) {
     CHECK_EQ(r.fake.wifi.ap.channel, 11);
     CHECK_EQ(r.value("/sys/network/ap/password"), "null");
     CHECK_EQ(r.set("/sys/network/ap/channel", "14").status, Status::InvalidValue);
+    // The form's patch is atomic: a bad password leaves the name as it was.
+    CHECK_EQ(r.set("/sys/network/ap", "{\"ssid\":\"Other\",\"password\":\"short\"}").status, Status::InvalidValue);
+    CHECK_EQ(r.value("/sys/network/ap/ssid"), "\"Setup\"");
     rig::Reply s = r.schema("/sys/network/ap");
     CHECK_EQ(at(s.body, "ui/form"), "true");
     CHECK_EQ(at(s.body, "children/password/secret"), "true");

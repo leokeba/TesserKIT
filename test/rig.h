@@ -83,6 +83,27 @@ struct Rig {
         out.done = reply.ended;
         return out;
     }
+    // A request from a client at `level`, as HTTP gives one presenting a
+    // token (Api::tokenAccess()). Not for deferred actions.
+    Reply as(tesser::Access level, Op op, std::string_view path, std::string_view body = {}) {
+        JsonDocument doc;
+        if (!body.empty()) deserializeJson(doc, body.data(), body.size());
+        tesser::Request req;
+        req.op = op;
+        req.path = path;
+        req.body = doc.as<JsonVariantConst>();
+        req.client.access = level;
+        tesser::StringReply reply;
+        dev.api().handle(req, reply);
+        Reply out;
+        out.status = reply.status;
+        out.body = reply.body;
+        out.done = reply.ended;
+        return out;
+    }
+    Reply asToken(std::string_view token, Op op, std::string_view path, std::string_view body = {}) {
+        return as(dev.api().tokenAccess(token), op, path, body);
+    }
     Reply schema(std::string_view path) {
         tesser::Query q;
         q.view = tesser::View::Schema;

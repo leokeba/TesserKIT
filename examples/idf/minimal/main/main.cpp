@@ -1,5 +1,5 @@
 // A TesserKIT device with ESP-IDF: Wi-Fi with a captive portal, time,
-// firmware updates, backups and status under /sys, next to a small
+// firmware updates, backups, timers, accounts and status under /sys, next to a small
 // application tree. Flash it, join the "tesserkit-demo-xxxx" network from a
 // phone, and the interface opens; add your Wi-Fi network there.
 //
@@ -74,6 +74,8 @@ tesserkit::Network net(dev);
 tesserkit::Time timekeeper(dev);
 tesserkit::Firmware firmware(dev);
 tesserkit::Backup backup(dev);
+tesserkit::Timers timers(dev);
+tesserkit::Auth auth(dev);  // open until an admin account exists
 
 }  // namespace
 

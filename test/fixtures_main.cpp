@@ -14,6 +14,8 @@ int main(int argc, char** argv) {
     tesserkit::Time time(r.dev);
     tesserkit::Firmware firmware(r.dev);
     tesserkit::Backup backup(r.dev);
+    tesserkit::Timers timers(r.dev);
+    tesserkit::Auth auth(r.dev);
     if (!r.dev.begin()) return 1;
     rig::Reply s = r.schema("/");
     if (s.status != rig::Status::Ok) return 1;
