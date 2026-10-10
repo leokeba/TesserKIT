@@ -90,10 +90,11 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
 
 ### 3.3 Platform layer
 
-Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces (Wi-Fi, IP and mDNS, SNTP and the clock, OTA partitions, the HTTP client, chip information, restart):
+Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads) and `Coredump`:
 
 - `src/tesserkit/platform/esp/` implements them on ESP-IDF APIs, which Arduino-ESP32 3.x also ships, so one implementation serves both.
 - `test/fake_platform.*` implements them in memory for host tests: a Wi-Fi radio whose scans and connections the test scripts, a clock the test advances, an OTA partition that's a byte vector.
+- **Linked when used:** `Device::platform()` holds a pointer per interface. A service fills the ones it uses with the ESP implementation when the application (or a test) didn't, so an interface whose service isn't instantiated isn't linked. Events from platform tasks (Wi-Fi, SNTP) are posted to the device and handed to the services in its task, under the API lock.
 
 Service code is then plain state machines driven by `tick(nowMs)` and platform callbacks, testable on the host like TesserAPI's core.
 
@@ -116,7 +117,7 @@ New mechanisms go to the lowest layer that can host them, generically. A service
 2. Opens NVS (namespace `tesserkit`, one record per top-level node, §6.1) and loads the persisted state (TesserAPI §12). Values that don't fit any more are skipped with a warning: a firmware update never breaks a boot.
 3. Applies factory defaults (§6.2) to whatever the stored state didn't set.
 4. Starts each service's platform side: Network brings up Wi-Fi, Time starts SNTP, Firmware checks the rollback state.
-5. Starts the HTTP server: the API at `/api`, WebSocket at `/ws`, the UI at `/` and `/ui.js` (TesserUI §9.4), the captive portal's error handler (§5.2). The server's URI handler budget is computed from what's used, never set by hand.
+5. Starts the HTTP server: the API at `/api`, WebSocket at `/ws`, the UI at `/` and `/ui.js` (TesserUI §9.4), the captive portal's error handler (§5.2). The server's URI handler budget is computed from what's used, never set by hand: the API's, the UI's, plus `dev.extraHandlers(n)` (default 4) for the application's own routes and TesserUI assets.
 6. Starts TesserKIT's task.
 
 ### 4.2 Task
@@ -188,17 +189,18 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 ```
 
 **Station:**
-- At start and after a disconnect, it scans and joins the strongest saved network. It retries with backoff (1, 2, 5, 10, 30 s); a scan finds networks that came back.
+- At start and after a disconnect, it scans and joins the strongest saved network in range, then the next ones; when none is in range, it tries every saved network in order (hidden networks don't show in scans). An attempt that gets no answer is abandoned after 10 s. A round that fails is retried with backoff (1, 2, 5, 10, 30 s); a scan finds networks that came back.
 - A write to `networks` reconnects if the current network changed or was removed.
 - `static.enabled` replaces DHCP for that network.
-- `scan` is deferred (TesserAPI §4.2): the reply comes when the scan completes, within TesserAPI's `deferTimeoutMs`.
+- `scan` is deferred (TesserAPI §4.2): the reply comes when the scan completes, within TesserAPI's `deferTimeoutMs`. The radio can't scan while it joins, so a scan requested during an attempt waits for it to end (at most 10 s), and one requested during the join's own scan shares it.
+- `net.txPower(dBm)` caps the transmit power, for boards whose supply browns out at the default 20 dBm.
 
 **Access point:**
 - `fallback`: up when no saved network is joined within 15 s of trying, and down 30 s after the station connects (time for a phone on the AP to follow the device's new address). `always`: always up (AP+STA). `never`: never, except in recovery (below).
 - **Recovery:** with no saved network, the AP comes up whatever the mode, so a fresh device is always reachable.
 - **Captive portal:** while the AP is up and the station isn't connected, a DNS server answers every name with the AP's address, and the HTTP server's 404 handler redirects to `/` (`302`). OS connectivity probes (`/generate_204`, `/hotspot-detect.html`, `/connecttest.txt`, `/ncsi.txt`) thus all land on the UI, so phones open it on joining. This costs no URI handler slot.
 
-**mDNS:** `<hostname>.local`, with `_http._tcp` and TXT records `api=/api`, `ws=/ws`, `version=<version>`, `tesser=1`.
+**mDNS:** `<hostname>.local`, with `_http._tcp` and TXT records `api=/api`, `ws=/ws`, `version=<version>`, `tesser=1`, on ESP-IDF's `mdns` component (about 34 KB of flash). On by default, since it is how a provisioned device is found; `-DTESSERKIT_NO_MDNS` leaves it out, with the `mdns` setting.
 
 **Channels and NowTP:** a station follows its router's channel, and ESP-NOW must share it (TesserAPI §14). Network reports channel changes to `dev.onChannel(fn)`; with NowTP present, the device moves NowTP's channel there. This needs NowTP's channel following (§14). Without a router, the AP's `channel` is the field's ESP-NOW channel.
 
@@ -222,6 +224,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - `set` takes the browser's clock (TesserUI's `$now` hint value): a device without internet gets the time from whoever opens its page. helionext's "Sync Time" button.
 - `clock.external(epochMs)` lets the application feed another source (GPS, RTC); `source` says which one set the clock last. SNTP, when enabled and reachable, wins over `set` but not over `external`.
 - `dev.onTimeSynced(fn)` fires on the first valid time after boot (timers and sun trackers wait for it).
+- SNTP's first request usually goes out before Wi-Fi is up; when the device comes online unsynced, Time asks again at once rather than at SNTP's next retry.
 - The `timezone` widget (TesserUI follow-up, §14) offers IANA names and writes the POSIX string the browser derives from them; until it exists, `tz` is a text field with an example placeholder.
 
 ### 5.4 Firmware
@@ -231,7 +234,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
   version       string            project  string        built  string (date)
   slot          string ("ota_0")  slotSize integer, B
   image         file, Admin, upload only, maxSize = slotSize, type application/octet-stream
-  download      action(string url), Admin: fetch an image over HTTP(S) and install it
+  download      action(string url), Admin: fetch an image over HTTP(S) and install it (with fw.downloads())
   state         enum: idle, receiving, downloading, verifying, rebooting, failed; watched
   progress      integer, %, watched, ui.widget "bar"
   error         string
@@ -245,8 +248,8 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 ```
 
 - **Upload:** a `PUT /api/sys/firmware/image` with the raw `.bin` as body, streamed to the next OTA slot through a TesserAPI file node (§14). TesserUI's file widget shows progress. The image header is checked on the first chunk (wrong chip or not an app image is `invalid_value` before anything is written). A completed upload sets the boot slot and restarts after the reply.
-- **Download:** `esp_https_ota` in a task of its own, with progress in `progress`. HTTPS uses ESP-IDF's certificate bundle (`CONFIG_MBEDTLS_CERTIFICATE_BUNDLE`, about 60 KB of flash), enabled only when `download` is used. The action replies at once; completion shows in `state`.
-- **Rollback:** with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, a new image starts as `pending`. It is confirmed automatically once the device has been `online` (or serving, without Wi-Fi) for 60 s, or by `confirm`. A crash or reset before that boots the previous image.
+- **Download** (`fw.downloads()`, before `begin()`): `esp_http_client` in a task of its own (8 KB of stack), following redirects (release assets redirect to a CDN), streaming through the same checks as an upload, with progress in `progress`. HTTPS uses ESP-IDF's certificate bundle (`CONFIG_MBEDTLS_CERTIFICATE_BUNDLE`). TLS and the client cost about 130 KB of flash, hence the opt-in: without `downloads()`, neither the action nor the client is linked. The action replies at once; completion shows in `state`.
+- **Rollback:** with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, a new image starts as `pending`. It is confirmed automatically once the device has been `online` (or serving, without Wi-Fi) for 60 s, or by `confirm`. A crash or reset before that boots the previous image. `rollback` makes the previous image boot next; it then starts `pending` too. ESP-IDF refuses an update while the running image is unconfirmed, so starting one confirms it: it is evidently working.
 - **GitHub releases** *(later)*: the device asks GitHub's API for the latest release (so the browser needs no internet, unlike ESP32-sveltekit), compares its tag with `version` (semver), and installs the asset whose name matches the pattern with `{target}` replaced (`esp32`, `esp32c3`...).
 - **Fleets:** a gateway reaches its Wi-Fi peers' `/sys/firmware/download` like any other path (`/peers/<name>/sys/firmware/download`), so "update all" is one write per peer, without the browser fanning out (spin-seq's Remotes page). NowTP-only peers need NowTP streaming *(later, §14)*.
 
@@ -259,7 +262,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 ```
 
 - **Download:** `api.persistedState()`, secrets included (it is Admin-only), as `<hostname>-settings.json`.
-- **Restore:** applied with `api.restore(json, &skipped)` (TesserAPI §12): lenient like a boot load, so a backup from an older firmware restores whatever still fits; the reply lists the skipped paths. Every record is saved at once, then the device restarts if `restartAfter`.
+- **Restore:** applied with `api.restore(json, &skipped)` (TesserAPI §12): lenient like a boot load, so a backup from an older firmware restores whatever still fits; the reply (`{"skipped": [...], "restart": bool}`) lists the skipped paths. Every record is saved at once, then the device restarts one second later if `restartAfter` was set when the restore began (the backup's own `restartAfter` applies to the next one).
 - This replaces spin-seq's hand-written export and import, for every application.
 
 ### 5.6 Timers
@@ -444,7 +447,19 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 | RAM at rest, above Wi-Fi and `esp_http_server` | ≤ 12 KB, the task's stack included |
 | Stack | TesserKIT's task: 6 KB |
 
-**Partition table** (`partitions/tesserkit_4mb.csv`, recommended): `nvs` 24 KB, `otadata`, `phy_init`, `ota_0` and `ota_1` 1.94 MB each, `coredump` 64 KB. No filesystem.
+**Measured** (2026-10-10, ESP-IDF 6.1-dev, ESP32, `-Os`): `examples/idf/minimal` against its `-DFOOTPRINT_BASELINE=1` build, the same application on TesserAPI, TesserUI and a plain Wi-Fi station.
+
+| Build | Above the baseline |
+|---|---|
+| Device + System + Network + Time + Firmware + Backup | 113.3 KB |
+| The same with `CONFIG_TESSERKIT_MDNS=n` (`TESSERKIT_NO_MDNS`) | 77.8 KB |
+| `fw.downloads()` adds TLS, the certificate bundle and the HTTP client | about 130 KB |
+
+- **Where it goes** (with mDNS): TesserKIT's own code 42 KB (Network 15 KB, most of it the `std::function`s behind bound values and the keyed list), ESP-IDF's `mdns` 34 KB, libc's time zone support 17 KB (`tzset()` parses with `vfscanf`), lwIP's DHCP server, DNS client and sockets 7.6 KB, the access point in the Wi-Fi driver 6 KB, OTA 2.6 KB.
+- **Against the budget:** 60 KB is exceeded. Features stay, as options where they are large (mDNS, downloads); the rest is smaller only at the cost of clarity, and is left as it is until a measured application needs the space.
+- **Arduino:** the Minimal sketch with every first-release service is 1.18 MB on ESP32 and ESP32-C3, within the default table's 1.25 MB slot.
+
+**Partition table** (`partitions/tesserkit_4mb.csv`, recommended): `nvs` 20 KB, `otadata`, `ota_0` and `ota_1` 1.94 MB each, `coredump` 64 KB. No filesystem, no `phy_init` (the PHY data is in the app by default). `tesserkit_8mb.csv` has 3.94 MB slots.
 
 **Comparison:** the same measurements are taken on ESP32-sveltekit's demo with matching features (Wi-Fi, AP, NTP, upload OTA, status), and reported in the README.
 
@@ -452,7 +467,7 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 
 1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), time and DST, timers (catch-up, no double runs), firmware upload checks, backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge's topic mapping.
 2. **Golden schemas:** each service's schema with its hints, checked in as `fixtures/*.json`. TesserUI renders them in its golden-model tests, so a hint change shows as a diff in both repositories.
-3. **On target:** a test firmware (`test/hardware`) with every service, driven over HTTP and serial by scripts as TesserAPI's are: provisioning through the captive portal, an OTA upload and its rollback, a backup restore, a factory reset.
+3. **On target:** `examples/idf/minimal`, driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning through the captive portal needs a phone. *(later)* a test firmware with every service and serial scripts.
 4. **CI:** host tests, ESP-IDF builds (5.1, 5.4, 5.5, latest × ESP32, ESP32-C3, ESP32-S3), Arduino-ESP32 3.x builds of the examples, the footprint budgets.
 
 ## 13. Packaging

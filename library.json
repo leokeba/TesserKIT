@@ -1,0 +1,27 @@
+{
+  "name": "TesserKIT",
+  "version": "0.1.0",
+  "description": "A device framework for ESP32: Wi-Fi with a captive portal, time, firmware updates, backups and system status as TesserAPI subtrees, drawn by TesserUI's web interface with no UI code. Arduino and ESP-IDF.",
+  "keywords": ["framework", "wifi", "captive-portal", "ota", "ntp", "web", "esp32", "tesserapi", "tesserui"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/leokeba/TesserKIT.git"
+  },
+  "authors": [{ "name": "Leo Baque", "maintainer": true }],
+  "license": "MIT",
+  "frameworks": ["arduino", "espidf"],
+  "platforms": ["espressif32"],
+  "headers": ["TesserKIT.h"],
+  "dependencies": [
+    { "name": "TesserAPI", "version": "https://github.com/leokeba/TesserAPI.git" },
+    { "name": "TesserUI", "version": "https://github.com/leokeba/TesserUI.git" }
+  ],
+  "build": {
+    "srcDir": "src",
+    "includeDir": "src",
+    "flags": ["-std=gnu++17"]
+  },
+  "export": {
+    "exclude": ["test", "build", ".github", "fixtures"]
+  }
+}

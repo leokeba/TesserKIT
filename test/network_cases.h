@@ -34,10 +34,10 @@ TEST(network_fresh_device_provisions) {
     CHECK_EQ(r.dev.state(), State::Provisioning);
     CHECK_EQ(r.fake.wifi.scans, 0);
     CHECK_EQ(r.value("/sys/network/ap/status"), "{\"active\":true,\"ip\":\"192.168.4.1\",\"clients\":0}");
-    CHECK(r.fake.wifi.mdnsOn);
-    CHECK_EQ(r.fake.wifi.mdnsHost, "test-device-a67c");
-    CHECK_EQ(r.fake.wifi.mdnsVersion, "1.0.0");
-    CHECK_EQ(r.fake.wifi.mdnsPort, 80);
+    CHECK(r.fake.mdns.on);
+    CHECK_EQ(r.fake.mdns.host, "test-device-a67c");
+    CHECK_EQ(r.fake.mdns.version, "1.0.0");
+    CHECK_EQ(r.fake.mdns.port, 80);
 }
 
 TEST(network_joins_the_strongest_saved_network) {
@@ -213,6 +213,12 @@ TEST(network_static_address) {
     rig::Reply s = r.schema("/sys/network/wifi/networks");
     CHECK_EQ(at(s.body, "key"), "\"ssid\"");
     CHECK_EQ(at(s.body, "items/children/static/children/ip/ui/visibleWhen"), "\"enabled=true\"");
+    // As deep through a client, which parses the reply (TesserAPI b1d3603).
+    tesser::Query q;
+    q.view = tesser::View::Schema;
+    rig::Reply c = r.request(r.admin, rig::Op::Get, "/", {}, q);
+    CHECK_EQ(at(c.body, "children/sys/children/network/children/wifi/children/networks/items/children/static/children/dns/ui/visibleWhen"),
+             "\"enabled=true\"");
 }
 
 TEST(network_scan) {
@@ -293,10 +299,10 @@ TEST(network_hostname_and_mdns) {
     r.settle();
     CHECK_EQ(r.dev.hostname(), "helio-2");
     CHECK_EQ(r.fake.wifi.hostnameSet, "helio-2");
-    CHECK_EQ(r.fake.wifi.mdnsHost, "helio-2");
+    CHECK_EQ(r.fake.mdns.host, "helio-2");
     CHECK_EQ(r.set("/sys/network/mdns", "false").status, Status::Ok);
     r.settle();
-    CHECK(!r.fake.wifi.mdnsOn);
+    CHECK(!r.fake.mdns.on);
 }
 
 TEST(network_access_levels) {

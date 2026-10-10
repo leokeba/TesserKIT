@@ -27,7 +27,14 @@ Service::Service(Device& dev, const char* name) : dev_(dev), name_(name) {
     *p = this;
 }
 
-Device::Device(const char* label) : label_(label) {}
+Device::Device(const char* label)
+    : label_(label)
+#if defined(ESP_PLATFORM)
+      ,
+      http_(api_)
+#endif
+{
+}
 
 Device::~Device() { delete erased_; }
 
@@ -102,6 +109,9 @@ bool Device::begin() {
     if (version_.empty()) version_ = info_.version;
 
     api_.label(label_);
+    // Without the Auth service the device is open: every client is Admin
+    // (docs/DESIGN.md section 5.7). Auth replaces this check with its own.
+    api_.authenticate([](std::string_view) { return tesser::Access::Admin; });
     sys_ = &api_.object("sys");
     sys_->label("System").ui("page");
     for (Service* s = services_; s; s = s->next_) s->attach(*sys_);
@@ -226,6 +236,7 @@ bool Device::startTask() {
 tesser::Storage* Device::defaultStorage() { return nullptr; }
 Core* espCore() { return nullptr; }
 Wifi* espWifi() { return nullptr; }
+Mdns* espMdns() { return nullptr; }
 Clock* espClock() { return nullptr; }
 Ota* espOta() { return nullptr; }
 HttpClient* espHttpClient() { return nullptr; }

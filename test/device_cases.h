@@ -82,6 +82,14 @@ TEST(device_restart_after_the_reply) {
     CHECK_EQ(r.fake.core.restarts, 1);
 }
 
+TEST(device_is_open_without_auth) {
+    SysRig r;
+    CHECK(r.dev.begin());
+    // HTTP and WebSocket clients, with a token or without, are Admin.
+    CHECK_EQ(r.dev.api().tokenAccess(""), tesser::Access::Admin);
+    CHECK_EQ(r.dev.api().tokenAccess("anything"), tesser::Access::Admin);
+}
+
 TEST(device_actions_need_admin) {
     SysRig r;
     CHECK(r.dev.begin());

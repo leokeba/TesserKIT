@@ -57,6 +57,12 @@ private:
 
 Ota& Firmware::ota() { return *ota_; }
 
+Firmware& Firmware::downloads() {
+    Platform& p = dev_.platform();
+    if (!p.http) p.http = espHttpClient();
+    return *this;
+}
+
 void Firmware::describe(tesser::Object& o) {
     Device& dev = dev_;
     const BootInfo& info = dev.info();
@@ -85,11 +91,13 @@ void Firmware::describe(tesser::Object& o) {
                 return std::unique_ptr<tesser::FileSink>(
                     new ImageUpload(*this, *ota_, dev.info().imageChipId, static_cast<uint32_t>(r.size)));
             });
-        o.action("download", [this](const std::string& url) { return download(url); })
-            .label("Update from a URL")
-            .writeAccess(Access::Admin)
-            .ui("placeholder", "https://example.com/firmware.bin")
-            .ui("advanced");
+        if (p.http) {
+            o.action("download", [this](const std::string& url) { return download(url); })
+                .label("Update from a URL")
+                .writeAccess(Access::Admin)
+                .ui("placeholder", "https://example.com/firmware.bin")
+                .ui("advanced");
+        }
     }
     stateNode_ = &o.value("state", state_, {"idle", "receiving", "downloading", "verifying", "rebooting", "failed"})
                       .readOnly();
@@ -157,6 +165,13 @@ void Firmware::setState(FirmwareState s) {
 
 bool Firmware::begin(FirmwareState s) {
     if (state_ != FirmwareState::Idle && state_ != FirmwareState::Failed) return false;
+    // ESP-IDF refuses an update while the running image is unconfirmed. One
+    // that serves an update works: confirm it.
+    if (pending_) {
+        ota_->confirm();
+        pending_ = false;
+        pendingNode_->changed();
+    }
     setState(s);
     progress_ = 0;
     progressNode_->changed();
@@ -201,9 +216,7 @@ void Firmware::installed() {
 
 Status Firmware::download(const std::string& url) {
     if (url.compare(0, 7, "http://") != 0 && url.compare(0, 8, "https://") != 0) return Status::InvalidValue;
-    Platform& p = dev_.platform();
-    if (!p.http) p.http = espHttpClient();
-    HttpClient* http = p.http;
+    HttpClient* http = dev_.platform().http;
     if (!http) return Status::NotAllowed;
     if (!begin(FirmwareState::Downloading)) return Status::Busy;
     Ota& ota = *ota_;

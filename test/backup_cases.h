@@ -53,7 +53,7 @@ TEST(backup_restore_without_restart) {
     BackupRig r;
     CHECK(r.dev.begin());
     CHECK_EQ(r.set("/sys/backup/restartAfter", "false").status, Status::Ok);
-    rig::Reply u = r.upload("/sys/backup/settings", "{\"app\":{\"level\":9}}");
+    rig::Reply u = r.upload("/sys/backup/settings", "{\"app\":{\"level\":9},\"sys\":{\"backup\":{\"restartAfter\":true}}}");
     CHECK_EQ(u.status, Status::Ok);
     CHECK_EQ(at(u.body, "restart"), "false");
     r.run(3000);

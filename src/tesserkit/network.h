@@ -76,6 +76,7 @@ private:
     std::string apSsid() const { return apSsid_.empty() ? dev_.hostname() : apSsid_; }
 
     Wifi* wifi_ = nullptr;
+    Mdns* mdnsService_ = nullptr;
 
     // Settings (persisted).
     std::vector<WifiNetwork> networks_;

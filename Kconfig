@@ -1,0 +1,11 @@
+menu "TesserKIT"
+
+config TESSERKIT_MDNS
+    bool "mDNS (<hostname>.local)"
+    default y
+    help
+        Network answers <hostname>.local and advertises its HTTP service, on
+        ESP-IDF's mdns component (about 34 KB of flash). Off: the same as
+        building with -DTESSERKIT_NO_MDNS.
+
+endmenu

@@ -123,9 +123,15 @@ public:
     // A DNS server answering every name with the access point's address, and
     // the HTTP server's 404 handler redirecting to the interface.
     virtual void captivePortal(bool on) = 0;
+};
+
+// mDNS: Network's, unless built with TESSERKIT_NO_MDNS.
+class Mdns {
+public:
+    virtual ~Mdns() = default;
     // <hostname>.local with an _http._tcp service on `port` (none if 0);
     // off when `on` is false.
-    virtual void mdns(bool on, const char* hostname, const char* version, uint16_t port) = 0;
+    virtual void set(bool on, const char* hostname, const char* version, uint16_t port) = 0;
 };
 
 // The clock and SNTP: Time's.
@@ -186,6 +192,7 @@ public:
 struct Platform {
     Core* core = nullptr;
     Wifi* wifi = nullptr;
+    Mdns* mdns = nullptr;
     Clock* clock = nullptr;
     Ota* ota = nullptr;
     HttpClient* http = nullptr;
@@ -195,6 +202,7 @@ struct Platform {
 // The ESP implementations (null on the host).
 Core* espCore();
 Wifi* espWifi();
+Mdns* espMdns();
 Clock* espClock();
 Ota* espOta();
 HttpClient* espHttpClient();

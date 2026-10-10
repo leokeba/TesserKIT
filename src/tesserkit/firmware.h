@@ -14,6 +14,11 @@ class Firmware : public Service {
 public:
     explicit Firmware(Device& dev) : Service(dev, "firmware") {}
 
+    // Offers /sys/firmware/download: updates from a URL over HTTP(S), which
+    // links an HTTP client and TLS (about 130 KB of flash with ESP-IDF's
+    // certificate bundle). Before Device::begin().
+    Firmware& downloads();
+
     void describe(tesser::Object& o) override;
 
     FirmwareState state() const { return state_; }

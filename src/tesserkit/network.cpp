@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <algorithm>
 #include <utility>
 
 namespace tesserkit {
@@ -182,7 +181,12 @@ void Network::describe(tesser::Object& o) {
     as.value("ip", static_cast<const std::string&>(apIp_)).label("Address");
     as.value("clients", static_cast<const int32_t&>(apClients_));
 
-    mdnsNode_ = &o.value("mdns", mdns_).persist().label("mDNS").ui("advanced");
+    Platform& p = dev.platform();
+#if !defined(TESSERKIT_NO_MDNS)
+    if (!p.mdns) p.mdns = espMdns();
+#endif
+    mdnsService_ = p.mdns;
+    if (mdnsService_) mdnsNode_ = &o.value("mdns", mdns_).persist().label("mDNS").ui("advanced");
 }
 
 void Network::start() {
@@ -198,7 +202,7 @@ void Network::start() {
     if (txPower_) wifi_->txPower(txPower_);
     networksGen_ = networksNode_->generation();
     hostnameGen_ = hostnameNode_->generation();
-    mdnsGen_ = mdnsNode_->generation();
+    if (mdnsNode_) mdnsGen_ = mdnsNode_->generation();
     apGen_ = apFingerprint();
     applyMdns();
     uint32_t now = static_cast<uint32_t>(dev.core().uptimeMs());
@@ -283,17 +287,19 @@ void Network::scanDone(const std::vector<ScanResult>& results, uint32_t nowMs) {
     if (sta_ != Sta::Scanning) return;
     // Saved networks in range, strongest first; if none is, every saved
     // network in order (hidden ones don't show in scans).
-    std::vector<std::pair<int, std::string>> seen;
+    candidates_.clear();
+    std::vector<int> rssi;  // of each candidate, kept sorted strongest first (a few at most)
     for (const WifiNetwork& n : networks_) {
         int best = -1000;
         for (const ScanResult& r : results) {
             if (r.ssid == n.ssid && r.rssi > best) best = r.rssi;
         }
-        if (best > -1000) seen.emplace_back(best, n.ssid);
+        if (best == -1000) continue;
+        size_t at = 0;
+        while (at < rssi.size() && rssi[at] >= best) at++;
+        rssi.insert(rssi.begin() + static_cast<std::ptrdiff_t>(at), best);
+        candidates_.insert(candidates_.begin() + static_cast<std::ptrdiff_t>(at), n.ssid);
     }
-    std::stable_sort(seen.begin(), seen.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-    candidates_.clear();
-    for (auto& s : seen) candidates_.push_back(s.second);
     if (candidates_.empty()) {
         for (const WifiNetwork& n : networks_) candidates_.push_back(n.ssid);
     }
@@ -366,6 +372,8 @@ void Network::event(const Event& e) {
         case Event::Type::StaDisconnected:
             if (e.value == Event::kReasonLeft) break;
             if (sta_ == Sta::Connecting) {
+                tesser::logWarning("tesserkit: couldn't join \"%s\" (reason %d)", current_.ssid.c_str(),
+                                   static_cast<int>(e.value));
                 connectNext(now);
             } else if (sta_ == Sta::Connected) {
                 tesser::logWarning("tesserkit: lost \"%s\" (reason %d)", linkSsid_.c_str(), static_cast<int>(e.value));
@@ -406,7 +414,7 @@ void Network::checkSettings(uint32_t nowMs) {
         wifi_->hostname(dev_.hostname().c_str());
         applyMdns();
     }
-    if (mdnsNode_->generation() != mdnsGen_) {
+    if (mdnsNode_ && mdnsNode_->generation() != mdnsGen_) {
         mdnsGen_ = mdnsNode_->generation();
         applyMdns();
     }
@@ -421,7 +429,7 @@ void Network::checkSettings(uint32_t nowMs) {
 }
 
 void Network::applyMdns() {
-    wifi_->mdns(mdns_, dev_.hostname().c_str(), dev_.version().c_str(), dev_.httpPort());
+    if (mdnsService_) mdnsService_->set(mdns_, dev_.hostname().c_str(), dev_.version().c_str(), dev_.httpPort());
 }
 
 void Network::updateAp(uint32_t nowMs) {

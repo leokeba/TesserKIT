@@ -45,6 +45,8 @@ void Backup::describe(tesser::Object& o) {
         .ui("confirm", "Replace the settings with this backup?")
         .text(nullptr,
               [this, &dev](std::string_view text, tesser::JsonWriter& reply) -> Check {
+                  // The setting in force decides, not the one the backup holds.
+                  bool restart = restartAfter_;
                   std::vector<std::string> skipped;
                   Status s = dev.api().restore(text, &skipped);
                   if (s == Status::BadRequest) return Check::fail(s, "not a settings file");
@@ -55,9 +57,9 @@ void Backup::describe(tesser::Object& o) {
                   for (const std::string& p : skipped) reply.string(p);
                   reply.endArray();
                   reply.key("restart");
-                  reply.boolean(restartAfter_);
+                  reply.boolean(restart);
                   reply.endObject();
-                  if (restartAfter_) dev.restartIn(1000);
+                  if (restart) dev.restartIn(1000);
                   return Check::ok();
               })
         .download([&dev](tesser::FileRequest& r) {

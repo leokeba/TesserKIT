@@ -1,0 +1,20 @@
+version: "0.1.0"
+description: "A device framework for ESP32: network setup, time, firmware updates, backups and system status as TesserAPI subtrees, drawn by TesserUI"
+url: "https://github.com/leokeba/TesserKIT"
+license: "MIT"
+# TesserAPI and TesserUI are required but not listed: add them to the project
+# (EXTRA_COMPONENT_DIRS or dependencies of your main component).
+# CMakeLists.txt finds them under any component name ending in "tesserapi"
+# and "tesserui".
+dependencies:
+  idf:
+    version: ">=5.1"
+  espressif/mdns:
+    version: "^1.4.0"
+files:
+  exclude:
+    - "test/**/*"
+    - "build/**/*"
+    - ".github/**/*"
+    - "fixtures/**/*"
+    - "docs/**/*"

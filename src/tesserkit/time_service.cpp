@@ -35,7 +35,7 @@ std::string Time::iso8601(int64_t epochMs) {
     int64_t offset = (local - static_cast<int64_t>(t)) / 60;  // minutes east of UTC
     char sign = offset < 0 ? '-' : '+';
     if (offset < 0) offset = -offset;
-    char buf[40];
+    char buf[64];
     snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d%c%02d:%02d", lt.tm_year + 1900, lt.tm_mon + 1,
              lt.tm_mday, lt.tm_hour, lt.tm_min, lt.tm_sec, sign, static_cast<int>(offset / 60),
              static_cast<int>(offset % 60));
@@ -145,6 +145,10 @@ void Time::event(const Event& e) {
 void Time::tick(uint32_t nowMs) {
     (void)nowMs;
     if (!clock_) return;
+    // Coming online: ask SNTP again now rather than at its next retry.
+    bool online = dev_.state() == State::Online;
+    if (online && !online_ && !synced_) applySntp();
+    online_ = online;
     if (tzNode_->generation() != tzGen_) {
         tzGen_ = tzNode_->generation();
         applyTz();

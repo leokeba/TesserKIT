@@ -41,6 +41,7 @@ if(ESP_PLATFORM)
              src/tesserkit/platform/esp/device_esp.cpp
              src/tesserkit/platform/esp/core_esp.cpp
              src/tesserkit/platform/esp/wifi_esp.cpp
+             src/tesserkit/platform/esp/mdns_esp.cpp
              src/tesserkit/platform/esp/dns_server.cpp
              src/tesserkit/platform/esp/clock_esp.cpp
              src/tesserkit/platform/esp/ota_esp.cpp
@@ -49,7 +50,10 @@ if(ESP_PLATFORM)
         INCLUDE_DIRS "src"
         REQUIRES esp_http_server esp_wifi esp_netif nvs_flash
         PRIV_REQUIRES esp_event esp_timer app_update esp_http_client mbedtls lwip mdns espcoredump
-                      bootloader_support spi_flash efuse esp_app_format ${TESSERKIT_TSENS_REQ})
+                      esp_partition spi_flash efuse esp_app_format ${TESSERKIT_TSENS_REQ})
+    if(NOT CONFIG_TESSERKIT_MDNS)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE TESSERKIT_NO_MDNS=1)
+    endif()
     # Public: TesserKIT's headers include TesserAPI's and TesserUI's.
     if(TESSERKIT_TESSERAPI AND TESSERKIT_TESSERUI)
         idf_component_get_property(TESSERKIT_TESSERAPI_LIB ${TESSERKIT_TESSERAPI} COMPONENT_LIB)

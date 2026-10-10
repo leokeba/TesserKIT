@@ -102,6 +102,7 @@ void Clock::timezone(const char* posix) {
 }
 
 Check Ota::open(uint32_t size) {
+    if (pendingImage) return Check::fail(Status::Internal, "couldn't start the update");  // as ESP-IDF
     if (size > slot) return Check::fail(Status::TooLarge, "image larger than the slot");
     written.clear();
     open_ = true;

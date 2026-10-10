@@ -158,6 +158,14 @@ TEST(firmware_confirmed_after_a_minute_online) {
     CHECK_EQ(r.value("/sys/firmware/pending"), "false");
 }
 
+TEST(firmware_update_confirms_the_running_image) {
+    FwRig r;
+    r.fake.ota.pendingImage = true;
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.upload("/sys/firmware/image", fake::image(0, 3000)).status, Status::Ok);
+    CHECK_EQ(r.fake.ota.confirms, 1);
+}
+
 TEST(firmware_confirm_and_rollback_actions) {
     FwRig r;
     r.fake.ota.pendingImage = true;

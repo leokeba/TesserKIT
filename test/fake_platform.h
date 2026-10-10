@@ -65,9 +65,6 @@ struct Wifi : tesserkit::Wifi {
     tesserkit::ApConfig ap;
     int apStarts = 0;
     bool captive = false;
-    bool mdnsOn = false;
-    std::string mdnsHost, mdnsVersion;
-    uint16_t mdnsPort = 0;
 
     void begin(const char* hostname, EventSink s) override {
         hostnameSet = hostname;
@@ -92,12 +89,6 @@ struct Wifi : tesserkit::Wifi {
     void stopAp() override { apUp = false; }
     uint32_t apIp() override { return 0xC0A80401; }  // 192.168.4.1
     void captivePortal(bool on) override { captive = on; }
-    void mdns(bool on, const char* host, const char* version, uint16_t port) override {
-        mdnsOn = on;
-        mdnsPort = port;
-        mdnsHost = host;
-        mdnsVersion = version;
-    }
     // The router went away.
     void drop();
     void post(Event::Type type, int32_t value = 0) {
@@ -105,6 +96,18 @@ struct Wifi : tesserkit::Wifi {
         e.type = type;
         e.value = value;
         sink(e);
+    }
+};
+
+struct Mdns : tesserkit::Mdns {
+    bool on = false;
+    std::string host, version;
+    uint16_t port = 0;
+    void set(bool o, const char* h, const char* v, uint16_t p) override {
+        on = o;
+        host = h;
+        version = v;
+        port = p;
     }
 };
 
@@ -183,6 +186,7 @@ struct Coredump : tesserkit::Coredump {
 struct Platform {
     Core core;
     Wifi wifi;
+    Mdns mdns;
     Clock clock;
     Ota ota;
     HttpClient http;
@@ -191,6 +195,7 @@ struct Platform {
         tesserkit::Platform& p = dev.platform();
         p.core = &core;
         p.wifi = &wifi;
+        p.mdns = &mdns;
         p.clock = &clock;
         p.ota = &ota;
         p.http = &http;

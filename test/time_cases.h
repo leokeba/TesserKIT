@@ -52,6 +52,26 @@ TEST(time_sntp_sync) {
     CHECK_EQ(synced, 1);  // once per boot
 }
 
+TEST(time_sntp_asks_again_when_online) {
+    struct R : rig::Rig {
+        tesserkit::Network net{dev};
+        tesserkit::Time time{dev};
+    } r;
+    fake::Air a;
+    a.ssid = "Home";
+    a.password = "pw";
+    r.fake.wifi.air.push_back(a);
+    r.net.defaultNetwork("Home", "pw");
+    r.fake.wifi.connectSilent = true;
+    CHECK(r.dev.begin());
+    r.run(1000);
+    int calls = r.fake.clock.sntpCalls;
+    r.fake.wifi.connectSilent = false;
+    r.run(12000);  // the silent attempt times out, the next one joins
+    CHECK(r.dev.state() == tesserkit::State::Online);
+    CHECK_EQ(r.fake.clock.sntpCalls, calls + 1);
+}
+
 TEST(time_sntp_settings) {
     TimeRig r;
     r.time.defaultServer("time.example.com");
