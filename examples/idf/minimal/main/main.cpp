@@ -50,7 +50,7 @@ extern "C" void app_main() {
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&init);
     wifi_config_t config = {};
-#if defined(WIFI_SSID) && defined(WIFI_PASSWORD)
+#if defined(WIFI_SSID) && defined(WIFI_PASSWORD) && !NO_DEFAULT_NETWORK
     strncpy(reinterpret_cast<char*>(config.sta.ssid), WIFI_SSID, sizeof(config.sta.ssid));
     strncpy(reinterpret_cast<char*>(config.sta.password), WIFI_PASSWORD, sizeof(config.sta.password));
 #endif
@@ -83,7 +83,7 @@ extern "C" void app_main() {
     vTaskDelay(pdMS_TO_TICKS(2000));
     *static_cast<volatile int*>(nullptr) = 1;
 #endif
-#if defined(WIFI_SSID) && defined(WIFI_PASSWORD)
+#if defined(WIFI_SSID) && defined(WIFI_PASSWORD) && !NO_DEFAULT_NETWORK
     net.defaultNetwork(WIFI_SSID, WIFI_PASSWORD);
 #endif
 #if defined(WIFI_TX_POWER)

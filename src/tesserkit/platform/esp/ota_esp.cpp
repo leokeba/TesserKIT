@@ -23,9 +23,11 @@ public:
         abort();
         target_ = esp_ota_get_next_update_partition(nullptr);
         if (!target_) return Check::fail(Status::NotAllowed, "no OTA slot");
+        // A known size is erased at once, in 64 KB blocks: a 1 MB upload
+        // took 14 s instead of 25 s erasing sector by sector as it arrived
+        // (ESP32, 2026-10-10). An unknown one is erased as it is written.
 #ifdef OTA_WITH_SEQUENTIAL_WRITES
-        (void)size;  // erased as it is written: the first bytes don't wait for a whole erase
-        esp_err_t err = esp_ota_begin(target_, OTA_WITH_SEQUENTIAL_WRITES, &handle_);
+        esp_err_t err = esp_ota_begin(target_, size ? size : OTA_WITH_SEQUENTIAL_WRITES, &handle_);
 #else
         esp_err_t err = esp_ota_begin(target_, size ? size : OTA_SIZE_UNKNOWN, &handle_);
 #endif

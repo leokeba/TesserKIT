@@ -9,3 +9,8 @@ endif()
 if(DEFINED CRASH_AT_BOOT)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE CRASH_AT_BOOT=${CRASH_AT_BOOT})
 endif()
+# Provisioning test (test/captive_probe): -DNO_DEFAULT_NETWORK=1 ignores
+# secrets.h's network, so a fresh device opens its access point.
+if(DEFINED NO_DEFAULT_NETWORK)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE NO_DEFAULT_NETWORK=${NO_DEFAULT_NETWORK})
+endif()
