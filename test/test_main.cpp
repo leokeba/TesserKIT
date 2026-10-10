@@ -1,0 +1,8 @@
+// Host test runner: ./tesserkit_tests [filter]
+#include "device_cases.h"
+#include "network_cases.h"
+#include "time_cases.h"
+#include "firmware_cases.h"
+#include "backup_cases.h"
+
+int main(int argc, char** argv) { return check::run(argc > 1 ? argv[1] : nullptr) ? 1 : 0; }

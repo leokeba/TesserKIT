@@ -113,7 +113,7 @@ New mechanisms go to the lowest layer that can host them, generically. A service
 ### 4.1 Boot sequence
 
 1. `begin()` creates `/sys`, has every service describe itself, and sets the device label and the schema metadata.
-2. Opens NVS (namespace `tesserkit`, key `state`) and loads the persisted document (TesserAPI §12). Values that don't fit any more are skipped with a warning: a firmware update never breaks a boot.
+2. Opens NVS (namespace `tesserkit`, one record per top-level node, §6.1) and loads the persisted state (TesserAPI §12). Values that don't fit any more are skipped with a warning: a firmware update never breaks a boot.
 3. Applies factory defaults (§6.2) to whatever the stored state didn't set.
 4. Starts each service's platform side: Network brings up Wi-Fi, Time starts SNTP, Firmware checks the rollback state.
 5. Starts the HTTP server: the API at `/api`, WebSocket at `/ws`, the UI at `/` and `/ui.js` (TesserUI §9.4), the captive portal's error handler (§5.2). The server's URI handler budget is computed from what's used, never set by hand.
@@ -157,7 +157,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
   temperature  number, °C (chips with a sensor), watched
 /sys/restart        action, Admin, ui.confirm, ui.style danger
 /sys/factoryReset   action, Admin, ui.confirm, ui.style danger: erases the persisted state, then restarts
-/sys/coredump       file, Admin, download only; present only when the core dump partition exists
+/sys/coredump       file, Admin, download only (<hostname>-coredump.bin, the partition's raw data for espcoredump.py); present only when the core dump partition exists
 /sys/coredumpPresent boolean          /sys/clearCoredump action, Admin
 ```
 
