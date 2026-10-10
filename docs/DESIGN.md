@@ -259,7 +259,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 ```
 
 - **Download:** `api.persistedState()`, secrets included (it is Admin-only), as `<hostname>-settings.json`.
-- **Restore:** applied with `api.restore()` (§14): lenient like a boot load, so a backup from an older firmware restores whatever still fits, and reports the skipped paths in the reply. Then saved, then a restart if `restartAfter`.
+- **Restore:** applied with `api.restore(json, &skipped)` (TesserAPI §12): lenient like a boot load, so a backup from an older firmware restores whatever still fits; the reply lists the skipped paths. Every record is saved at once, then the device restarts if `restartAfter`.
 - This replaces spin-seq's hand-written export and import, for every application.
 
 ### 5.6 Timers
@@ -283,16 +283,18 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 ### 5.7 Auth
 
 ```
-/sys/auth                readAccess Admin, except login and whoami
-  users *(p)    keyed list (key "name"), ≤ 8:
+/sys/auth
+  users *(p)    keyed list (key "name"), ≤ 8, readAccess Admin:
                   name ≤ 24, password (secret; stored as a salted PBKDF2-SHA256 hash), role enum: user, admin
-  login         action({name, password}) → token string; public
-  whoami        action → {access}; public
-  logoutAll     action: rotates the signing key, invalidating every token
-  sessionHours *(p)  integer 1–720 (default 168)
+  login         action({name, password}) → {token, access}; public, ui.auth "login"
+  whoami        action → {access}; public, ui.auth "whoami"
+  open          boolean: no admin account yet
+  logoutAll     action, Admin: rotates the signing key, invalidating every token
+  sessionHours *(p)  integer 1–720 (default 168), Admin
 ```
 
-- **Levels:** TesserAPI's access levels (§7): `public`, `user`, `admin`. Without the Auth service, every client is Admin (the device is open, as ESP32-sveltekit with `FT_SECURITY=0`).
+- **Levels:** TesserAPI's access levels (§7): `public`, `user`, `admin`. A node requires its ancestors' levels too, so `/sys/auth` itself stays public and only `users` is protected. Without the Auth service, every client is Admin (the device is open, as ESP32-sveltekit with `FT_SECURITY=0`).
+- **The UI** finds `login` and `whoami` by their `ui.auth` hints (TesserUI §7.4): its sign-in dialog shows `login`'s fields, and it asks `whoami` for its level to disable what it can't change.
 - **Tokens** are stateless: `<name>.<expiry>.<HMAC-SHA256 of both, truncated to 16 bytes, hex>`, signed with a random key kept in the persisted state. They survive restarts; `logoutAll` revokes them all. The device registers a token check with TesserAPI (`api.authenticate()`), so HTTP and WebSocket clients present it as `Authorization: Bearer` or `?token=` (TesserAPI §13).
 - **First boot:** until an admin user exists, every client is Admin and `/sys/auth/open` is `true`, which TesserUI shows as a warning card ("Set an admin password"). A compile-time default (`dev.defaultAdmin("admin", "secret")`) avoids the open window for devices shipped to others.
 - **Brute force:** after 5 failed logins, `login` answers `busy` for 30 s.
@@ -331,9 +333,9 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 
 ### 6.1 Storage
 
-- **One document:** TesserAPI's persistence (§12 there) saves every persisted node of the tree (services and application) as one JSON document in one NVS blob, debounced 2 s after the last change. NVS spreads writes across its pages, so the blob's rewrites don't wear one sector.
+- **Records:** TesserAPI's persistence (§12 there) saves the persisted nodes of the tree as one NVS blob per top-level node, debounced 2 s after the last change: `/sys` (every service's settings) is one record, each of the application's top-level objects another. A change rewrites only its own record, and NVS spreads writes across its pages, so frequent changes don't wear one sector.
 - **No filesystem:** nothing needs LittleFS or SPIFFS. Applications that want files mount one themselves.
-- **Factory reset:** `Storage::erase()` (§14), then a restart. The application's persisted values return to their defaults too.
+- **Factory reset:** `Storage::erase()` removes every record, then the device restarts. The application's persisted values return to their defaults too.
 
 ### 6.2 Factory defaults
 
@@ -362,10 +364,10 @@ The UI is TesserUI's generic renderer, self-hosted by the device (TesserUI §9.4
 
 - **Services' pages** are their trees with hints: labels, units, `confirm` on destructive actions, `style danger`, `advanced` on rarely used settings, `form` where several fields must change together (the access point), `visibleWhen` for conditional fields (static IP), `chart` on heap and RSSI.
 - **The application's pages** are its tree, plus TesserUI views (§8 there) for dashboards and custom elements (§9.8 there) for what generic widgets can't draw.
-- **Login:** when a request answers `unauthorized`, TesserUI asks for a token (TesserUI §7.4). With the Auth service, it calls `/sys/auth/login` with a name and password instead (a TesserUI follow-up, §14).
+- **Login:** when a request answers `unauthorized`, TesserUI's sign-in dialog calls `/sys/auth/login` with a name and password (TesserUI §7.4). Without the Auth service it never needs to: everyone is Admin.
 - **Theming and text:** `dev.web().theme(...)`, `.text(...)`, `.title(...)` (TesserUI §9.4).
 
-What TesserUI needs for TesserKIT's services is listed in §14: file widgets, secrets, access-aware rendering, flags, the time zone widget, `$now`.
+TesserUI renders everything TesserKIT's services declare: files (§5.4, §5.5), secrets, access levels and sign-in, flags (§5.6), the time zone widget and `$now` (§5.3).
 
 ## 9. Several nodes
 
@@ -473,7 +475,7 @@ TesserKIT/
 
 ## 14. Follow-ups wanted in other layers
 
-**TesserAPI** (being added for TesserKIT; each with its section in TesserAPI's DESIGN.md):
+**TesserAPI** (phase 7 of its roadmap; each with its section in TesserAPI's DESIGN.md). As of 2026-10-10, done: access levels, secrets, streamed replies, `view=hash`, re-advertisement, per-record persistence, `erase()` and `restore()`. In progress: object arguments, keyed lists, arrays, file nodes.
 
 | Item | For |
 |---|---|
@@ -481,7 +483,7 @@ TesserKIT/
 | Secret values: `.secret()`, never rendered | passwords (§5.2, §5.7, §5.8) |
 | Typed object arguments for actions, and typed deferred actions | `login({name, password})`, helionext's `add`, `download(url)` |
 | Keyed lists: `.key("name")` | networks, users, timers, helionext's sources |
-| Scalar arrays | calibration tables, timer days could use them, spin-seq's 128 encoder offsets |
+| Scalar arrays | calibration tables, spin-seq's 128 encoder offsets |
 | File nodes: streamed upload and download over HTTP | firmware upload, backups, core dumps |
 | Streamed replies on WebSocket and serial | large schemas without paging |
 | `view=hash` | TesserUI's schema cache for directly reached nodes |
@@ -497,7 +499,7 @@ TesserKIT/
 | A shared clock (offset estimated from pings) | synchronized starts (§9) |
 | Streaming of large messages | firmware updates of NowTP-only nodes (§5.4) |
 
-**TesserUI:**
+**TesserUI** (done as of 2026-10-10, except the custom elements):
 
 | Item | For |
 |---|---|
