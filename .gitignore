@@ -1,0 +1,12 @@
+build/
+.pio/
+.vscode/
+.cache/
+managed_components/
+dependencies.lock
+sdkconfig
+sdkconfig.old
+AGENTS.md
+compile_commands.json
+__pycache__/
+secrets.h
