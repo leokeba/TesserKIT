@@ -92,6 +92,9 @@ extern "C" void app_main() {
     net.txPower(WIFI_TX_POWER);
 #endif
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");
+#if WITH_DOWNLOADS
+    firmware.downloads();  // updates from a URL: TLS and an HTTP client, about 130 KB
+#endif
     dev.api().mount("led", led).label("LED");
     dev.begin();
 }

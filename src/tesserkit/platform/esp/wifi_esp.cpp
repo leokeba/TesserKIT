@@ -26,7 +26,9 @@ public:
     void begin(const char* hostname, EventSink sink) override {
         sink_ = std::move(sink);
         // Applications (and Arduino) may have done some of this already.
-        esp_err_t err = esp_netif_init();
+        esp_err_t err = esp::nvsInit();  // the driver keeps its calibration there
+        if (err != ESP_OK) tesser::logError("tesserkit: NVS: %s", esp_err_to_name(err));
+        err = esp_netif_init();
         if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) tesser::logError("tesserkit: esp_netif_init: %s", esp_err_to_name(err));
         err = esp_event_loop_create_default();
         if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) tesser::logError("tesserkit: event loop: %s", esp_err_to_name(err));

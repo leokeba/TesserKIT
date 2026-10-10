@@ -47,6 +47,16 @@ void deviceTask(void* arg) {
 }  // namespace
 
 namespace esp {
+esp_err_t nvsInit() {
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        tesser::logWarning("tesserkit: NVS unusable (%s), erasing it", esp_err_to_name(err));
+        err = nvs_flash_erase();
+        if (err == ESP_OK) err = nvs_flash_init();
+    }
+    return err;
+}
+
 void captiveRedirect(bool on, uint32_t apIp) {
     snprintf(g_portalUrl, sizeof(g_portalUrl), "http://%u.%u.%u.%u/", static_cast<unsigned>(apIp >> 24),
              static_cast<unsigned>(apIp >> 16 & 255), static_cast<unsigned>(apIp >> 8 & 255),
@@ -88,8 +98,9 @@ bool Device::startTask() {
 
 tesser::Storage* Device::defaultStorage() {
     // Arduino initializes NVS at boot; ESP-IDF applications may not have.
-    // Never erased here: that is a factory reset's decision.
-    esp_err_t err = nvs_flash_init();
+    // Readable settings are never erased here: that is a factory reset's
+    // decision.
+    esp_err_t err = esp::nvsInit();
     if (err != ESP_OK) {
         tesser::logError("tesserkit: NVS unavailable (%s): settings won't persist", esp_err_to_name(err));
         return nullptr;

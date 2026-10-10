@@ -114,7 +114,7 @@ New mechanisms go to the lowest layer that can host them, generically. A service
 ### 4.1 Boot sequence
 
 1. `begin()` creates `/sys`, has every service describe itself, and sets the device label and the schema metadata.
-2. Opens NVS (namespace `tesserkit`, one record per top-level node, §6.1) and loads the persisted state (TesserAPI §12). Values that don't fit any more are skipped with a warning: a firmware update never breaks a boot.
+2. Opens NVS (namespace `tesserkit`, one record per top-level node, §6.1) and loads the persisted state (TesserAPI §12). An NVS partition NVS can't use (`no free pages` or `new version found`, as a firmware with another partition table leaves it) is erased and initialized again: nothing in it could be read, and Wi-Fi can't start without NVS. Values that don't fit any more are skipped with a warning: a firmware update never breaks a boot.
 3. Applies factory defaults (§6.2) to whatever the stored state didn't set.
 4. Starts each service's platform side: Network brings up Wi-Fi, Time starts SNTP, Firmware checks the rollback state.
 5. Starts the HTTP server: the API at `/api`, WebSocket at `/ws`, the UI at `/` and `/ui.js` (TesserUI §9.4), the captive portal's error handler (§5.2). The server's URI handler budget is computed from what's used, never set by hand: the API's, the UI's, plus `dev.extraHandlers(n)` (default 4) for the application's own routes and TesserUI assets.

@@ -14,3 +14,7 @@ endif()
 if(DEFINED NO_DEFAULT_NETWORK)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE NO_DEFAULT_NETWORK=${NO_DEFAULT_NETWORK})
 endif()
+# Every option: -DWITH_DOWNLOADS=1 adds updates from a URL (firmware.downloads()).
+if(DEFINED WITH_DOWNLOADS)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE WITH_DOWNLOADS=${WITH_DOWNLOADS})
+endif()

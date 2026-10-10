@@ -6,12 +6,19 @@
 
 #include <stdint.h>
 
+#include "esp_err.h"
+
 namespace tesserkit {
 namespace esp {
 
 // The HTTP server's 404 handler redirects to the interface while on
 // (device_esp.cpp).
 void captiveRedirect(bool on, uint32_t apIp);
+
+// Initializes NVS (Wi-Fi needs it too). A partition NVS can't use (left
+// by a firmware with another partition table or NVS version) is erased:
+// nothing in it could be read anyway (device_esp.cpp).
+esp_err_t nvsInit();
 
 // Answers every DNS query with `ip` while started (dns_server.cpp).
 bool dnsStart(uint32_t ip);
