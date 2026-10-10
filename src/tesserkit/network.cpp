@@ -118,19 +118,6 @@ void Network::describe(tesser::Object& o) {
                          .ui("advanced");
 
     auto& w = o.object("wifi").label("Wi-Fi");
-    networksNode_ = &w.list("networks", networks_)
-                         .key("ssid")
-                         .maxSize(5)
-                         .readAccess(Access::User)
-                         .writeAccess(Access::Admin)
-                         .persist()
-                         .label("Saved networks");
-    w.action("scan", [this](tesser::Call& call) {
-         tesser::Pending p = call.defer();
-         if (!p) return;
-         scanWaiters_.push_back(std::move(p));
-         scanWanted_ = true;
-     }).label("Scan");
     auto& st = w.object("status").label("Connection");
     staStatus_ = &st;
     st.value("connected", static_cast<const bool&>(linkUp_));
@@ -147,7 +134,21 @@ void Network::describe(tesser::Object& o) {
     st.value("channel", static_cast<const uint8_t&>(linkChannel_));
     st.value("bssid", static_cast<const std::string&>(linkBssid_)).label("BSSID").ui("advanced");
 
-    auto& ap = o.object("ap").label("Access point").ui("form");
+    networksNode_ = &w.list("networks", networks_)
+                         .key("ssid")
+                         .maxSize(5)
+                         .readAccess(Access::User)
+                         .writeAccess(Access::Admin)
+                         .persist()
+                         .label("Saved networks");
+    w.action("scan", [this](tesser::Call& call) {
+         tesser::Pending p = call.defer();
+         if (!p) return;
+         scanWaiters_.push_back(std::move(p));
+         scanWanted_ = true;
+     }).label("Scan");
+    // Its own card: the access point is set up apart from the station.
+    auto& ap = o.object("ap").label("Access point").ui("form").ui("card");
     ap.value("mode", apMode_, {"always", "fallback", "never"})
         .persist()
         .ui("labels", "Always,When offline,Never");

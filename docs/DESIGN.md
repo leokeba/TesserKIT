@@ -72,7 +72,7 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
 ### 3.2 The `/sys` tree
 
 ```
-/sys                    label "System", ui.page
+/sys                    label "System", ui.page, ui.icon "settings", a description
   status/               System (§5.1): read-only, watched values
   restart, factoryReset System's actions
   network/              Network (§5.2)

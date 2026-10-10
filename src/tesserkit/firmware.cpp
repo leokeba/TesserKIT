@@ -107,9 +107,12 @@ void Firmware::describe(tesser::Object& o) {
                          .ui("widget", "bar")
                          .ui("visibleWhen", "state!=idle");
     errorNode_ = &o.value("error", static_cast<const std::string&>(error_)).ui("visibleWhen", "state=failed");
-    pendingNode_ = &o.value("pending", static_cast<const bool&>(pending_))
-                        .label("Not confirmed yet")
-                        .doc("This image rolls back at the next reset unless confirmed");
+    pendingNode_ = &o.value("pending", static_cast<const bool&>(pending_)).ui("hidden");
+    o.value("pendingNote", "This firmware rolls back at the next restart unless it is kept. It is kept automatically "
+                           "after a minute online.")
+        .label("New firmware")
+        .ui("style", "warning")
+        .ui("visibleWhen", "pending=true");
     if (ota_) {
         o.action("confirm", [this] {
              if (pending_ && !ota_->confirm()) return Status::Internal;

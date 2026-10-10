@@ -113,7 +113,7 @@ bool Device::begin() {
     // (docs/DESIGN.md section 5.7). Auth replaces this check with its own.
     api_.authenticate([](std::string_view) { return tesser::Access::Admin; });
     sys_ = &api_.object("sys");
-    sys_->label("System").ui("page");
+    sys_->label("System").doc("Network, time, firmware, backups and accounts").ui("page").ui("icon", "settings");
     for (Service* s = services_; s; s = s->next_) s->attach(*sys_);
 
     if (!storage_) storage_ = defaultStorage();
