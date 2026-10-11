@@ -1,0 +1,41 @@
+# Each push to main: the host tests, then a release of the example firmware
+# (examples/idf/minimal, with firmware.github() pointing here) under the next
+# patch version, or library.json's version when it was raised above it. A
+# commit message with "[skip ci]" releases nothing.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One release at a time, so two pushes never take the same version.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build and run tests (ASan + UBSan)
+        run: |
+          cmake -S . -B build
+          cmake --build build -j
+          ctest --test-dir build --output-on-failure
+
+  firmware:
+    needs: host-tests
+    permissions:
+      contents: write
+    uses: ./.github/workflows/firmware.yml
+    with:
+      project: examples/idf/minimal
+      name: tesserkit-minimal
+      targets: '["esp32", "esp32c3", "esp32s3"]'
+      build-args: -DWITH_GITHUB=1
+      version-command: jq -r .version library.json
+      dependencies: |
+        leokeba/TesserAPI
+        leokeba/TesserUI

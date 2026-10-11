@@ -173,15 +173,27 @@ public:
     virtual tesser::Check rollback() = 0;
 };
 
-// A blocking HTTP(S) client for a platform task: Firmware's downloads.
+// A response to HttpClient::get(), its body read as it arrives.
+class HttpResponse {
+public:
+    virtual ~HttpResponse() = default;
+    virtual int status() = 0;
+    // The body's length, -1 if unknown.
+    virtual int64_t length() = 0;
+    // Up to `len` bytes of the body: how many, 0 at its end, -1 if the
+    // transfer failed or was cut short.
+    virtual int read(uint8_t* buf, size_t len) = 0;
+};
+
+// A blocking HTTP(S) client for a platform task: Firmware's downloads and
+// release checks.
 class HttpClient {
 public:
     virtual ~HttpClient() = default;
-    // GETs `url`: `length` once the headers are in (-1 if unknown), then
-    // `data` for each chunk; either may stop the transfer by returning a
-    // failure, which get() returns.
-    virtual tesser::Check get(const char* url, const std::function<tesser::Check(int64_t length)>& length,
-                              const std::function<tesser::Check(const uint8_t* data, size_t len)>& data) = 0;
+    // GETs `url`, following redirects, and hands the response (whatever its
+    // status) to `fn`, whose result get() returns. Fails without calling
+    // `fn` when no response came.
+    virtual tesser::Check get(const char* url, const std::function<tesser::Check(HttpResponse&)>& fn) = 0;
 };
 
 // The core dump partition: System's.

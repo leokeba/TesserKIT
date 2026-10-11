@@ -99,7 +99,12 @@ int main(int argc, char** argv) {
     tesserkit::Auth auth(dev);
     net.defaultNetwork("Workshop", "workshop-pw");
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");
-    firmware.downloads();
+    // A newer release to find and install.
+    firmware.github("leokeba/TesserKIT", "tesserkit-minimal-{target}.bin");
+    fake.http.files["https://api.github.com/repos/leokeba/TesserKIT/releases/latest"] =
+        R"({"tag_name": "v1.3.0", "assets": [{"name": "tesserkit-minimal-esp32.bin", )"
+        R"("browser_download_url": "https://example.com/tesserkit-minimal-esp32.bin"}]})";
+    fake.http.files["https://example.com/tesserkit-minimal-esp32.bin"] = fake::image(0, 300000);
     tesserkit::Timer t;
     snprintf(t.name, sizeof(t.name), "%s", "morning");
     snprintf(t.time, sizeof(t.time), "%s", "07:30");

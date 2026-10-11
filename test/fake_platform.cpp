@@ -130,19 +130,43 @@ Check Ota::rollback() {
     return Check::ok();
 }
 
-Check HttpClient::get(const char* url, const std::function<Check(int64_t)>& length,
-                      const std::function<Check(const uint8_t*, size_t)>& data) {
-    auto it = files.find(url);
-    if (it == files.end()) return Check::fail(Status::NotFound, "HTTP 404");
-    Check c = length(announceLength ? static_cast<int64_t>(it->second.size()) : -1);
-    if (!c.isOk()) return c;
-    const std::string& body = it->second;
-    for (size_t off = 0; off < body.size(); off += 1000) {
-        size_t n = body.size() - off < 1000 ? body.size() - off : 1000;
-        c = data(reinterpret_cast<const uint8_t*>(body.data() + off), n);
-        if (!c.isOk()) return c;
+namespace {
+
+struct Response : tesserkit::HttpResponse {
+    int code = 200;
+    const std::string* body = nullptr;
+    bool announce = true;
+    size_t cutAt = 0;
+    size_t pos = 0;
+    int status() override { return code; }
+    int64_t length() override { return announce ? static_cast<int64_t>(body->size()) : -1; }
+    int read(uint8_t* buf, size_t len) override {
+        if (cutAt && pos >= cutAt) return -1;
+        size_t n = body->size() - pos;
+        if (n > len) n = len;
+        if (n > 1000) n = 1000;
+        if (cutAt && pos + n > cutAt) n = cutAt - pos;
+        memcpy(buf, body->data() + pos, n);
+        pos += n;
+        return static_cast<int>(n);
     }
-    return Check::ok();
+};
+
+}  // namespace
+
+Check HttpClient::get(const char* url, const std::function<Check(tesserkit::HttpResponse&)>& fn) {
+    requests.push_back(url);
+    if (unreachable) return Check::fail(Status::NotFound, "server unreachable");
+    static const std::string notFound = "{\"message\":\"Not Found\"}";
+    Response r;
+    auto it = files.find(url);
+    r.body = it != files.end() ? &it->second : &notFound;
+    r.code = it != files.end() ? 200 : 404;
+    auto st = statuses.find(url);
+    if (st != statuses.end()) r.code = st->second;
+    r.announce = announceLength;
+    r.cutAt = cutAt;
+    return fn(r);
 }
 
 int Coredump::read(uint32_t offset, uint8_t* buf, size_t len) {

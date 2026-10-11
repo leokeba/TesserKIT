@@ -1,0 +1,176 @@
+# Builds an ESP-IDF firmware for each target and publishes it as a GitHub
+# release under the next version: what Firmware::github() installs from
+# (docs/DESIGN.md section 5.4). TesserKIT's release.yml calls it for its
+# example; applications call it the same way:
+#
+#   jobs:
+#     firmware:
+#       permissions:
+#         contents: write
+#       uses: leokeba/TesserKIT/.github/workflows/firmware.yml@main
+#       with:
+#         project: firmware
+#         name: heliostat
+#
+# The version is the last tag's (vX.Y.Z) with the patch raised, or what
+# `version-command` prints when that is higher, so a minor or major release is
+# a commit raising that version. A rerun on a released commit keeps its
+# version. Each target gives <name>-<target>.bin, the image devices install,
+# and <name>-<target>-factory.bin, the whole flash for a new board (0x0).
+name: Firmware release
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: The ESP-IDF project's directory in the repository
+        type: string
+        required: true
+      name:
+        description: The assets' names begin with it
+        type: string
+        required: true
+      targets:
+        description: The chips, as a JSON list
+        type: string
+        default: '["esp32"]'
+      idf-version:
+        description: The espressif/idf image's tag
+        type: string
+        default: release-v5.5
+      build-args:
+        description: More idf.py arguments (-DOPTION=1 ...)
+        type: string
+        default: ''
+      version-command:
+        description: Prints the lowest version to release (jq -r .version library.json)
+        type: string
+        default: ''
+      dependencies:
+        description: Repositories checked out next to this one, one per line (owner/repo or owner/repo@ref)
+        type: string
+        default: ''
+    outputs:
+      version:
+        description: The version released
+        value: ${{ jobs.version.outputs.version }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: next
+        env:
+          VERSION_COMMAND: ${{ inputs.version-command }}
+        run: |
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          tags() { git tag --list 'v*' "$@" | sed 's/^v//' | grep -E "$semver" | sort -V | tail -1; }
+          next=$(tags --points-at HEAD)
+          if [ -z "$next" ]; then
+            last=$(tags)
+            if [ -n "$last" ]; then
+              IFS=. read -r major minor patch <<< "$last"
+              next="$major.$minor.$((patch + 1))"
+            else
+              next=0.1.0
+            fi
+            if [ -n "$VERSION_COMMAND" ]; then
+              floor=$(bash -c "$VERSION_COMMAND")
+              if ! grep -qE "$semver" <<< "$floor"; then
+                echo "::error::version-command printed '$floor', not X.Y.Z"
+                exit 1
+              fi
+              [ "$(printf '%s\n%s\n' "$next" "$floor" | sort -V | tail -1)" = "$floor" ] && next=$floor
+            fi
+          fi
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$next" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: version
+    runs-on: ubuntu-latest
+    container: espressif/idf:${{ inputs.idf-version }}
+    strategy:
+      matrix:
+        target: ${{ fromJSON(inputs.targets) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The workspace belongs to the runner's user, not the container's.
+      - run: git config --global --add safe.directory '*'
+      # The repository and its dependencies side by side, as on a
+      # developer's machine.
+      - uses: actions/checkout@v5
+        with:
+          path: ${{ github.event.repository.name }}
+      - name: Check out the dependencies
+        if: inputs.dependencies != ''
+        env:
+          DEPENDENCIES: ${{ inputs.dependencies }}
+        run: |
+          for dep in $DEPENDENCIES; do
+            repo=${dep%@*}
+            ref=main
+            [ "$repo" != "$dep" ] && ref=${dep#*@}
+            dir=${repo#*/}
+            git init -q "$dir"
+            git -C "$dir" fetch -q --depth 1 "https://github.com/$repo" "$ref"
+            git -C "$dir" checkout -q FETCH_HEAD
+            echo "$repo $(git -C "$dir" rev-parse --short HEAD)"
+          done
+      - name: Build
+        working-directory: ${{ github.event.repository.name }}/${{ inputs.project }}
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.version.outputs.version }}
+          NAME: ${{ inputs.name }}
+          BUILD_ARGS: ${{ inputs.build-args }}
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          # BUILD_ARGS is split into words on purpose.
+          idf.py -B build -DPROJECT_VER="$VERSION" $BUILD_ARGS set-target "$TARGET" build
+          cd build
+          field() { python -c "import json; print(json.load(open('project_description.json'))['$1'])"; }
+          built=$(field project_version)
+          if [ "$built" != "$VERSION" ]; then
+            echo "::error::the image says $built, not $VERSION (CONFIG_APP_PROJECT_VER_FROM_CONFIG?)"
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp "$(field app_bin)" "$GITHUB_WORKSPACE/dist/$NAME-$TARGET.bin"
+          python -m esptool --chip "$TARGET" merge_bin -o "$GITHUB_WORKSPACE/dist/$NAME-$TARGET-factory.bin" @flash_args
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.target }}
+          path: dist/*.bin
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: firmware-*
+          merge-multiple: true
+          path: dist
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.version.outputs.version }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.bin --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" dist/*.bin --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "$TAG" --generate-notes
+          fi

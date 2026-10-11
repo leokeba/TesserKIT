@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 
 #include "tesserkit/device.h"
@@ -7,6 +8,15 @@
 namespace tesserkit {
 
 enum class FirmwareState : uint8_t { Idle, Receiving, Downloading, Verifying, Rebooting, Failed };
+
+// What the last check of the latest release found (Firmware::github()).
+enum class ReleaseState : uint8_t { Unchecked, Checking, Current, Available, Failed };
+
+// Compares two versions in semver order ("v1.4.0", "1.4.0-rc.1"): < 0, 0 or
+// > 0. A leading "v" and build metadata ("+...") are ignored; a git describe
+// suffix ("-3-g1a2b3c4", "-dirty") makes a version later than its tag but
+// earlier than the next. Sets `ok` to false when either isn't a version.
+int compareVersions(const char* a, const char* b, bool* ok = nullptr);
 
 // /sys/firmware: updates by upload or from a URL, confirmation and rollback
 // (docs/DESIGN.md section 5.4).
@@ -18,14 +28,28 @@ public:
     // links an HTTP client and TLS (about 130 KB of flash with ESP-IDF's
     // certificate bundle). Before Device::begin().
     Firmware& downloads();
+    // Offers /sys/firmware/github: updates from the latest release of a
+    // GitHub repository ("owner/repo"), whose asset named `asset` is the
+    // image ("{target}" stands for the chip, "esp32", and "{version}" for
+    // the tag without its "v"). A URL instead of "owner/repo" names another
+    // server's latest-release endpoint answering as GitHub's does (Gitea,
+    // Forgejo, a test server). Implies downloads(). Before Device::begin().
+    Firmware& github(const char* repo, const char* asset);
 
     void describe(tesser::Object& o) override;
 
     FirmwareState state() const { return state_; }
     bool pending() const { return pending_; }
 
+    ReleaseState release() const;
+
     // A new image is confirmed once the device has been online this long.
     static constexpr uint32_t kConfirmAfterMs = 60000;
+    // Automatic release checks: the first once the device has been online
+    // this long, then one a day, or an hour after one that failed.
+    static constexpr uint32_t kFirstCheckMs = 60000;
+    static constexpr uint32_t kCheckEveryMs = 24u * 3600 * 1000;
+    static constexpr uint32_t kRetryCheckMs = 3600u * 1000;
 
     // Used by transfers, from their own tasks: they take the API lock.
     void progress(uint32_t received, uint32_t total);
@@ -53,6 +77,18 @@ private:
     tesser::Node* progressNode_ = nullptr;
     tesser::Node* errorNode_ = nullptr;
     tesser::Node* pendingNode_ = nullptr;
+
+    // /sys/firmware/github. Only github() creates one, so the code isn't
+    // linked without it.
+    class Feed {
+    public:
+        virtual ~Feed() = default;
+        virtual void describe(tesser::Object& o) = 0;
+        virtual void tick(uint32_t nowMs) = 0;
+        virtual ReleaseState state() const = 0;
+    };
+    class GithubFeed;
+    std::unique_ptr<Feed> feed_;
 };
 
 }  // namespace tesserkit

@@ -15,8 +15,9 @@ if(DEFINED NO_DEFAULT_NETWORK)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE NO_DEFAULT_NETWORK=${NO_DEFAULT_NETWORK})
 endif()
 # Options: -DWITH_DOWNLOADS=1 adds updates from a URL (firmware.downloads()),
+# -DWITH_GITHUB=1 those and updates from GitHub releases (firmware.github()),
 # -DWITH_ARTNET=1 the ArtNet service, -DWITH_MQTT=1 the Mqtt bridge.
-foreach(option WITH_DOWNLOADS WITH_ARTNET WITH_MQTT)
+foreach(option WITH_DOWNLOADS WITH_GITHUB WITH_ARTNET WITH_MQTT)
     if(DEFINED ${option})
         target_compile_definitions(${COMPONENT_LIB} PRIVATE ${option}=${${option}})
     endif()

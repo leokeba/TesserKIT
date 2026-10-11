@@ -172,11 +172,16 @@ struct Ota : tesserkit::Ota {
     tesser::Check rollback() override;
 };
 
+// Serves `files` with status 200, or the status in `statuses`; anything
+// else is a 404.
 struct HttpClient : tesserkit::HttpClient {
     std::map<std::string, std::string> files;
+    std::map<std::string, int> statuses;
     bool announceLength = true;
-    tesser::Check get(const char* url, const std::function<tesser::Check(int64_t)>& length,
-                      const std::function<tesser::Check(const uint8_t*, size_t)>& data) override;
+    size_t cutAt = 0;      // bytes after which the transfer fails (0: never)
+    bool unreachable = false;
+    std::vector<std::string> requests;
+    tesser::Check get(const char* url, const std::function<tesser::Check(tesserkit::HttpResponse&)>& fn) override;
 };
 
 struct Coredump : tesserkit::Coredump {

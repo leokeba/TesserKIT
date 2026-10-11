@@ -91,7 +91,7 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
 
 ### 3.3 Platform layer
 
-Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads), `Coredump`, `Udp` (Art-Net) and `MqttClient`:
+Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads and release checks), `Coredump`, `Udp` (Art-Net) and `MqttClient`:
 
 - `src/tesserkit/platform/esp/` implements them on ESP-IDF APIs, which Arduino-ESP32 3.x also ships, so one implementation serves both.
 - `test/fake_platform.*` implements them in memory for host tests: a Wi-Fi radio whose scans and connections the test scripts, a clock the test advances, an OTA partition that's a byte vector.
@@ -243,16 +243,21 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
   pending       boolean: running a new image that isn't confirmed yet
   confirm       action, Admin: mark the running image valid now
   rollback      action, Admin, ui.confirm: boot the previous image
-  github/       (with fw.github("owner/repo", "asset-{target}.bin"))
-    latest      string          available  boolean
-    check       deferred action → latest version
-    update      action: download the latest release's asset
+  github/       (with fw.github("owner/repo", "name-{target}.bin"))
+    repo        string
+    latest      string: the latest release's tag
+    status      enum: unchecked, checking, current, available, failed
+    error       string (status = failed)
+    autoCheck   boolean, persisted, Admin
+    check       deferred action → the latest release's tag
+    update      action, Admin, ui.confirm: install the latest release (status = available)
 ```
 
 - **Upload:** a `PUT /api/sys/firmware/image` with the raw `.bin` as body, streamed to the next OTA slot through a TesserAPI file node (§14). TesserUI's file widget shows progress. The image header is checked on the first chunk (wrong chip or not an app image is `invalid_value` before anything is written). A completed upload sets the boot slot and restarts after the reply. The announced size is erased in 64 KB blocks just ahead of the bytes written: a 1 MB image uploads in 12 to 15 s on a classic ESP32 (25 s erasing sector by sector as it arrives). Erasing the whole image at once is as fast but keeps the idle task from running for over 5 s, which trips the task watchdog (a panic on Arduino).
 - **Download** (`fw.downloads()`, before `begin()`): `esp_http_client` in a task of its own (8 KB of stack), following redirects (release assets redirect to a CDN), streaming through the same checks as an upload, with progress in `progress`. HTTPS uses ESP-IDF's certificate bundle (`CONFIG_MBEDTLS_CERTIFICATE_BUNDLE`). TLS and the client cost about 130 KB of flash, hence the opt-in: without `downloads()`, neither the action nor the client is linked. The action replies at once; completion shows in `state`.
 - **Rollback:** with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, a new image starts as `pending`. It is confirmed automatically once the device has been `online` (or serving, without Wi-Fi) for 60 s, or by `confirm`. A crash or reset before that boots the previous image. `rollback` makes the previous image boot next; it then starts `pending` too. ESP-IDF refuses an update while the running image is unconfirmed, so starting one confirms it: it is evidently working. Arduino-ESP32 confirms every new image at boot unless the application defines `verifyRollbackLater()`; TesserKIT defines it (returning true) whenever Firmware is linked, so the same rule applies there.
-- **GitHub releases** *(later)*: the device asks GitHub's API for the latest release (so the browser needs no internet, unlike ESP32-sveltekit), compares its tag with `version` (semver), and installs the asset whose name matches the pattern with `{target}` replaced (`esp32`, `esp32c3`...).
+- **GitHub releases** (`fw.github(repo, asset)`, before `begin()`; implies `downloads()`): the device asks `https://api.github.com/repos/<repo>/releases/latest` itself, so the browser needs no internet, unlike ESP32-sveltekit. The check runs in a task of its own (8 KB of stack) and reads the answer through an ArduinoJson filter as it arrives, keeping only the tag and the assets' names and URLs: WLED's answer is 72 KB. The asset named after the pattern is the image, with `{target}` replaced by the chip (`esp32`, `esp32c3`...) and `{version}` by the tag without its `v`. The status is `available` when the tag is later than `version` in semver order (a leading `v` ignored). A git describe version (`v1.2.0-3-g1a2b3c4`, `-dirty`) counts as later than its tag, so a development build isn't offered the release it started from; a version that isn't semver is offered any other release. `update` installs the asset as `download` would. A URL instead of `owner/repo` names another latest-release endpoint answering as GitHub's does (Gitea, Forgejo, `test/e2e_github.py`'s server). About 10 KB of flash above `downloads()`, linked only when `github()` is called.
+- **Checks:** `check`, and with `autoCheck` (on by default) once the device has been online for a minute, then daily, or an hour after a failure; never during an update. GitHub allows 60 unauthenticated requests an hour per address, far above a fleet's daily checks behind one router. Failures say why: `no release found` (404: no release yet, or a private repository), GitHub's rate limit (403, 429), a release without this chip's image (`v1.2.0 has no name-esp32c3.bin`, `latest` still shown), an unreadable or cut answer. On a classic ESP32, checking WLED's release takes 5 s and briefly takes about 50 KB of heap, mostly TLS. Releases come from CI (§13).
 - **Fleets:** a gateway reaches its Wi-Fi peers' `/sys/firmware/download` like any other path (`/peers/<name>/sys/firmware/download`), so "update all" is one write per peer, without the browser fanning out (spin-seq's Remotes page). NowTP-only peers need NowTP streaming *(later, §14)*.
 
 ### 5.5 Backup
@@ -474,6 +479,7 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 | Device + System + Network + Time + Firmware + Backup | 113.3 KB |
 | The same with `CONFIG_TESSERKIT_MDNS=n` (`TESSERKIT_NO_MDNS`) | 77.8 KB |
 | `fw.downloads()` adds TLS, the certificate bundle and the HTTP client | about 130 KB |
+| `fw.github()` adds the release feed above `downloads()` (2026-10-11, `-DWITH_GITHUB=1` against `-DWITH_DOWNLOADS=1`) | 9.6 KB |
 | ArtNet (2026-10-11, ESP-IDF 6.2-dev, `-DWITH_ARTNET=1` against the example without it) | 9.2 KB |
 | Mqtt (the same, `-DWITH_MQTT=1`): TesserKIT's bridge 14.5 KB, esp-mqtt 12.7 KB, TCP transports, esp-tls and the TLS crypto they link, stdio | 110 KB |
 | Mqtt with `CONFIG_MQTT_TRANSPORT_SSL=n` and `CONFIG_MQTT_TRANSPORT_WEBSOCKET=n` (mqtt:// only) | 102 KB |
@@ -488,10 +494,10 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 
 ## 12. Testing
 
-1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), time and DST, timers (catch-up, no double runs), firmware upload checks, backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge (topics, commands with User access, sessions, intervals), Art-Net (scaling, gates, changes only, ArtPollReply's bytes). The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
+1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), time and DST, timers (catch-up, no double runs), firmware upload checks, release checks (versions, GitHub's answers and failures, scheduling), backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge (topics, commands with User access, sessions, intervals), Art-Net (scaling, gates, changes only, ArtPollReply's bytes). The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
 2. **Golden schemas:** each service's schema with its hints, checked in as `fixtures/*.json`. TesserUI renders them in its golden-model tests, so a hint change shows as a diff in both repositories.
-3. **On target:** `examples/idf/minimal` (and `examples/arduino/Minimal`, with `--app /lamp`), driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, sign-in with tokens over HTTP and WebSocket, a timer running, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. *(later)* a test firmware with every service and serial scripts.
-4. **CI:** host tests, ESP-IDF builds (5.1, 5.4, 5.5, latest × ESP32, ESP32-C3, ESP32-S3), Arduino-ESP32 3.x builds of the examples, the footprint budgets.
+3. **On target:** `examples/idf/minimal` (and `examples/arduino/Minimal`, with `--app /lamp`), driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, sign-in with tokens over HTTP and WebSocket, a timer running, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. Releases: `test/e2e_github.py` serves a release endpoint and a newer image from the test machine, and watches the device find it, install it and come back up to date; `--check-only` checks the device's own feed (GitHub's API). *(later)* a test firmware with every service and serial scripts.
+4. **CI:** each push to main runs the host tests, then releases the example (§13). *(later)* ESP-IDF builds (5.1, 5.4, 5.5, latest × ESP32, ESP32-C3, ESP32-S3), Arduino-ESP32 3.x builds of the examples, the footprint budgets.
 
 ## 13. Packaging
 
@@ -510,6 +516,7 @@ TesserKIT/
 
 - ESP-IDF component and PlatformIO/Arduino library, like TesserAPI and TesserUI. Dependencies: TesserAPI and TesserUI as public requirements; `espressif/mdns`, and `espressif/mqtt` from ESP-IDF 6 (part of ESP-IDF before); NowTP detected as TesserAPI does (`__has_include` or the build's component list).
 - Versions follow semver; TesserKIT pins compatible TesserAPI and TesserUI ranges.
+- **Releases:** `.github/workflows/firmware.yml` is a reusable workflow for ESP-IDF projects. It computes the next version, builds each target in `espressif/idf`'s container with `-DPROJECT_VER=<version>` (which becomes `/sys/firmware/version`), and publishes a release tagged `v<version>` with notes generated from the commits and, per target, `<name>-<target>.bin` (what `github()` installs) and `<name>-<target>-factory.bin` (bootloader, partition table and app merged, flashed at 0x0 on a new board). The version is the last `vX.Y.Z` tag with its patch raised, or what `version-command` prints when that is higher: a minor or major release is a commit raising that version (`library.json` here). A rerun on a released commit keeps its version. `dependencies` checks out repositories next to the project, where a developer's siblings are. TesserKIT's `release.yml` calls it on each push to main, after the host tests, for `examples/idf/minimal` with `-DWITH_GITHUB=1` on ESP32, ESP32-C3 and ESP32-S3; applications call it for their own firmware (`uses: leokeba/TesserKIT/.github/workflows/firmware.yml@main`). `[skip ci]` in a commit message skips the release.
 
 ## 14. Follow-ups wanted in other layers
 
@@ -559,9 +566,9 @@ TesserKIT/
 | 2 *(done)* | Timers, Auth | spin-seq's timers and a locked-down device. |
 | 3 | helionext on TesserKIT, in tiny-heliostat (§10.1) | Every helionext page usable, with custom elements only for the keyframes and the sky. |
 | 4 | spin-seq on TesserKIT, NowTP channel following and pairing, shared clock | A master and three remotes run a synchronized sequence; fleet update through the master. |
-| 5 | GitHub releases, Battery, Sleep, Ethernet, Log, Home Assistant discovery | *(later)* |
+| 5 | Battery, Sleep, Ethernet, Log, Home Assistant discovery | *(later)* |
 
-Mqtt and ArtNet were built ahead of the roadmap (2026-10-11), ArtNet for tiny-heliostat.
+Mqtt and ArtNet were built ahead of the roadmap (2026-10-11), ArtNet for tiny-heliostat, and so were GitHub releases with the workflow that publishes them (2026-10-11).
 
 ## 16. Decisions
 
@@ -570,6 +577,7 @@ Mqtt and ArtNet were built ahead of the roadmap (2026-10-11), ArtNet for tiny-he
 - **NVS, no filesystem:** the persisted state is small (a few KB), NVS levels wear, and the flash a filesystem partition takes goes to the app slots instead.
 - **The platform layer:** the services' logic (state machines, validation) is where bugs live, and it is host-testable only if ESP calls are behind an interface. ESP32-sveltekit has no tests.
 - **Stateless signed tokens** rather than sessions in RAM: logins survive restarts and OTA updates, and nothing grows per client. Revocation is all-or-nothing (`logoutAll`), acceptable for devices with a handful of users.
+- **Versions from tags, not from a file CI commits:** a release's version is derived from the last tag, so main never moves under a developer's feet and no bot commit triggers another run; the manifests' version only marks minor and major steps.
 - **Firmware updates checked on the device, not in the browser:** the browser may have no internet (a field on the device's access point), and the device is the one that knows its chip and slot.
 - **MQTT commands with User access:** a broker is shared, and its clients aren't the device's admins. They drive the application; `/sys` (Wi-Fi, firmware, accounts) stays with whoever signs in to the device.
 - **`/set` filters by depth, not `#`:** `<prefix>/#` would bring every retained topic the device publishes back to it. Eight filters cost the broker nothing and bound the paths a command reaches, which writable application nodes don't exceed.

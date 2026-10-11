@@ -5,7 +5,8 @@
 //
 // For development, a gitignored main/secrets.h may define WIFI_SSID and
 // WIFI_PASSWORD (the factory default network), WIFI_TX_POWER (dBm) for
-// boards with a weak supply, and MQTT_URI (a broker, with -DWITH_MQTT=1).
+// boards with a weak supply, MQTT_URI (a broker, with -DWITH_MQTT=1), and
+// GITHUB_REPO and GITHUB_ASSET (another release feed, with -DWITH_GITHUB=1).
 #include "TesserKIT.h"
 
 #if __has_include("secrets.h")
@@ -14,6 +15,12 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
+// The releases .github/workflows/release.yml publishes for each push to main.
+#if !defined(GITHUB_REPO)
+#define GITHUB_REPO "leokeba/TesserKIT"
+#define GITHUB_ASSET "tesserkit-minimal-{target}.bin"
+#endif
 
 #if FOOTPRINT_BASELINE
 #include "esp_wifi.h"
@@ -98,7 +105,9 @@ extern "C" void app_main() {
     net.txPower(WIFI_TX_POWER);
 #endif
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");
-#if WITH_DOWNLOADS
+#if WITH_GITHUB
+    firmware.github(GITHUB_REPO, GITHUB_ASSET);  // and from a URL, as downloads()
+#elif WITH_DOWNLOADS
     firmware.downloads();  // updates from a URL: TLS and an HTTP client, about 130 KB
 #endif
 #if WITH_ARTNET
