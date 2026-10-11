@@ -1,7 +1,8 @@
 // MQTT on ESP-IDF's esp-mqtt (a component of ESP-IDF 5, espressif/mqtt from
 // the component registry since ESP-IDF 6). esp-mqtt runs its own task and
 // reconnects by itself; its events are posted to the device. Messages go
-// through a queue to a publishing task of ours: esp_mqtt_client_publish()
+// through a queue to a publishing task of the session's (both end with it,
+// freeing their memory): esp_mqtt_client_publish()
 // blocks on the network, and esp-mqtt's own queue (enqueue()) sends one
 // message per pass of its task, which waits up to a second for input.
 #if defined(ESP_PLATFORM)
@@ -33,8 +34,9 @@ constexpr uint64_t kOutboxLimit = 8 * 1024;  // esp-mqtt's: QoS 1 subscriptions 
 constexpr size_t kQueueLength = 32;           // messages waiting for the publishing task
 constexpr size_t kQueueBytes = 16 * 1024;     // and their bytes
 
-// A session's state, shared with esp-mqtt's task through the event handler.
-// Freed once its client is destroyed, when no handler can run any more.
+// A session's state, shared with esp-mqtt's task through the event handler
+// and with its publishing task, which frees it once its client is destroyed,
+// when no handler can run any more.
 struct Session {
     int32_t id = 0;
     EventSink sink;
@@ -43,34 +45,39 @@ struct Session {
     std::string error;  // the last error, told with the next disconnection
     std::atomic<bool> live{true};
     std::atomic<bool> connected{false};
-    std::atomic<int> queued{0};  // its messages in the queue: it outlives them
+    std::atomic<size_t> queuedBytes{0};
     esp_mqtt_client_handle_t handle = nullptr;
+    QueueHandle_t queue = nullptr;  // messages for its publishing task
 };
 
 struct Message {
-    Session* session;
     std::string topic, payload;
     bool retain;
 };
 
-QueueHandle_t g_queue = nullptr;
-std::atomic<size_t> g_queuedBytes{0};
+void finish(Session* s);
 
-// Publishes what the device's task queued, in order, blocking on the
-// network here rather than there.
-void publishTask(void*) {
-    for (;;) {
+// A session's publishing task: publishes what the device's task queued, in
+// order, blocking on the network here rather than there. Once the session
+// is stopped, it ends it (finish()), and with it the task and the queue:
+// nothing of a session outlives it.
+void publishTask(void* arg) {
+    Session* s = static_cast<Session*>(arg);
+    while (s->live.load()) {
         Message* m = nullptr;
-        if (xQueueReceive(g_queue, &m, portMAX_DELAY) != pdTRUE || !m) continue;
-        Session* s = m->session;
+        if (xQueueReceive(s->queue, &m, pdMS_TO_TICKS(100)) != pdTRUE || !m) continue;
         if (s->live.load() && s->connected.load()) {
             esp_mqtt_client_publish(s->handle, m->topic.c_str(), m->payload.data(), static_cast<int>(m->payload.size()), 0,
                                     m->retain ? 1 : 0);
         }
-        g_queuedBytes.fetch_sub(m->topic.size() + m->payload.size());
-        s->queued.fetch_sub(1);
+        s->queuedBytes.fetch_sub(m->topic.size() + m->payload.size());
         delete m;
     }
+    // Stopped: what is still queued isn't sent.
+    Message* m = nullptr;
+    while (xQueueReceive(s->queue, &m, 0) == pdTRUE) delete m;
+    finish(s);
+    vTaskDelete(nullptr);
 }
 
 void post(Session* s, Event::Type type, std::string text = std::string(), std::string data = std::string()) {
@@ -142,23 +149,17 @@ void onEvent(void* arg, esp_event_base_t, int32_t id, void* data) {
     }
 }
 
-// Publishes the will, disconnects and frees the session. Blocking: in a
-// task of its own.
+// Publishes the will, disconnects and frees the session. Blocking: in its
+// publishing task.
 void finish(Session* s) {
-    // The publishing task skips a stopped session's messages: they go fast.
-    while (s->queued.load() > 0) vTaskDelay(pdMS_TO_TICKS(10));
     if (s->connected.load()) {
         esp_mqtt_client_publish(s->handle, s->willTopic.c_str(), s->willPayload.data(),
                                 static_cast<int>(s->willPayload.size()), 0, 1);
         esp_mqtt_client_disconnect(s->handle);
     }
     esp_mqtt_client_destroy(s->handle);
+    vQueueDelete(s->queue);
     delete s;
-}
-
-void finishTask(void* arg) {
-    finish(static_cast<Session*>(arg));
-    vTaskDelete(nullptr);
 }
 
 class EspMqtt : public MqttClient {
@@ -167,15 +168,6 @@ public:
 
     int32_t start(const MqttConfig& c, EventSink sink) override {
         stop();
-        if (!g_queue) {
-            g_queue = xQueueCreate(kQueueLength, sizeof(Message*));
-            if (!g_queue) return 0;
-            if (xTaskCreate(publishTask, "tk_mqtt_pub", 4096, nullptr, 4, nullptr) != pdPASS) {
-                vQueueDelete(g_queue);
-                g_queue = nullptr;
-                return 0;
-            }
-        }
         Session* s = new Session();
         s->id = ++sessions_;
         s->sink = std::move(sink);
@@ -198,13 +190,18 @@ public:
         cfg.network.reconnect_timeout_ms = 5000;
         cfg.outbox.limit = kOutboxLimit;
         s->handle = esp_mqtt_client_init(&cfg);
-        if (!s->handle) {
+        s->queue = xQueueCreate(kQueueLength, sizeof(Message*));
+        if (!s->handle || !s->queue) {
+            if (s->handle) esp_mqtt_client_destroy(s->handle);
+            if (s->queue) vQueueDelete(s->queue);
             delete s;
             return 0;
         }
         esp_mqtt_client_register_event(s->handle, MQTT_EVENT_ANY, onEvent, s);
-        if (esp_mqtt_client_start(s->handle) != ESP_OK) {
+        if (esp_mqtt_client_start(s->handle) != ESP_OK ||
+            xTaskCreate(publishTask, "tk_mqtt_pub", 4096, s, 4, nullptr) != pdPASS) {
             esp_mqtt_client_destroy(s->handle);
+            vQueueDelete(s->queue);
             delete s;
             return 0;
         }
@@ -216,23 +213,21 @@ public:
         Session* s = session_;
         session_ = nullptr;
         if (!s) return;
+        // Its publishing task ends it: esp_mqtt_client_destroy() waits for
+        // esp-mqtt's task, which may be in a connection attempt for seconds,
+        // not in the device's task.
         s->live.store(false);
-        // esp_mqtt_client_destroy() waits for esp-mqtt's task, which may be
-        // in a connection attempt for seconds: not in the device's task.
-        if (xTaskCreate(finishTask, "tk_mqtt_end", 4096, s, 3, nullptr) != pdPASS) finish(s);
     }
 
     bool publish(const std::string& topic, const std::string& payload, bool retain) override {
         Session* s = session_;
         if (!s || !s->connected.load()) return false;
         size_t bytes = topic.size() + payload.size();
-        if (g_queuedBytes.load() + bytes > kQueueBytes) return false;
-        Message* m = new Message{s, topic, payload, retain};
-        s->queued.fetch_add(1);
-        g_queuedBytes.fetch_add(bytes);
-        if (xQueueSend(g_queue, &m, 0) != pdTRUE) {
-            g_queuedBytes.fetch_sub(bytes);
-            s->queued.fetch_sub(1);
+        if (s->queuedBytes.load() + bytes > kQueueBytes) return false;
+        Message* m = new Message{topic, payload, retain};
+        s->queuedBytes.fetch_add(bytes);
+        if (xQueueSend(s->queue, &m, 0) != pdTRUE) {
+            s->queuedBytes.fetch_sub(bytes);
             delete m;
             return false;
         }
