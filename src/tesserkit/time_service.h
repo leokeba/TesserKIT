@@ -22,7 +22,8 @@ public:
     void describe(tesser::Object& o) override;
 
     // Sets the clock from another source (GPS, RTC), which SNTP then
-    // doesn't override. Thread-safe.
+    // doesn't override. Takes the API lock: from onTick() or a task that may
+    // wait for it, not from a control loop (docs/DESIGN.md section 5.3).
     void external(int64_t epochMs);
     bool synced() const { return synced_; }
     TimeSource source() const { return source_; }

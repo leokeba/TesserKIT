@@ -223,6 +223,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - `tz` is applied with `setenv("TZ")` + `tzset()`, so `localtime()` follows it everywhere in the firmware.
 - `set` takes the browser's clock (TesserUI's `$now` hint value): a device without internet gets the time from whoever opens its page. helionext's "Sync Time" button.
 - `clock.external(epochMs)` lets the application feed another source (GPS, RTC); `source` says which one set the clock last. SNTP, when enabled and reachable, wins over `set` but not over `external`.
+- `external()` takes the API lock (recursive): call it from `dev.onTick()`, a handler or any task that may wait as long as the longest API operation, never from a time-critical one such as a control loop. Such a task hands the time over (a copy under its own lock) and the application calls `external()` from `onTick`.
 - `dev.onTimeSynced(fn)` fires on the first valid time after boot (timers and sun trackers wait for it).
 - SNTP's first request usually goes out before Wi-Fi is up; when the device comes online unsynced, Time asks again at once rather than at SNTP's next retry.
 - The `timezone` widget (TesserUI follow-up, §14) offers IANA names and writes the POSIX string the browser derives from them; until it exists, `tz` is a text field with an example placeholder.
@@ -334,6 +335,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 | Sleep | `sleep` action (deep sleep), wake-up pin and level *(p)*, `dev.onSleep(fn)` for the application to park its hardware. |
 | Ethernet | §5.2. |
 | Log | §5.1. |
+| ArtNet | `/sys/artnet` *(proposed)*: `enabled`, `universe`, and `mappings`, a list ≤ 8 of `{path, coarse, fine, min, max}` (channels 1–512, 0 unused, `fine` 0 for 8 bits), each written to its path through the API as `min + v/65535·(max−min)`, on change only, as Timers writes to paths; a mapping with a threshold writes a boolean (a gate). Answers ArtPoll (short name the label, long name the hostname) on UDP 6454. `status/`: packets, age, last universe. For tiny-heliostat (§10.1) and lighting-controlled devices. |
 
 ## 6. Persistence
 
@@ -404,22 +406,14 @@ TesserKIT devices are TesserAPI nodes, so the multi-node features are TesserAPI'
 
 ### 10.1 helionext (open-heliostat)
 
-The heliostat (classic ESP32, two DC servo axes with magnetic encoders, ADXL345, GPS) ports as one application tree. Its motors, encoders, sequencers and sensors come from [TesserMotion](https://github.com/leokeba/TesserMotion), a sibling library on TesserAPI, so devices without motors don't carry them:
+The heliostat is ported in its own repository, tiny-heliostat, whose `docs/DESIGN.md` is the spec of the port. In short:
 
-| Today | TesserKIT |
-|---|---|
-| `HeliostatService` (`/rest/heliostat`, router + save maps) | `/heliostat`: `currentSource`, `currentTarget` (enums over the sources' names, or strings with a `visibleWhen`), `sunTracker`, `mountOrientation` (`ui.form`: the draft, apply and read-back flow is TesserUI's form) |
-| `sourcesMap` with add, remove, rename actions | `/heliostat/sources`: a keyed list (key `name`) of `{name, azimuth, elevation}`; add, remove and rename are list writes |
-| `ServoControllerService` ×2 | TesserMotion's `Axis`: `api.mount("azimuth", azimuth)` |
-| Movement and target sequencers (keyframes, ≤ 16) | TesserMotion's `Sequencer`: lists of `{t, value}` with the actions `start`, `stop`, `clear`, drawn by the custom element `x-keyframes` (§14) |
-| `AccelCalibService`, `MountOrientationResolveService` | objects with `status` enums, `progress` bars, `visibleWhen` on the result fields, and `start`, `solve`, `apply` actions |
-| `ArtNetService`, GPS services | `/artnet`; `/gps` is TesserMotion's `NmeaGps`, which feeds `clock.external()` and the sun tracker's position |
-| Sun tracker "Sync Time" | `/sys/time/set` |
-| ADXL345 | TesserMotion's `Adxl345`; the calibration and mount orientation solvers stay in the application |
-| Teleplot UDP telemetry | watched values with `ui.widget "chart"` |
-| ESP32-sveltekit Wi-Fi, NTP, OTA, core dump | `Network`, `Time`, `Firmware`, `System` |
-
-New custom UI: `x-keyframes` (keyframe editor with a playhead) and `x-sky` (sun, source, target and mirror normal on a polar plot; it grows out of TesserUI's `sun-dial.js` example).
+- Classic ESP32 DevKitC, ESP-IDF only. Two DC servo axes with magnetic encoders, GPS.
+- Motors, encoders, axes, sequencers and the GPS come from [TesserMotion](https://github.com/leokeba/TesserMotion), a sibling library on TesserAPI, so devices without motors don't carry them. `NmeaGps` feeds `clock.external()` (§5.3) through the application's `onTick`.
+- `/heliostat` holds the sun position, the modes, and the named directions: one keyed list `directions` (helionext's `targetsMap`), with `source` and `target` naming entries and a `mode` enum.
+- Art-Net is received into `/heliostat/artnet` (`azimuth`, `elevation`); the heliostat decides what the values mean. A generic receiver mapping channels to tree paths is proposed as `/sys/artnet` (§5.9).
+- The calibration routines, the mount orientation, autotune, several heliostats and settings migration are dropped for now.
+- TesserKIT provides `/sys`: Device, System, Network, Time, Firmware (upload), Backup, Timers, Auth; the interface uses `dev.web().asset()` for the custom elements `x-sky` and `x-keyframes`, and TesserUI's `Views`.
 
 ### 10.2 spin-seq (spin-sequencer)
 
@@ -469,7 +463,7 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 
 ## 12. Testing
 
-1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), time and DST, timers (catch-up, no double runs), firmware upload checks, backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge's topic mapping.
+1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), time and DST, timers (catch-up, no double runs), firmware upload checks, backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge's topic mapping. The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
 2. **Golden schemas:** each service's schema with its hints, checked in as `fixtures/*.json`. TesserUI renders them in its golden-model tests, so a hint change shows as a diff in both repositories.
 3. **On target:** `examples/idf/minimal` (and `examples/arduino/Minimal`, with `--app /lamp`), driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, sign-in with tokens over HTTP and WebSocket, a timer running, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. *(later)* a test firmware with every service and serial scripts.
 4. **CI:** host tests, ESP-IDF builds (5.1, 5.4, 5.5, latest × ESP32, ESP32-C3, ESP32-S3), Arduino-ESP32 3.x builds of the examples, the footprint budgets.
@@ -494,7 +488,7 @@ TesserKIT/
 
 ## 14. Follow-ups wanted in other layers
 
-**TesserAPI** (phase 7 of its roadmap; each with its section in TesserAPI's DESIGN.md). As of 2026-10-10, done: access levels, secrets, streamed replies, `view=hash`, re-advertisement, per-record persistence, `erase()` and `restore()`. In progress: object arguments, keyed lists, arrays, file nodes.
+**TesserAPI** (phase 7 of its roadmap; each with its section in TesserAPI's DESIGN.md). Done as of 2026-10-11.
 
 | Item | For |
 |---|---|
@@ -538,7 +532,7 @@ TesserKIT/
 | 0 | TesserAPI follow-ups of §14 | Host-tested; the HTTP and WebSocket parts checked on hardware. |
 | 1 *(done)* | Device, System, Network, Time, Firmware (upload, download, rollback), Backup; the TesserUI widgets they need | A fresh classic ESP32 is provisioned from a phone through the captive portal, updated from the browser, rolled back after a crashing image, backed up and restored. Footprint within §11, compared with ESP32-sveltekit. |
 | 2 *(done)* | Timers, Auth | spin-seq's timers and a locked-down device. |
-| 3 | helionext on TesserKIT | Every helionext page usable, with custom elements only for the keyframes and the sky. |
+| 3 | helionext on TesserKIT, in tiny-heliostat (§10.1) | Every helionext page usable, with custom elements only for the keyframes and the sky. |
 | 4 | spin-seq on TesserKIT, NowTP channel following and pairing, shared clock | A master and three remotes run a synchronized sequence; fleet update through the master. |
 | 5 | Mqtt, GitHub releases, Battery, Sleep, Ethernet, Log | *(later)* |
 
