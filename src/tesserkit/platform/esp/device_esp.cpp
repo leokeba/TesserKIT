@@ -68,7 +68,7 @@ void captiveRedirect(bool on, uint32_t apIp) {
 bool Device::startServer() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = httpPort_;
-    config.stack_size = 8192;
+    config.stack_size = 6144;  // measured: 3 KB used serving the interface, uploads and schemas
     config.lru_purge_enable = true;
     // What is used, never set by hand: the API (4, CORS 1, WebSocket 1), the
     // page and the bundle (2), and the application's (assets included).

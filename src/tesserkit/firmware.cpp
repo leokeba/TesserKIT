@@ -17,6 +17,17 @@ using tesser::Status;
 
 namespace {
 
+// What an HTTPS connection takes from the heap at its peak, its task
+// included: about 34 KB measured on a classic ESP32 fetching a GitHub
+// release, with a margin. Below it the handshake would fail, or leave the
+// rest of the firmware without memory.
+constexpr uint32_t kTlsHeap = 44 * 1024;
+
+Check tlsRoom(Device& dev, const std::string& url) {
+    if (url.compare(0, 8, "https://") != 0 || dev.core().freeHeap() >= kTlsHeap) return Check::ok();
+    return Check::fail(Status::Busy, "not enough free memory for HTTPS now (about 44 KB needed)");
+}
+
 // An upload to /sys/firmware/image, streamed to the next OTA slot. It runs
 // in the HTTP server's task, outside the API lock.
 class ImageUpload : public tesser::FileSink {
@@ -254,8 +265,7 @@ void Firmware::GithubFeed::describe(tesser::Object& o) {
      }).label("Check now");
     g.action("update", [this]() -> Check {
          if (state_ != ReleaseState::Available) return Check::fail(Status::NotAllowed, "no newer release");
-         Status st = fw_.download(assetUrl_);
-         return st == Status::Ok ? Check::ok() : Check::fail(st, st == Status::Busy ? "an update is in progress" : nullptr);
+         return fw_.download(assetUrl_);
      })
         .label("Install")
         .writeAccess(Access::Admin)
@@ -323,6 +333,14 @@ void Firmware::GithubFeed::check() {
                           ? repo_
                           : "https://api.github.com/repos/" + repo_ + "/releases/latest";
     setState(ReleaseState::Checking);
+    Check room = tlsRoom(dev, url);
+    if (!room.isOk()) {
+        Latest r;
+        r.status = room.status;
+        r.error = room.message;
+        checked(r);
+        return;
+    }
     bool spawned = http && dev.core().spawn("tk_release", 8192, [this, http, url, pattern = asset_,
                                                                   target = dev.info().target] {
         checked(fetch(*http, url, pattern, target));
@@ -551,11 +569,15 @@ void Firmware::installed() {
     dev_.restartIn(500);  // after the reply
 }
 
-Status Firmware::download(const std::string& url) {
-    if (url.compare(0, 7, "http://") != 0 && url.compare(0, 8, "https://") != 0) return Status::InvalidValue;
+Check Firmware::download(const std::string& url) {
+    if (url.compare(0, 7, "http://") != 0 && url.compare(0, 8, "https://") != 0) {
+        return Check::fail(Status::InvalidValue, "http:// or https://");
+    }
     HttpClient* http = dev_.platform().http;
-    if (!http) return Status::NotAllowed;
-    if (!begin(FirmwareState::Downloading)) return Status::Busy;
+    if (!http) return Check::fail(Status::NotAllowed, "no HTTP client in this build");
+    Check room = tlsRoom(dev_, url);
+    if (!room.isOk()) return room;
+    if (!begin(FirmwareState::Downloading)) return Check::fail(Status::Busy, "an update is in progress");
     Ota& ota = *ota_;
     uint16_t chipId = dev_.info().imageChipId;
     uint32_t slot = ota.nextSlotSize();
@@ -589,9 +611,9 @@ Status Firmware::download(const std::string& url) {
     });
     if (!spawned) {
         failed("no memory for the download");
-        return Status::Internal;
+        return Check::fail(Status::Internal, "no memory for the download");
     }
-    return Status::Ok;
+    return Check::ok();
 }
 
 }  // namespace tesserkit

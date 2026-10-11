@@ -66,7 +66,7 @@ private:
     // Starts an update in `state`; false when one is already running.
     bool begin(FirmwareState state);
     void setState(FirmwareState s);
-    tesser::Status download(const std::string& url);
+    tesser::Check download(const std::string& url);
 
     Ota* ota_ = nullptr;
     FirmwareState state_ = FirmwareState::Idle;

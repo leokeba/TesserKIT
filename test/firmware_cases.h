@@ -307,6 +307,37 @@ TEST(firmware_github_check_and_update) {
     CHECK_EQ(r.fake.core.restarts, 1);
 }
 
+TEST(firmware_https_waits_for_memory) {
+    GithubRig r;
+    r.fake.http.files[kLatest] = releaseJson("v1.2.0", {"fw-esp32.bin"});
+    r.fake.http.files["https://example.com/fw.bin"] = fake::image(0, 54321);
+    CHECK(r.dev.begin());
+    // Too little heap for a TLS handshake: refused before anything starts,
+    // rather than leaving the firmware without memory.
+    r.fake.core.heap = 30000;
+    rig::Reply c = r.check();
+    CHECK_EQ(c.status, Status::Busy);
+    CHECK(r.fake.http.requests.empty());
+    CHECK_EQ(r.value("/sys/firmware/github/status"), "\"failed\"");
+    CHECK(r.value("/sys/firmware/github/error").find("memory") != std::string::npos);
+    CHECK_EQ(r.set("/sys/firmware/download", "\"https://example.com/fw.bin\"").status, Status::Busy);
+    CHECK_EQ(r.fw.state(), FirmwareState::Idle);
+    // Plain HTTP needs no handshake.
+    r.fake.http.files["http://192.168.1.3/fw.bin"] = fake::image(0, 54321);
+    CHECK_EQ(r.set("/sys/firmware/download", "\"http://192.168.1.3/fw.bin\"").status, Status::Ok);
+}
+
+TEST(firmware_https_once_memory_is_back) {
+    GithubRig r;
+    r.fake.http.files[kLatest] = releaseJson("v1.2.0", {"fw-esp32.bin"});
+    CHECK(r.dev.begin());
+    r.fake.core.heap = 30000;
+    CHECK_EQ(r.check().status, Status::Busy);
+    r.fake.core.heap = 180000;
+    CHECK_EQ(r.check().status, Status::Ok);
+    CHECK_EQ(r.value("/sys/firmware/github/error"), "\"\"");
+}
+
 TEST(firmware_github_up_to_date) {
     GithubRig r;
     r.fake.http.files[kLatest] = releaseJson("v1.0.0", {"fw-esp32.bin"});
