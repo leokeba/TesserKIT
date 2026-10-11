@@ -25,7 +25,7 @@ void loop() {}
 
 A fresh device opens an access point named after it (`heliostat-a67c`) with a captive portal: join it from a phone and the interface opens. Add a Wi-Fi network there; once joined, the device is at `http://heliostat-a67c.local/`.
 
-Or open the launcher, [leokeba.github.io/TesserKIT](https://leokeba.github.io/TesserKIT/), in Chrome: it reaches a device over USB with no network at all, by its address, or among those [TesserUI's bridge](https://github.com/leokeba/TesserUI/tree/main/bridge) finds nearby.
+Or open the launcher, [leokeba.github.io/TesserKIT](https://leokeba.github.io/TesserKIT/), in Chrome: it reaches a device over USB or Bluetooth with no network at all, by its address, or among those [TesserUI's bridge](https://github.com/leokeba/TesserUI/tree/main/bridge) finds nearby.
 
 It aims at most of [ESP32-sveltekit](https://github.com/theelims/ESP32-sveltekit)'s functionality: a library rather than a template, every service a subtree reachable over HTTP, WebSocket, serial, ESP-NOW and MQTT, the whole interface within a 50 KB bundle, and settings in NVS with no filesystem partition.
 
@@ -53,6 +53,7 @@ On a classic ESP32 with ESP-IDF and `-Os`, the five services add 113 KB of flash
 
 - **ESP-IDF:** `examples/idf/minimal` (it finds TesserAPI and TesserUI next to this repository, or through `TESSERAPI_PATH` and `TESSERUI_PATH`). Its `sdkconfig.defaults` selects `partitions/tesserkit_4mb.csv`, rollback and core dumps.
 - **Arduino / PlatformIO:** `examples/arduino/Minimal`, with TesserAPI, TesserUI and ArduinoJson 7.
+- **Bluetooth:** `examples/idf/bluetooth` and `examples/arduino/Bluetooth` (ESP32-C3, ESP32-S3) add TesserAPI's Bluetooth LE transport beside Wi-Fi: the launcher reaches the device from a phone with no network in common.
 - **Host tests:** `cmake -S . -B build && cmake --build build -j && ctest --test-dir build`.
 - **On hardware:** `python3 test/e2e_device.py http://<ip> [--image app.bin] [--crash-image crash.bin]`; ArtNet and Mqtt: the example built with `-DWITH_ARTNET=1 -DWITH_MQTT=1`, then `uv run --with paho-mqtt python test/e2e_services.py http://<ip> --broker <host>`; GitHub releases: `python3 test/e2e_github.py http://<ip> --image newer.bin --tag v9.9.9` (instructions in the script).
 
