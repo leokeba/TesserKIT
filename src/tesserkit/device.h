@@ -60,6 +60,9 @@ protected:
     virtual void tick(uint32_t nowMs) { (void)nowMs; }
     // A platform event, in the device's task, under the API lock.
     virtual void event(const Event& e) { (void)e; }
+    // A factory reset, before the restart: erase what the service keeps
+    // outside the device's storage (a radio's pairing key).
+    virtual void factoryReset() {}
 
     Device& dev_;
 

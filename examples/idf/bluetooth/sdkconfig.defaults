@@ -23,3 +23,11 @@ CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=517
 # Buffers for notifications in flight: a long reply streams through them.
 CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=24
+# BleTransport is a peripheral with one client at a time: the other roles,
+# the GATT client, bonding and two more connections only take RAM.
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_GATT_CLIENT=n
+CONFIG_BT_NIMBLE_SECURITY_ENABLE=n
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BTDM_CTRL_BLE_MAX_CONN=1

@@ -1,5 +1,6 @@
 // A TesserKIT device on Arduino reachable over Bluetooth LE as well as Wi-Fi:
-// the Minimal sketch plus TesserAPI's BleTransport (the Nordic UART Service).
+// the Minimal sketch plus the Bluetooth service (TesserAPI's BleTransport, the
+// Nordic UART Service).
 // Open the launcher (https://leokeba.github.io/TesserKIT/) in Chrome on a
 // phone or a laptop, choose Bluetooth, then "bluetooth-xxxx": the interface
 // comes from the launcher, the tree over Bluetooth, with no Wi-Fi network in
@@ -19,7 +20,6 @@
 // copy it next to the sketch as partitions.csv, or in PlatformIO set
 // board_build.partitions to it.
 #include <TesserKIT.h>
-#include <tesser/transports/ble_transport.h>
 
 #if __has_include("secrets.h")
 #include "secrets.h"  // gitignored: WIFI_SSID, WIFI_PASSWORD for development
@@ -53,8 +53,8 @@ tesserkit::Firmware firmware(dev);
 tesserkit::Backup backup(dev);
 tesserkit::Timers timers(dev);
 tesserkit::Auth auth(dev);  // open until an admin account exists
+tesserkit::Bluetooth bluetooth(dev);  // /sys/bluetooth: on or off, its name, who is connected
 tesser::StreamTransport serialApi(dev.api(), Serial);  // USB, as in Minimal
-tesser::BleTransport ble(dev.api());
 
 void setup() {
     Serial.begin(115200);
@@ -64,13 +64,11 @@ void setup() {
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");
     dev.api().mount("lamp", lamp).label("Lamp").ui("icon", "bulb");
     dev.cors("https://leokeba.github.io");  // the launcher, reaching the device by its address
-    dev.begin();
-    ble.begin(dev.hostname().c_str());  // the name the browser's chooser shows
+    dev.begin();  // Bluetooth too, under the hostname: what the browser's chooser shows
 }
 
 void loop() {
     serialApi.poll();
-    ble.poll();  // requests from Bluetooth, handled here
     analogWrite(LAMP_PIN, lamp.on ? lamp.brightness : 0);
     delay(5);
 }

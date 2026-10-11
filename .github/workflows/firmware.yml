@@ -17,6 +17,12 @@
 # a commit raising that version. A rerun on a released commit keeps its
 # version. Each target gives <name>-<target>.bin, the image devices install,
 # and <name>-<target>-factory.bin, the whole flash for a new board (0x0).
+# Several firmwares go in one release with `projects` instead of `project`,
+# `name` and `build-args`:
+#
+#       projects: |
+#         [{"project": "firmware", "name": "heliostat"},
+#          {"project": "gateway", "name": "gateway", "build-args": "-DUSB=1"}]
 name: Firmware release
 
 on:
@@ -25,11 +31,15 @@ on:
       project:
         description: The ESP-IDF project's directory in the repository
         type: string
-        required: true
+        default: ''
       name:
         description: The assets' names begin with it
         type: string
-        required: true
+        default: ''
+      projects:
+        description: 'Several firmwares, as a JSON list of {"project", "name", "build-args"}, instead of project, name and build-args'
+        type: string
+        default: ''
       targets:
         description: The chips, as a JSON list
         type: string
@@ -60,7 +70,29 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.next.outputs.version }}
+      firmware: ${{ steps.firmware.outputs.firmware }}
     steps:
+      - id: firmware
+        env:
+          PROJECTS: ${{ inputs.projects }}
+          PROJECT: ${{ inputs.project }}
+          NAME: ${{ inputs.name }}
+          BUILD_ARGS: ${{ inputs.build-args }}
+        run: |
+          if [ -z "$PROJECTS" ]; then
+            if [ -z "$PROJECT" ] || [ -z "$NAME" ]; then
+              echo "::error::give project and name, or projects"
+              exit 1
+            fi
+            PROJECTS=$(jq -cn --arg p "$PROJECT" --arg n "$NAME" --arg a "$BUILD_ARGS" \
+              '[{project: $p, name: $n, "build-args": $a}]')
+          fi
+          if ! jq -e 'type == "array" and length > 0 and all(.[]; (.project | type) == "string" and (.name | type) == "string")' \
+            <<< "$PROJECTS" > /dev/null; then
+            echo "::error::projects must be a JSON list of {\"project\", \"name\", \"build-args\"}"
+            exit 1
+          fi
+          echo "firmware=$(jq -c 'map({project, name, "build-args": (.["build-args"] // "")})' <<< "$PROJECTS")" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -98,6 +130,7 @@ jobs:
     strategy:
       matrix:
         target: ${{ fromJSON(inputs.targets) }}
+        firmware: ${{ fromJSON(needs.version.outputs.firmware) }}
     defaults:
       run:
         shell: bash
@@ -125,12 +158,12 @@ jobs:
             echo "$repo $(git -C "$dir" rev-parse --short HEAD)"
           done
       - name: Build
-        working-directory: ${{ github.event.repository.name }}/${{ inputs.project }}
+        working-directory: ${{ github.event.repository.name }}/${{ matrix.firmware.project }}
         env:
           TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.version.outputs.version }}
-          NAME: ${{ inputs.name }}
-          BUILD_ARGS: ${{ inputs.build-args }}
+          NAME: ${{ matrix.firmware.name }}
+          BUILD_ARGS: ${{ matrix.firmware.build-args }}
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
           # BUILD_ARGS is split into words on purpose.
@@ -147,7 +180,7 @@ jobs:
           python -m esptool --chip "$TARGET" merge_bin -o "$GITHUB_WORKSPACE/dist/$NAME-$TARGET-factory.bin" @flash_args
       - uses: actions/upload-artifact@v4
         with:
-          name: firmware-${{ matrix.target }}
+          name: firmware-${{ matrix.firmware.name }}-${{ matrix.target }}
           path: dist/*.bin
           if-no-files-found: error
           retention-days: 1

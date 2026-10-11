@@ -69,6 +69,7 @@ private:
     void lost(uint32_t nowMs);
     void checkSettings(uint32_t nowMs);
     void updateAp(uint32_t nowMs);
+    void reportState();
     void applyMdns();
     StaConfig config(const WifiNetwork& n) const;
     const WifiNetwork* find(const std::string& ssid) const;

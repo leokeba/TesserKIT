@@ -1,0 +1,141 @@
+// Every TesserKIT service and transport in one firmware, with ESP-IDF, and
+// the factory defaults each one takes. A starting point to strip down: the
+// minimal example is the other end.
+//
+// Reach it from the launcher (https://leokeba.github.io/TesserKIT/): over USB,
+// Bluetooth, the network or the bridge; from its own page; over MQTT and
+// Art-Net; and from the nodes nearby over ESP-NOW, which it shows under
+// Nodes nearby (a UI host). Two boards running it show each other.
+//
+// A gitignored main/secrets.h may define:
+//   WIFI_SSID, WIFI_PASSWORD  the factory default network
+//   WIFI_TX_POWER             dBm, for boards with a weak supply
+//   MQTT_URI                  a broker, enabled from the start
+//   ADMIN_PASSWORD            an "admin" account from the start (else the
+//                             device is open until one is added)
+//   NOWTP_PAIRING_CODE        what pairings between nodes must know
+#include "TesserKIT.h"
+#include "driver/ledc.h"
+
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+
+namespace {
+
+// The LED: LED_GPIO (-DLED_GPIO=n), by default GPIO 2, the blue LED of most
+// ESP32 devkits, dimmed with PWM. Each write applies at once, whoever makes it
+// (the interface, a timer, Art-Net, MQTT, a node nearby, the settings
+// restored at boot).
+#if !defined(LED_GPIO)
+#define LED_GPIO 2
+#endif
+
+struct Led {
+    bool on = false;
+    int brightness = 128;
+
+    void begin() {
+        ledc_timer_config_t timer = {};
+        timer.speed_mode = LEDC_LOW_SPEED_MODE;
+        timer.duty_resolution = LEDC_TIMER_8_BIT;
+        timer.timer_num = LEDC_TIMER_0;
+        timer.freq_hz = 5000;
+        timer.clk_cfg = LEDC_AUTO_CLK;
+        ledc_timer_config(&timer);
+        ledc_channel_config_t channel = {};
+        channel.gpio_num = LED_GPIO;
+        channel.speed_mode = LEDC_LOW_SPEED_MODE;
+        channel.channel = LEDC_CHANNEL_0;
+        channel.timer_sel = LEDC_TIMER_0;
+        ledc_channel_config(&channel);
+        apply();
+    }
+    void apply() const {
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, on ? static_cast<uint32_t>(brightness) : 0);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    }
+};
+
+void describe(tesser::Object& o, Led& led) {
+    o.value("on", [&led] { return led.on; }, [&led](bool on) { led.on = on; led.apply(); }).persist();
+    o.value("brightness", [&led] { return led.brightness; }, [&led](int b) { led.brightness = b; led.apply(); })
+        .range(0, 255)
+        .step(5)
+        .persist();
+}
+
+Led led;
+
+tesserkit::Device dev("TesserKIT");
+tesserkit::System sys(dev);           // /sys/status, restart, factory reset, core dump
+tesserkit::Network net(dev);          // Wi-Fi, access point, captive portal, mDNS
+tesserkit::Time timekeeper(dev);      // SNTP, time zone
+tesserkit::Firmware firmware(dev);    // upload, URL, GitHub releases, rollback
+tesserkit::Backup backup(dev);        // the settings as a file
+tesserkit::Timers timers(dev);        // daily schedules
+tesserkit::Auth auth(dev);            // accounts and sign-in
+tesserkit::Mqtt mqtt(dev);            // a broker bridge
+tesserkit::ArtNet artnet(dev);        // lighting consoles
+tesserkit::Bluetooth bluetooth(dev);  // the launcher from a phone
+tesserkit::NowTp nowtp(dev);          // the nodes nearby over ESP-NOW (after Network: Wi-Fi first)
+// The launcher's USB way: envelopes on the console's UART, Admin (physical
+// access). Logs stay at warnings (sdkconfig.defaults).
+tesser::UartTransport serialApi(dev.api(), UART_NUM_0);
+
+}  // namespace
+
+extern "C" void app_main() {
+    // Factory defaults: what a new device, or one reset, starts with.
+#if defined(WIFI_SSID) && defined(WIFI_PASSWORD)
+    net.defaultNetwork(WIFI_SSID, WIFI_PASSWORD);
+#endif
+#if defined(WIFI_TX_POWER)
+    net.txPower(WIFI_TX_POWER);
+#endif
+    net.apMode(tesserkit::ApMode::Fallback);  // its own network while no other is joined
+    timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3").defaultServer("pool.ntp.org");
+    // Updates from this repository's releases, and from any URL.
+    firmware.github("leokeba/TesserKIT", "tesserkit-full-{target}.bin");
+#if defined(ADMIN_PASSWORD)
+    auth.defaultAdmin("admin", ADMIN_PASSWORD);
+#endif
+    tesserkit::Timer evening;  // the LED on at dusk on weekdays
+    snprintf(evening.name, sizeof(evening.name), "%s", "evening");
+    snprintf(evening.time, sizeof(evening.time), "%s", "19:30");
+    evening.days = 0x1F;
+    evening.path = "/led/on";
+    evening.value = "true";
+    timers.add(evening);
+    mqtt.tls().publish("/led", 0).publish("/sys/status", 10000);
+#if defined(MQTT_URI)
+    mqtt.broker(MQTT_URI).enable(true);
+#endif
+    // Universe 0: channel 1 dims the LED, channel 2 above half switches it on.
+    tesserkit::ArtNetMapping brightness;
+    brightness.path = "/led/brightness";
+    brightness.coarse = 1;
+    brightness.max = 255;
+    tesserkit::ArtNetMapping on;
+    on.path = "/led/on";
+    on.coarse = 2;
+    on.threshold = 128;
+    artnet.universe(0).map(brightness).map(on);
+#if defined(NOWTP_PAIRING_CODE)
+    nowtp.pairingCode(NOWTP_PAIRING_CODE);
+#endif
+
+    // The application: the LED, and a dashboard over it and the nodes nearby
+    // ("$" stands for each node under /peers).
+    led.begin();
+    dev.api().mount("led", led).label("LED").ui("icon", "bulb");
+    static tesserui::Views views(dev.api());
+    auto& home = views.page("overview", "Overview").icon("home");
+    home.card("LED").node("/led");
+    home.card("Device").node("/sys/status/state").node("/sys/status/heap").node("/sys/network/wifi/status/rssi");
+    home.card("Nodes nearby").each("/peers", "$/led");
+
+    dev.cors("https://leokeba.github.io");  // the launcher, reaching the device by its address
+    dev.begin();
+    serialApi.begin();
+}

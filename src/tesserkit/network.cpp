@@ -200,6 +200,7 @@ void Network::start() {
     lostAtMs_ = now;
     join(now);
     updateAp(now);
+    reportState();  // from the start: services waiting for the network see it
 }
 
 uint32_t Network::apFingerprint() const {
@@ -484,6 +485,10 @@ void Network::tick(uint32_t nowMs) {
         }
     }
     updateAp(nowMs);
+    reportState();
+}
+
+void Network::reportState() {
     dev_.networkState(sta_ == Sta::Connected ? State::Online
                       : networks_.empty()    ? State::Provisioning
                                              : State::Connecting);

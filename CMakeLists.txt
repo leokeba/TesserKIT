@@ -11,7 +11,9 @@ set(TESSERKIT_CORE_SRCS
     src/tesserkit/auth.cpp
     src/tesserkit/timers.cpp
     src/tesserkit/artnet.cpp
-    src/tesserkit/mqtt.cpp)
+    src/tesserkit/mqtt.cpp
+    src/tesserkit/bluetooth.cpp
+    src/tesserkit/nowtp.cpp)
 
 if(ESP_PLATFORM)
     # TesserAPI and TesserUI are hard dependencies. Their component names
@@ -54,6 +56,8 @@ if(ESP_PLATFORM)
              src/tesserkit/platform/esp/coredump_esp.cpp
              src/tesserkit/platform/esp/udp_esp.cpp
              src/tesserkit/platform/esp/mqtt_esp.cpp
+             src/tesserkit/platform/esp/ble_esp.cpp
+             src/tesserkit/platform/esp/nowtp_esp.cpp
         INCLUDE_DIRS "src"
         REQUIRES esp_http_server esp_wifi esp_netif nvs_flash
         PRIV_REQUIRES esp_event esp_timer app_update esp_http_client mbedtls lwip mdns mqtt espcoredump

@@ -97,6 +97,10 @@ int main(int argc, char** argv) {
     tesserkit::Backup backup(dev);
     tesserkit::Timers timers(dev);
     tesserkit::Auth auth(dev);
+    tesserkit::Mqtt mqtt(dev);
+    tesserkit::ArtNet artnet(dev);
+    tesserkit::Bluetooth bluetooth(dev);
+    tesserkit::NowTp nowtp(dev);
     net.defaultNetwork("Workshop", "workshop-pw");
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");
     // A newer release to find and install.
@@ -116,6 +120,8 @@ int main(int argc, char** argv) {
     dev.api().mount("led", led).label("LED").ui("icon", "bulb");
     if (!dev.begin()) return 1;
     fake.clock.sync(realMs());  // SNTP answers at once
+    // Nodes nearby over ESP-NOW, once NowTP has started.
+    bool nearby = false;
 
     std::map<long, std::unique_ptr<Client>> byId;
     std::string pending;
@@ -160,6 +166,11 @@ int main(int argc, char** argv) {
         fake.core.heap = static_cast<uint32_t>(182000 + (now / 700 % 9) * 350);
         fake.core.runTasks();
         dev.loop();
+        if (!nearby && fake.nowtp.sink) {
+            nearby = true;
+            fake.nowtp.found("lamp-f37c", "10:52:1c:75:f3:7c");
+            fake.nowtp.found("sensor-01", "24:6f:28:aa:01:02", false);
+        }
     }
     return 0;
 }

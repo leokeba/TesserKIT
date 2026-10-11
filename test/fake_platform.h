@@ -248,6 +248,106 @@ struct Mqtt : tesserkit::MqttClient {
     std::string last(const std::string& topic) const;
 };
 
+// Bluetooth LE: the test connects a client and reads what was advertised.
+struct Ble : tesserkit::Ble {
+    bool started = false, advertising = false, connectedNow = false;
+    bool runtime = true;  // advertise() and name() work while running
+    std::string advertised, clientAddress;
+    int begins = 0;
+    bool begin(tesser::Api&, const char* name) override {
+        begins++;
+        started = advertising = true;
+        advertised = name;
+        return true;
+    }
+    bool advertise(bool on) override {
+        if (!runtime) return false;
+        advertising = on;
+        if (!on) connectedNow = false;
+        return true;
+    }
+    bool name(const char* n) override {
+        if (!runtime) return false;
+        advertised = n;
+        return true;
+    }
+    bool connected() override { return connectedNow; }
+    std::string client() override { return clientAddress; }
+};
+
+// NowTP: the test adds nodes nearby and finishes pairings.
+struct NowTp : tesserkit::NowTpRadio {
+    tesserkit::EventSink sink;
+    tesserkit::NowTpConfig config;
+    tesserkit::NowTpStatus state;
+    std::vector<tesserkit::NowTpPeer> nearby;
+    tesser::Object* mountedUnder = nullptr;
+    bool fixedChannel = false;  // an access point fixes the channel
+    int begins = 0, ends = 0, pairings = 0, accepts = 0, forgets = 0;
+    bool keyStored = false;
+
+    bool begin(tesser::Api&, tesser::Object* peers, const tesserkit::NowTpConfig& c,
+               tesserkit::EventSink s) override {
+        begins++;
+        config = c;
+        sink = std::move(s);
+        mountedUnder = peers;
+        state.started = true;
+        state.channel = c.channel;
+        state.secured = keyStored;
+        return true;
+    }
+    void end() override {
+        ends++;
+        state = tesserkit::NowTpStatus();
+    }
+    std::vector<tesserkit::NowTpPeer> peers() override { return nearby; }
+    tesserkit::NowTpStatus status() override { return state; }
+    bool channel(uint8_t ch) override {
+        if (fixedChannel) return false;
+        state.channel = ch;
+        return true;
+    }
+    bool longRange(bool on) override {
+        config.longRange = on;
+        return true;
+    }
+    bool pair(uint32_t) override {
+        pairings++;
+        return true;
+    }
+    bool acceptPairing(uint32_t) override {
+        accepts++;
+        return true;
+    }
+    bool forgetKey() override {
+        forgets++;
+        keyStored = state.secured = false;
+        return true;
+    }
+    // A pairing finished, with the other node's MAC, or failed.
+    void paired(bool ok, const char* text) {
+        if (ok) keyStored = state.secured = true;
+        tesserkit::Event e;
+        e.type = tesserkit::Event::Type::NowTpPairing;
+        e.value = ok ? 0 : 1;
+        e.text = text;
+        sink(e);
+    }
+    void found(const char* name, const char* mac, bool tesser = true) {
+        tesserkit::NowTpPeer p;
+        p.name = name;
+        p.mac = mac;
+        p.rssi = -50;
+        p.channel = state.channel;
+        p.tesser = tesser;
+        nearby.push_back(p);
+        tesserkit::Event e;
+        e.type = tesserkit::Event::Type::NowTpPeers;
+        sink(e);
+    }
+};
+
 struct Platform {
     Core core;
     Wifi wifi;
@@ -258,6 +358,8 @@ struct Platform {
     Coredump coredump;
     Udp udp;
     Mqtt mqtt;
+    Ble ble;
+    NowTp nowtp;
     void install(tesserkit::Device& dev, bool withCoredump = true) {
         tesserkit::Platform& p = dev.platform();
         p.core = &core;
@@ -269,6 +371,8 @@ struct Platform {
         p.coredump = withCoredump ? &coredump : nullptr;
         p.udp = &udp;
         p.mqtt = &mqtt;
+        p.ble = &ble;
+        p.nowtp = &nowtp;
     }
 };
 

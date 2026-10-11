@@ -1,6 +1,6 @@
 // A TesserKIT device reachable over Bluetooth LE as well as Wi-Fi, with
-// ESP-IDF: the minimal example's services and LED, plus TesserAPI's
-// BleTransport (NimBLE, the Nordic UART Service). Open the launcher
+// ESP-IDF: the minimal example's services and LED, plus the Bluetooth service
+// (TesserAPI's BleTransport on NimBLE, the Nordic UART Service). Open the launcher
 // (https://leokeba.github.io/TesserKIT/) in Chrome on a phone or a laptop,
 // choose Bluetooth, then "tesserkit-bt-xxxx": the interface comes from the
 // launcher, the tree over Bluetooth, with no Wi-Fi network in common. The
@@ -13,7 +13,6 @@
 // For development, a gitignored main/secrets.h may define WIFI_SSID and
 // WIFI_PASSWORD (the factory default network) and WIFI_TX_POWER (dBm).
 #include "TesserKIT.h"
-#include "tesser/transports/ble_transport.h"
 #include "driver/ledc.h"
 
 #if __has_include("secrets.h")
@@ -73,8 +72,8 @@ tesserkit::Firmware firmware(dev);
 tesserkit::Backup backup(dev);
 tesserkit::Timers timers(dev);
 tesserkit::Auth auth(dev);  // open until an admin account exists
+tesserkit::Bluetooth bluetooth(dev);  // /sys/bluetooth: on or off, its name, who is connected
 tesser::UartTransport serialApi(dev.api(), UART_NUM_0);  // USB, as in the minimal example
-tesser::BleTransport ble(dev.api());
 
 }  // namespace
 
@@ -89,7 +88,6 @@ extern "C" void app_main() {
     led.begin();
     dev.api().mount("led", led).label("LED").ui("icon", "bulb");
     dev.cors("https://leokeba.github.io");  // the launcher, reaching the device by its address
-    dev.begin();                             // NVS too, which NimBLE needs
+    dev.begin();  // Bluetooth too, under the hostname: what the browser's chooser shows
     serialApi.begin();
-    ble.begin(dev.hostname().c_str());  // the name the browser's chooser shows
 }

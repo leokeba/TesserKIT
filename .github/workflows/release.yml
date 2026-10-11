@@ -1,6 +1,6 @@
-# Each push to main: the host tests, then a release of the example firmware
-# (examples/idf/minimal, with firmware.github() pointing here) under the next
-# patch version, or library.json's version when it was raised above it, and
+# Each push to main: the host tests, then a release of the example firmwares
+# (examples/idf/minimal and examples/idf/full, with firmware.github() pointing
+# here) under the next patch version, or library.json's version when it was raised above it, and
 # TesserUI's launcher on GitHub Pages (https://leokeba.github.io/TesserKIT/),
 # built from the same TesserUI as the firmware. A commit message with
 # "[skip ci]" releases nothing.
@@ -33,14 +33,15 @@ jobs:
       contents: write
     uses: ./.github/workflows/firmware.yml
     with:
-      project: examples/idf/minimal
-      name: tesserkit-minimal
+      projects: |
+        [{"project": "examples/idf/minimal", "name": "tesserkit-minimal", "build-args": "-DWITH_GITHUB=1"},
+         {"project": "examples/idf/full", "name": "tesserkit-full"}]
       targets: '["esp32", "esp32c3", "esp32s3"]'
-      build-args: -DWITH_GITHUB=1
       version-command: jq -r .version library.json
       dependencies: |
         leokeba/TesserAPI
         leokeba/TesserUI
+        leokeba/NowTP
 
   # The launcher (TesserUI's DESIGN.md section 9.7): devices reached over USB,
   # Bluetooth or the network, with no interface of their own needed.

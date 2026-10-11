@@ -8,5 +8,7 @@
 #include "timer_cases.h"
 #include "artnet_cases.h"
 #include "mqtt_cases.h"
+#include "bluetooth_cases.h"
+#include "nowtp_cases.h"
 
 int main(int argc, char** argv) { return check::run(argc > 1 ? argv[1] : nullptr) ? 1 : 0; }

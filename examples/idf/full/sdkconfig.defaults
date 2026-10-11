@@ -1,0 +1,45 @@
+# TesserKIT's partition table: two OTA slots, a core dump, no filesystem.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../partitions/tesserkit_4mb.csv"
+# A new image rolls back unless it confirms itself (/sys/firmware).
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# Crashes leave a core dump, downloadable at /sys/coredump.
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+# WebSocket for the interface's subscriptions.
+CONFIG_HTTPD_WS_SUPPORT=y
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+# HTTP (7 connections), DNS, downloads.
+CONFIG_LWIP_MAX_SOCKETS=16
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+# Size over debuggability, as shipped firmware is built.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+# The console's UART also carries the API (the launcher's USB way): the
+# launcher skips log lines, but one written in the middle of a reply breaks it.
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+# NimBLE, the host TesserAPI's BleTransport uses on ESP-IDF, beside Wi-Fi.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=517
+# Buffers for notifications in flight: a long reply streams through them.
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=24
+# BleTransport is a peripheral with one client at a time: the other roles,
+# the GATT client, bonding and two more connections only take RAM.
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_GATT_CLIENT=n
+CONFIG_BT_NIMBLE_SECURITY_ENABLE=n
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BTDM_CTRL_BLE_MAX_CONN=1
+# TLS (GitHub releases, downloads, mqtts://) allocates its buffers as it needs
+# them and frees the certificates once verified: with Bluetooth, NowTP and
+# MQTT, a handshake doesn't fit in what a classic ESP32 has left otherwise.
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CA_CERT=y
+# RAM for TLS beside everything else: six Wi-Fi receive buffers rather than
+# ten (a little less throughput under load), and the server's certificate
+# dropped once verified.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+CONFIG_ESP_WIFI_RX_BA_WIN=6
+CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE=n

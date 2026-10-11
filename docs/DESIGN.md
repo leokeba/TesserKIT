@@ -83,6 +83,9 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
   auth/                 Auth (§5.7)
   mqtt/                 Mqtt (§5.8)
   artnet/               ArtNet (§5.9)
+  bluetooth/            Bluetooth (§5.10)
+  nowtp/                NowTp (§5.11)
+/peers                  the nodes NowTp finds nearby, mounted beside the application's tree
 ```
 
 - The root stays the application's: `/sys` is one child of it, rendered by TesserUI as a link to its own page, where each service is a card.
@@ -91,10 +94,11 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
 
 ### 3.3 Platform layer
 
-Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads and release checks), `Coredump`, `Udp` (Art-Net) and `MqttClient`:
+Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads and release checks), `Coredump`, `Udp` (Art-Net), `MqttClient`, `Ble` (Bluetooth LE) and `NowTpRadio` (ESP-NOW):
 
 - `src/tesserkit/platform/esp/` implements them on ESP-IDF APIs, which Arduino-ESP32 3.x also ships, so one implementation serves both.
 - `test/fake_platform.*` implements them in memory for host tests: a Wi-Fi radio whose scans and connections the test scripts, a clock the test advances, an OTA partition that's a byte vector.
+- **Services also hear of a factory reset** (`Service::factoryReset()`), before the restart, to erase what they keep outside the device's storage: NowTp's installation key.
 - **Linked when used:** `Device::platform()` holds a pointer per interface. A service fills the ones it uses with the ESP implementation when the application (or a test) didn't, so an interface whose service isn't instantiated isn't linked. Events from platform tasks (Wi-Fi, SNTP) are posted to the device and handed to the services in its task, under the API lock.
 
 Service code is then plain state machines driven by `tick(nowMs)` and platform callbacks, testable on the host like TesserAPI's core.
@@ -203,7 +207,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 
 **mDNS:** `<hostname>.local`, with `_http._tcp` and TXT records `api=/api`, `ws=/ws`, `version=<version>`, `tesser=1`, and `_tesser._tcp` with `api` and `ws`, what TesserAPI's `HttpServer::advertise()` announces and TesserUI's bridge lists for the launcher (§8), on ESP-IDF's `mdns` component (about 34 KB of flash). On by default, since it is how a provisioned device is found; `-DTESSERKIT_NO_MDNS` leaves it out, with the `mdns` setting.
 
-**Channels and NowTP:** a station follows its router's channel, and ESP-NOW must share it (TesserAPI §14). Network reports channel changes to `dev.onChannel(fn)`; with NowTP present, the device moves NowTP's channel there. This needs NowTP's channel following (§14). Without a router, the AP's `channel` is the field's ESP-NOW channel.
+**Channels and NowTP:** a station follows its router's channel, and ESP-NOW must share it (TesserAPI §14). NowTP follows by itself: a node whose station or access point fixes its channel is an anchor, and the nodes nearby follow it when it moves (§5.11). Network reports channel changes to `dev.onChannel(fn)` as well. Without a router, the AP's `channel` is the field's ESP-NOW channel. Network reports its state (provisioning, connecting) from its start, so services that wait for the network see it at once.
 
 **Not in the first release:** Ethernet (W5500 and RMII, *(later)*, same tree under `/sys/network/ethernet`), WPA2-Enterprise, IPv6 configuration.
 
@@ -356,7 +360,51 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - **Factory defaults:** `artnet.universe(0).map({"/heliostat/artnet/azimuth", 1, 2, 0, 360})`.
 - What a value means stays the application's: tiny-heliostat maps channels onto `/heliostat/artnet/azimuth` and `elevation` and decides there whether Art-Net takes over (§10.1). It replaces helionext's `ArtNetService` and serves any lighting-controlled device.
 
-### 5.10 Later
+### 5.10 Bluetooth
+
+```
+/sys/bluetooth          label "Bluetooth", ui.icon "bluetooth", Admin
+  enabled *(p)          boolean (default true)
+  name                  the name advertised: the hostname
+  restartNeeded         hidden; restartWarning, a warning callout while it is true
+  status/               connected, client (the address)
+```
+
+- **Transport:** TesserAPI's `BleTransport`, the Nordic UART Service carrying envelopes as a serial line does, for TesserUI's launcher (TesserUI §9.7): a phone reaches the device with no network in common. NimBLE on ESP-IDF (`CONFIG_BT_NIMBLE_ENABLED`), Arduino's BLE library otherwise; without either, the service logs that the build has no Bluetooth.
+- **Access:** anyone in range connects, so a Bluetooth client is a network client: Admin while the device is open (§5.7), then the level of the token it presents with an `auth` envelope (TesserAPI §10.4), which TesserUI sends after signing in. The token holds until the client disconnects.
+- **At runtime:** switching it off stops advertising and drops the client, switching it on advertises again; the stack stays up. The name follows the hostname, from the next advertisement. A transport that can't do either (`Ble::advertise()` false) shows the restart warning instead.
+- **Platform:** `Ble` (§3.3). On ESP-IDF the transport handles requests in its own task; Arduino's in `poll()`, which the platform layer runs in a task of its own (`tk_ble`), outside TesserKIT's task, since a request takes the API lock.
+- **Memory:** NimBLE releases classic Bluetooth's controller memory on ESP32. The examples configure it as what `BleTransport` uses, a peripheral with one client: no central or observer role, no GATT client, no bonding, one connection.
+- **Factory default:** `bluetooth.enable(false)` keeps it off until enabled.
+- **Boards:** about 200 KB of flash on ESP-IDF. On Arduino, the classic ESP32's prebuilt Bluedroid includes classic Bluetooth and fills a 1.94 MB slot with TesserKIT's services: ESP32-C3 and ESP32-S3 only (about 1.5 MB).
+
+### 5.11 NowTp
+
+```
+/sys/nowtp              label "NowTP", ui.icon "target", Admin
+  enabled *(p)          boolean (default true)
+  mountPeers *(p)       boolean (default true): the TesserAPI nodes found are mounted under /peers
+  channel *(p)          1–13 (default 1): when neither a Wi-Fi network nor the access point fixes it, advanced
+  longRange *(p)        boolean: Espressif's Long Range mode besides 802.11b/g/n, advanced
+  pairingCode *(p)      secret: what both sides of a pairing must know, advanced
+  restartNeeded         hidden; restartWarning, a warning callout while it is true
+  pairing/              secured (paired), state (text), pair, accept, forget (confirm, danger)
+  nodes                 read-only keyed list (key "mac") of {name, mac, rssi, channel, tesser, authenticated}
+  status/               started, channel, timeSynced, timeReference, sent, received, failed
+```
+
+- **Transport:** NowTP on ESP-NOW (discovery, channel following, pairing, network time) with TesserAPI's `NowTpTransport` serving the tree to the nodes nearby, and advertising it in discovery, so they mount this device too.
+- **UI host:** with `mountPeers`, the TesserAPI nodes found are mounted under `/peers` (label "Nodes nearby"), each a remote node with its page in TesserUI's menu (TesserUI §6.3), forwarded over ESP-NOW. `nodes` lists every node heard, TesserAPI or not.
+- **Starting:** once the network has settled, joined or on its own access point (at the latest 20 s after boot, when the fallback access point is up): while the station scans and joins, ESP-NOW can't hold a channel. Its channel is then the router's or the access point's; `channel` only applies to a device with neither.
+- **Pairing:** `accept` opens this node's pairing window for 60 s, `pair` takes the installation key from a node whose window is open (NowTP's X25519 exchange, proving the pairing code). Both run in a task of their own and report in `pairing/state`. With a key, NowTP drops every message not authenticated with it.
+- **Access:** nodes holding the installation key are trusted, so Admin: the transport trusts every sender while the network is secured, which only key holders can reach. Without a key, a node is a client without a token: Admin while the device is open, public after (TesserAPI §13). A gateway checks its own clients before it forwards (§9).
+- **At runtime:** `enabled`, `channel` and `longRange` apply at once; `mountPeers` and `pairingCode` at the next boot (the restart warning). A factory reset also forgets the installation key, which NowTP keeps in NVS of its own (namespace `nowtp`).
+- **Platform:** `NowTpRadio` (§3.3), built when the build has NowTP (TesserAPI's `TESSER_HAVE_NOWTP`, or `<NowTP.h>` on Arduino). Mounted nodes keep pointing at the transport, so stopping NowTP stops the radio and the transport's task but keeps the transport.
+- **Memory:** about 25 KB of heap while running (NowTP's event buffer and task, the transport's task, ESP-NOW).
+- **Factory defaults:** `nowtp.mountPeers(false).channel(6).longRange(true).txPower(15).pairingCode("...")`.
+- Replaces §9's `dev.peers()`: the service is how a TesserKIT device joins a NowTP field.
+
+### 5.12 Later
 
 | Service | Content |
 |---|---|
@@ -407,7 +455,7 @@ The UI is TesserUI's generic renderer, self-hosted by the device (TesserUI §9.4
   - **USB:** Web Serial to a `LineTransport` on the console. The examples add one (`tesser::UartTransport` on UART0 with ESP-IDF, `tesser::StreamTransport` on `Serial` with Arduino); a serial client is Admin (§5.7), so a device is set up over a cable with no network at all. The launcher skips log lines, but one written in the middle of a reply breaks it: the ESP-IDF example logs warnings only.
   - **Network:** an address or `<hostname>.local`, from an HTTPS page, so the device must allow the launcher's origin: `dev.cors("https://leokeba.github.io")`, as the examples do. Chrome asks the user for local network access, and polls the device over HTTP (no WebSocket from HTTPS).
   - **Nearby:** TesserUI's bridge, on the user's machine, lists the devices announcing `_tesser._tcp` (§5.2) and serves them live.
-  - **Bluetooth:** TesserAPI's `BleTransport` (the Nordic UART Service), beside Wi-Fi: `examples/idf/bluetooth` (NimBLE, 200 KB more than `minimal`, 1.19 MB in all; about 75 KB of heap left on a classic ESP32) and `examples/arduino/Bluetooth` (ESP32-C3 and ESP32-S3, about 1.5 MB: on a classic ESP32 Arduino's Bluedroid fills the 1.94 MB slot). The device's name is its hostname. A Bluetooth client is public until it presents a token (below).
+  - **Bluetooth:** the Bluetooth service (§5.10): `examples/idf/bluetooth`, `examples/arduino/Bluetooth` (ESP32-C3 and ESP32-S3) and `examples/idf/full`. The device's name is its hostname.
 
 TesserUI renders everything TesserKIT's services declare: files (§5.4, §5.5), secrets, access levels and sign-in, flags (§5.6), the time zone widget and `$now` (§5.3).
 
@@ -415,7 +463,7 @@ TesserUI renders everything TesserKIT's services declare: files (§5.4, §5.5), 
 
 TesserKIT devices are TesserAPI nodes, so the multi-node features are TesserAPI's and TesserUI's:
 
-- **UI host:** a TesserKIT device with NowTP mounts its peers (`dev.peers()`, which calls TesserAPI's `mountPeers` on `/peers` and advertises the device). The UI shows a page per peer, forwarded over ESP-NOW (TesserUI §9.5).
+- **UI host:** a TesserKIT device with the NowTp service (§5.11) mounts the nodes nearby under `/peers` and advertises itself. The UI shows a page per node, forwarded over ESP-NOW (TesserUI §9.5).
 - **NowTP-only nodes** run TesserAPI and NowTP without TesserKIT's Wi-Fi services, or with a subset: `System` and `Firmware` work over any transport, except uploads (HTTP only).
 - **Fleet operations** are writes through the gateway to each peer: update every peer's firmware (§5.4), set a value on all of them, trigger a sequence. A view (TesserUI §8) with `each("/peers", ...)` shows a fleet dashboard.
 - **Synchronized actions** (spin-seq's "start together") need a shared clock: NowTP's clock offset (§14) lets a gateway say "start at T" to every peer, instead of re-broadcasting with retries.
@@ -477,7 +525,7 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 | Flash: the UI | TesserUI's bundle, ≤ 50 KB |
 | Flash: an application with every first-release service, Wi-Fi and HTTP | ≤ 1.25 MB, to fit Arduino's default partition table |
 | RAM at rest, above Wi-Fi and `esp_http_server` | ≤ 12 KB, the task's stack included |
-| Stack | TesserKIT's task: 6 KB (Mqtt adds esp-mqtt's task, 6 KB, and its publishing task, 4 KB) |
+| Stack | TesserKIT's task: 6 KB, the HTTP server's 6 KB (Mqtt adds esp-mqtt's task, 6 KB, and its publishing task, 4 KB) |
 
 **Measured** (2026-10-10, ESP-IDF 6.1-dev, ESP32, `-Os`): `examples/idf/minimal` against its `-DFOOTPRINT_BASELINE=1` build, the same application on TesserAPI, TesserUI and a plain Wi-Fi station.
 
@@ -495,15 +543,21 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 - **Against the budget:** 60 KB is exceeded. Features stay, as options where they are large (mDNS, downloads); the rest is smaller only at the cost of clarity, and is left as it is until a measured application needs the space.
 - **Arduino:** the Minimal sketch with every first-release service is 1.18 MB on ESP32 and ESP32-C3, within the default table's 1.25 MB slot (1.21 MB on ESP32 as of 2026-10-11, with that day's TesserAPI and TesserUI; 1.24 MB with ArtNet). With Mqtt it is 1.36 MB on ESP32: Arduino's prebuilt esp-mqtt can't drop its transports, so such a sketch needs a larger app slot (`min_spiffs.csv`, or TesserKIT's tables).
 
+**RAM with everything** (2026-10-11, `examples/idf/full` on a classic ESP32 without PSRAM, ESP-IDF 6.1-dev): 46 KB of heap free with Wi-Fi, HTTP, Bluetooth and NowTP running, 29 KB with an MQTT session too. Stacks used, measured with `vTaskList`: the HTTP server 3 KB, TesserKIT's task 2.4 KB, NowTP's transport 2.8 KB, esp-mqtt 1.5 KB. NowTP takes about 25 KB while running, an MQTT session 15 KB, and an HTTPS connection about 34 KB at its peak (a GitHub release check), its 8 KB task included.
+
+- **HTTPS waits for memory:** a release check or an HTTPS download doesn't start below 44 KB of free heap (`not enough free memory for HTTPS now`), since a handshake would fail, or take the memory the rest of the firmware needs: such a device aborted on an allocation in TesserKIT's task. On a classic ESP32 without PSRAM, every service at once leaves no room for HTTPS while MQTT is connected; the ESP32-S3, or a board with PSRAM, has plenty.
+- **What the full example gives up for it:** mbedTLS allocates its buffers as it needs them and frees the certificates once verified, six Wi-Fi receive buffers rather than ten (a little less throughput under load), and NimBLE configured as a one-client peripheral (§5.10). The HTTP server's stack is 6 KB rather than 8 (3 KB used).
+- **Flash:** `examples/idf/full` is 1.47 MB on ESP32 and ESP32-S3, in a 1.94 MB slot.
+
 **Partition table** (`partitions/tesserkit_4mb.csv`, recommended): `nvs` 20 KB, `otadata`, `ota_0` and `ota_1` 1.94 MB each, `coredump` 64 KB. No filesystem, no `phy_init` (the PHY data is in the app by default). `tesserkit_8mb.csv` has 3.94 MB slots.
 
 **Comparison:** the same measurements are taken on ESP32-sveltekit's demo with matching features (Wi-Fi, AP, NTP, upload OTA, status), and reported in the README.
 
 ## 12. Testing
 
-1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), time and DST, timers (catch-up, no double runs), firmware upload checks, release checks (versions, GitHub's answers and failures, scheduling), backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge (topics, commands with User access, sessions, intervals), Art-Net (scaling, gates, changes only, ArtPollReply's bytes). The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
+1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), time and DST, timers (catch-up, no double runs), firmware upload checks, release checks (versions, GitHub's answers and failures, scheduling), backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge (topics, commands with User access, sessions, intervals), Art-Net (scaling, gates, changes only, ArtPollReply's bytes), Bluetooth (the name following the hostname, switching off and on, the client shown), NowTp (waiting for the network, the nodes listed and read-only, pairing, the factory reset forgetting the key), HTTPS refused without the memory for it. The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
 2. **Golden schemas:** each service's schema with its hints, checked in as `fixtures/*.json`. TesserUI renders them in its golden-model tests, so a hint change shows as a diff in both repositories.
-3. **On target:** `examples/idf/minimal` (and `examples/arduino/Minimal`, with `--app /lamp`), driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, sign-in with tokens over HTTP and WebSocket, a timer running, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. Releases: `test/e2e_github.py` serves a release endpoint and a newer image from the test machine, and watches the device find it, install it and come back up to date; `--check-only` checks the device's own feed (GitHub's API). Bluetooth: `examples/idf/bluetooth`, driven from a Mac with `bleak` (Nordic UART): an open device is Admin, a locked one public, sign-in with a line token gives Admin, a bad token public, and a reconnection starts public again. *(later)* a test firmware with every service and serial scripts.
+3. **On target:** `examples/idf/minimal` (and `examples/arduino/Minimal`, with `--app /lamp`), driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, sign-in with tokens over HTTP and WebSocket, a timer running, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. Releases: `test/e2e_github.py` serves a release endpoint and a newer image from the test machine, and watches the device find it, install it and come back up to date; `--check-only` checks the device's own feed (GitHub's API). Bluetooth: `examples/idf/bluetooth`, driven from a Mac with `bleak` (Nordic UART): an open device is Admin, a locked one public, sign-in with a line token gives Admin, a bad token public, and a reconnection starts public again. `examples/idf/full` (2026-10-11, DEVKIT-V3 beside DEVKIT-R1 running TesserAPI's test firmware): every service up, R1 found over NowTP and mounted under `/peers`, the envelopes on the serial line among the logs, a GitHub release check over HTTPS beside Bluetooth and NowTP, and with an MQTT session too (when it ran out of memory, which the guard of §11 now refuses). *(later)* a test firmware with every service and serial scripts.
 4. **CI:** each push to main runs the host tests, then releases the example and publishes the launcher (§13). *(later)* ESP-IDF builds (5.1, 5.4, 5.5, latest × ESP32, ESP32-C3, ESP32-S3), Arduino-ESP32 3.x builds of the examples, the footprint budgets.
 
 ## 13. Packaging
@@ -516,14 +570,14 @@ TesserKIT/
   src/tesserkit/platform/   ESP implementation of the platform layer
   partitions/               tesserkit_4mb.csv, tesserkit_8mb.csv
   examples/arduino/         Minimal, Bluetooth
-  examples/idf/             minimal, bluetooth
+  examples/idf/             minimal, bluetooth, full (every service and transport)
   test/                     host tests, fake platform, test firmware
   CMakeLists.txt, idf_component.yml, library.json, library.properties
 ```
 
 - ESP-IDF component and PlatformIO/Arduino library, like TesserAPI and TesserUI. Dependencies: TesserAPI and TesserUI as public requirements; `espressif/mdns`, and `espressif/mqtt` from ESP-IDF 6 (part of ESP-IDF before); NowTP detected as TesserAPI does (`__has_include` or the build's component list).
 - Versions follow semver; TesserKIT pins compatible TesserAPI and TesserUI ranges.
-- **Releases:** `.github/workflows/firmware.yml` is a reusable workflow for ESP-IDF projects. It computes the next version, builds each target in `espressif/idf`'s container with `-DPROJECT_VER=<version>` (which becomes `/sys/firmware/version`), and publishes a release tagged `v<version>` with notes generated from the commits and, per target, `<name>-<target>.bin` (what `github()` installs) and `<name>-<target>-factory.bin` (bootloader, partition table and app merged, flashed at 0x0 on a new board). The version is the last `vX.Y.Z` tag with its patch raised, or what `version-command` prints when that is higher: a minor or major release is a commit raising that version (`library.json` here). A rerun on a released commit keeps its version. `dependencies` checks out repositories next to the project, where a developer's siblings are. TesserKIT's `release.yml` calls it on each push to main, after the host tests, for `examples/idf/minimal` with `-DWITH_GITHUB=1` on ESP32, ESP32-C3 and ESP32-S3; applications call it for their own firmware (`uses: leokeba/TesserKIT/.github/workflows/firmware.yml@main`). `[skip ci]` in a commit message skips the release.
+- **Releases:** `.github/workflows/firmware.yml` is a reusable workflow for ESP-IDF projects. It computes the next version, builds each target in `espressif/idf`'s container with `-DPROJECT_VER=<version>` (which becomes `/sys/firmware/version`), and publishes a release tagged `v<version>` with notes generated from the commits and, per target, `<name>-<target>.bin` (what `github()` installs) and `<name>-<target>-factory.bin` (bootloader, partition table and app merged, flashed at 0x0 on a new board). The version is the last `vX.Y.Z` tag with its patch raised, or what `version-command` prints when that is higher: a minor or major release is a commit raising that version (`library.json` here). A rerun on a released commit keeps its version. `dependencies` checks out repositories next to the project, where a developer's siblings are. Several firmwares go into one release with `projects`, a JSON list of `{project, name, build-args}`, instead of `project`, `name` and `build-args`. TesserKIT's `release.yml` calls it on each push to main, after the host tests, for `examples/idf/minimal` with `-DWITH_GITHUB=1` (`tesserkit-minimal-*`) and `examples/idf/full` (`tesserkit-full-*`, NowTP checked out beside) on ESP32, ESP32-C3 and ESP32-S3; applications call it for their own firmware (`uses: leokeba/TesserKIT/.github/workflows/firmware.yml@main`). `[skip ci]` in a commit message skips the release.
 - **Launcher:** `release.yml` also publishes the launcher (§8) to GitHub Pages after the host tests: TesserUI's bundle, built from TesserUI's main as the firmware's is, with `pages/index.html`, which makes it a launcher titled TesserKIT (`window.TESSER = {launcher: true, title: "TesserKIT"}`).
 
 ## 14. Follow-ups wanted in other layers
@@ -543,7 +597,9 @@ TesserKIT/
 | Automatic re-advertisement when the tree changes | gateways with mounted peers |
 | `Storage::erase()`, `Api::restore()` | factory reset, backups |
 
-**NowTP:**
+Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presenting a token on a line, an unauthenticated line or untrusted NowTP peer taking the level of the empty token, `BleTransport` controlled at runtime (`start()`, `stop()`, `setName()`, `peerAddress()`), read-only lists.
+
+**NowTP** (done in NowTP d39e0d4, 2026-10-11; NowTp uses the first three):
 
 | Item | For |
 |---|---|
@@ -576,7 +632,7 @@ TesserKIT/
 | 4 | spin-seq on TesserKIT, NowTP channel following and pairing, shared clock | A master and three remotes run a synchronized sequence; fleet update through the master. |
 | 5 | Battery, Sleep, Ethernet, Log, Home Assistant discovery | *(later)* |
 
-Mqtt and ArtNet were built ahead of the roadmap (2026-10-11), ArtNet for tiny-heliostat, and so were GitHub releases with the workflow that publishes them (2026-10-11).
+Mqtt and ArtNet were built ahead of the roadmap (2026-10-11), ArtNet for tiny-heliostat, and so were GitHub releases with the workflow that publishes them, and the Bluetooth and NowTp services with `examples/idf/full` (2026-10-11): phase 4's NowTP part, short of the synchronized sequence.
 
 ## 16. Decisions
 
@@ -590,3 +646,5 @@ Mqtt and ArtNet were built ahead of the roadmap (2026-10-11), ArtNet for tiny-he
 - **MQTT commands with User access:** a broker is shared, and its clients aren't the device's admins. They drive the application; `/sys` (Wi-Fi, firmware, accounts) stays with whoever signs in to the device.
 - **`/set` filters by depth, not `#`:** `<prefix>/#` would bring every retained topic the device publishes back to it. Eight filters cost the broker nothing and bound the paths a command reaches, which writable application nodes don't exceed.
 - **Art-Net through the API, on change:** writes go through the same validation, access checks and notifications as a client's, so a console can't set what a browser couldn't, and a still console costs nothing. Meaning (takeover, which mode) stays in the application's node.
+- **Paired NowTP nodes are trusted, not listed MACs:** ESP-NOW frames carry no proof of origin, so a list of trusted MACs is spoofable; NowTP's installation key authenticates every message, and only a node holding it can reach a secured device at all. The key proves membership of the installation, not which node spoke, which is the trust a field of nodes needs.
+- **HTTPS refused below a heap floor:** a handshake that runs the heap out doesn't fail alone, it can abort whatever task allocates next. Refusing it with a message, and trying again at the next check, keeps the device up; the floor comes from a measurement (§11), not a guess.

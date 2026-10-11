@@ -214,6 +214,7 @@ void Device::restartIn(uint32_t ms) { restartDelayMs_.store(ms == kNoRestart ? m
 
 bool Device::factoryReset() {
     bool ok = storage_ ? storage_->erase() : true;
+    for (Service* sv = services_; sv; sv = sv->next_) sv->factoryReset();
     // Nothing is saved any more: the running state would be written back.
     if (!erased_) erased_ = new tesser::MemoryStorage();
     api_.persistence(*erased_, 2000);
@@ -276,6 +277,8 @@ Coredump* espCoredump() { return nullptr; }
 Udp* espUdp() { return nullptr; }
 MqttClient* espMqtt() { return nullptr; }
 MqttClient* espMqttTls() { return nullptr; }
+Ble* espBle() { return nullptr; }
+NowTpRadio* espNowTp() { return nullptr; }
 #endif
 
 }  // namespace tesserkit

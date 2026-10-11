@@ -1,0 +1,91 @@
+// Bluetooth LE on TesserAPI's BleTransport: NimBLE on ESP-IDF (with
+// CONFIG_BT_NIMBLE_ENABLED), Arduino's BLE library otherwise. Without either,
+// espBle() is null.
+#if defined(ESP_PLATFORM)
+
+#include "tesserkit/platform.h"
+#include "tesser/transports/ble_transport.h"
+
+#if defined(ARDUINO)
+#include <soc/soc_caps.h>
+#if defined(SOC_BLE_SUPPORTED) && (defined(CONFIG_BLUEDROID_ENABLED) || defined(CONFIG_NIMBLE_ENABLED))
+#define TESSERKIT_BLE 1
+#endif
+#elif defined(CONFIG_BT_NIMBLE_ENABLED)
+#define TESSERKIT_BLE 1
+#endif
+
+#if defined(TESSERKIT_BLE)
+
+#include <memory>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+namespace tesserkit {
+
+namespace {
+
+class EspBle : public Ble {
+public:
+    bool begin(tesser::Api& api, const char* name) override {
+        if (ble_) return true;
+        ble_.reset(new tesser::BleTransport(api));
+#if defined(ARDUINO)
+        ble_->begin(name);
+        // Arduino's transport handles requests in poll(), outside the
+        // device's task, which holds the API lock while it runs.
+        if (xTaskCreate(pollTask, "tk_ble", 6144, ble_.get(), 4, nullptr) != pdPASS) return false;
+        return true;
+#else
+        return ble_->begin(name) == ESP_OK;
+#endif
+    }
+    bool advertise(bool on) override {
+        if (!ble_) return false;
+        if (on) {
+            ble_->start();
+        } else {
+            ble_->stop();  // and drops the client
+        }
+        return true;
+    }
+    bool name(const char* name) override {
+        if (!ble_) return false;
+        ble_->setName(name);  // a connected client sees it once it leaves
+        return true;
+    }
+    bool connected() override { return ble_ && ble_->connected(); }
+    std::string client() override { return ble_ ? ble_->peerAddress() : std::string(); }
+
+private:
+#if defined(ARDUINO)
+    static void pollTask(void* arg) {
+        auto* ble = static_cast<tesser::BleTransport*>(arg);
+        for (;;) {
+            ble->poll();
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
+#endif
+
+    std::unique_ptr<tesser::BleTransport> ble_;
+};
+
+}  // namespace
+
+Ble* espBle() {
+    static EspBle ble;
+    return &ble;
+}
+
+}  // namespace tesserkit
+
+#else
+
+namespace tesserkit {
+Ble* espBle() { return nullptr; }
+}  // namespace tesserkit
+
+#endif
+#endif

@@ -18,6 +18,8 @@ int main(int argc, char** argv) {
     tesserkit::Auth auth(r.dev);
     tesserkit::Mqtt mqtt(r.dev);
     tesserkit::ArtNet artnet(r.dev);
+    tesserkit::Bluetooth bluetooth(r.dev);
+    tesserkit::NowTp nowtp(r.dev);
     firmware.github("leokeba/TesserKIT", "tesserkit-minimal-{target}.bin");
     if (!r.dev.begin()) return 1;
     rig::Reply s = r.schema("/");

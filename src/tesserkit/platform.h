@@ -18,6 +18,11 @@
 
 #include "tesser/value_types.h"
 
+namespace tesser {
+class Api;
+class Object;
+}  // namespace tesser
+
 namespace tesserkit {
 
 // Something a platform task reports (Wi-Fi, SNTP, MQTT). Posted to the device,
@@ -32,6 +37,9 @@ struct Event {
         MqttConnected,    // value: the session
         MqttDisconnected, // value: the session; text: why
         MqttMessage,      // value: the session; text: the topic; data: the payload
+        NowTpPeers,       // nodes were found or lost
+        NowTpChannel,     // value: the channel ESP-NOW moved to
+        NowTpPairing,     // value: 0 if the pairing succeeded; text: the other node, or why not
     };
     Type type;
     int32_t value = 0;
@@ -248,6 +256,76 @@ public:
     virtual bool publish(const std::string& topic, const std::string& payload, bool retain) = 0;
 };
 
+// Bluetooth LE: Bluetooth's. TesserAPI's BleTransport (the Nordic UART
+// Service) on the API, one client at a time.
+class Ble {
+public:
+    virtual ~Ble() = default;
+    // Starts the stack and advertises under `name`. False if it couldn't.
+    virtual bool begin(tesser::Api& api, const char* name) = 0;
+    // Stops advertising and drops the client, or advertises again. False if
+    // the transport can't do it while running (it then applies at the next
+    // boot).
+    virtual bool advertise(bool on) = 0;
+    // The advertised name, from the next advertisement. False if it can't
+    // change while running.
+    virtual bool name(const char* name) = 0;
+    virtual bool connected() = 0;
+    // The client's address ("" if unknown or none).
+    virtual std::string client() = 0;
+};
+
+struct NowTpConfig {
+    std::string name;      // announced to nodes nearby (the hostname)
+    uint8_t channel = 1;   // when neither the station nor the access point fixes it
+    bool longRange = false;
+    int8_t txPower = 0;    // dBm, 0: the driver's
+    std::string pairingCode;
+};
+
+struct NowTpPeer {
+    std::string name;
+    std::string mac;      // "aa:bb:cc:dd:ee:ff"
+    int8_t rssi = 0;
+    uint8_t channel = 0;
+    bool tesser = false;  // a TesserAPI node, mounted under /peers when asked
+    bool authenticated = false;
+};
+
+struct NowTpStatus {
+    bool started = false;
+    uint8_t channel = 0;
+    bool secured = false;
+    bool timeSynced = false, timeReference = false;
+    int64_t timeOffsetUs = 0;
+    uint32_t sent = 0, received = 0, failed = 0;
+};
+
+// ESP-NOW through NowTP: the NowTp service's. The API is served to the nodes
+// nearby (TesserAPI's NowTpTransport), which are mounted under a parent
+// object when one is given.
+class NowTpRadio {
+public:
+    virtual ~NowTpRadio() = default;
+    // Starts ESP-NOW on the running Wi-Fi, discovery and the API's transport.
+    // Events: NowTpPeers, NowTpChannel, NowTpPairing.
+    virtual bool begin(tesser::Api& api, tesser::Object* peers, const NowTpConfig& config, EventSink sink) = 0;
+    virtual void end() = 0;
+    virtual std::vector<NowTpPeer> peers() = 0;
+    virtual NowTpStatus status() = 0;
+    // Changes the channel ESP-NOW uses when nothing fixes it, telling the
+    // nodes nearby; false if an access point fixes it.
+    virtual bool channel(uint8_t ch) = 0;
+    virtual bool longRange(bool on) = 0;
+    // Asynchronous: Event::NowTpPairing. Joins the installation of a node
+    // whose pairing window is open, or opens ours for `timeoutMs`.
+    virtual bool pair(uint32_t timeoutMs) = 0;
+    virtual bool acceptPairing(uint32_t timeoutMs) = 0;
+    // Forgets the installation key, here and in storage, started or not:
+    // unsecured again.
+    virtual bool forgetKey() = 0;
+};
+
 // What a device runs on. Null members are filled with the ESP
 // implementations by the services that use them.
 struct Platform {
@@ -260,6 +338,8 @@ struct Platform {
     Coredump* coredump = nullptr;  // stays null without a core dump partition
     Udp* udp = nullptr;
     MqttClient* mqtt = nullptr;
+    Ble* ble = nullptr;
+    NowTpRadio* nowtp = nullptr;
 };
 
 // The ESP implementations (null on the host).
@@ -273,5 +353,7 @@ Coredump* espCoredump();
 Udp* espUdp();
 MqttClient* espMqtt();     // null if the build has no MQTT client
 MqttClient* espMqttTls();  // the same, verifying brokers with the certificate bundle
+Ble* espBle();             // null if the build has no Bluetooth LE (NimBLE, or Arduino's BLE)
+NowTpRadio* espNowTp();    // null if the build has no NowTP
 
 }  // namespace tesserkit
