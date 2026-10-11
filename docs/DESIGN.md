@@ -406,7 +406,7 @@ TesserKIT devices are TesserAPI nodes, so the multi-node features are TesserAPI'
 
 ### 10.1 helionext (open-heliostat)
 
-The heliostat is ported in its own repository, tiny-heliostat, whose `docs/DESIGN.md` is the spec of the port. In short:
+The heliostat is ported in its own repository, [tiny-heliostat](https://github.com/leokeba/tiny-heliostat), whose `docs/DESIGN.md` is the spec of the port. In short:
 
 - Classic ESP32 DevKitC, ESP-IDF only. Two DC servo axes with magnetic encoders, GPS.
 - Motors, encoders, axes, sequencers and the GPS come from [TesserMotion](https://github.com/leokeba/TesserMotion), a sibling library on TesserAPI, so devices without motors don't carry them. `NmeaGps` feeds `clock.external()` (§5.3) through the application's `onTick`.
