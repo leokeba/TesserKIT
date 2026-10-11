@@ -99,13 +99,18 @@ void ArtNet::describe(tesser::Object& o) {
     status_ = &s;
     s.value("packets", static_cast<const uint32_t&>(packets_)).label("DMX packets").watch();
     s.value("universe", static_cast<const uint16_t&>(lastUniverse_)).label("Last universe").watch();
+    s.value("received", static_cast<const bool&>(everFrame_))
+        .doc("A frame of this universe arrived since the start")
+        .watch()
+        .ui("hidden");
     s.value("age", [this]() -> int32_t {
           return everFrame_ ? static_cast<int32_t>((nowMs_ - frameAtMs_) / 1000) : -1;
       })
         .label("Last frame")
         .unit("s")
         .doc("Seconds since a frame of this universe; -1: none yet")
-        .watch();
+        .watch()
+        .ui("visibleWhen", "received=true");
     s.value("error", static_cast<const std::string&>(error_)).label("Last error");
 }
 

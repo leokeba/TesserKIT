@@ -85,6 +85,9 @@ TEST(artnet_maps_channels_to_nodes) {
     CHECK(r.dev.begin());
     r.run(40);
     CHECK(r.fake.udp.open_[6454]);
+    CHECK_EQ(r.value("/sys/artnet/status/received"), "false");
+    CHECK_EQ(r.value("/sys/artnet/status/age"), "-1");
+    CHECK_EQ(at(r.schema("/sys/artnet/status").body, "children/age/ui/visibleWhen"), "\"received=true\"");
     r.send(dmx(0, {0x80, 0x00, 255, 200}));
     CHECK(r.azimuth > 180.0 && r.azimuth < 180.1);  // 0x8000 / 65535 of 360
     CHECK_EQ(r.brightness, 255);                     // 8 bits reach the maximum
@@ -95,6 +98,7 @@ TEST(artnet_maps_channels_to_nodes) {
     CHECK(!r.on);               // below the gate's threshold
     CHECK_EQ(r.value("/sys/artnet/status/packets"), "2");
     CHECK_EQ(r.value("/sys/artnet/status/age"), "0");
+    CHECK_EQ(r.value("/sys/artnet/status/received"), "true");
 }
 
 TEST(artnet_writes_only_changes) {

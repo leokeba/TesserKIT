@@ -339,7 +339,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
   enabled *(p)          boolean (default true)
   universe *(p)         integer 0–32767: the 15-bit port-address (net, sub-net, universe)
   mappings *(p)         list ≤ 8 of {path, coarse 0–512, fine 0–512, min, max, threshold 0–255}
-  status/               packets, universe (the last seen), age (s since a frame of ours, -1 none), error
+  status/               packets, universe (the last seen), received (hidden), age (s since a frame of ours, -1 none; shown once received), error
 ```
 
 - **Receiving:** an Art-Net 4 node on UDP 6454 (unicast and broadcast). TesserKIT's task drains the socket without blocking every period and keeps the last ArtDmx frame of its universe; ArtDmx for other universes only counts.
