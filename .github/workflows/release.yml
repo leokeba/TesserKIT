@@ -1,7 +1,9 @@
 # Each push to main: the host tests, then a release of the example firmware
 # (examples/idf/minimal, with firmware.github() pointing here) under the next
-# patch version, or library.json's version when it was raised above it. A
-# commit message with "[skip ci]" releases nothing.
+# patch version, or library.json's version when it was raised above it, and
+# TesserUI's launcher on GitHub Pages (https://leokeba.github.io/TesserKIT/),
+# built from the same TesserUI as the firmware. A commit message with
+# "[skip ci]" releases nothing.
 name: Release
 
 on:
@@ -39,3 +41,39 @@ jobs:
       dependencies: |
         leokeba/TesserAPI
         leokeba/TesserUI
+
+  # The launcher (TesserUI's DESIGN.md section 9.7): devices reached over USB,
+  # Bluetooth or the network, with no interface of their own needed.
+  pages:
+    needs: host-tests
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: leokeba/TesserUI
+          path: TesserUI
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: TesserUI/web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: TesserUI/web/pnpm-lock.yaml
+      - name: Build the bundle
+        working-directory: TesserUI/web
+        run: pnpm install --frozen-lockfile && pnpm build
+      - name: Site
+        run: mkdir _site && cp pages/index.html TesserUI/web/dist/ui.js _site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4

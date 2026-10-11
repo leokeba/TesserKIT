@@ -25,6 +25,8 @@ void loop() {}
 
 A fresh device opens an access point named after it (`heliostat-a67c`) with a captive portal: join it from a phone and the interface opens. Add a Wi-Fi network there; once joined, the device is at `http://heliostat-a67c.local/`.
 
+Or open the launcher, [leokeba.github.io/TesserKIT](https://leokeba.github.io/TesserKIT/), in Chrome: it reaches a device over USB with no network at all, by its address, or among those [TesserUI's bridge](https://github.com/leokeba/TesserUI/tree/main/bridge) finds nearby.
+
 It aims at most of [ESP32-sveltekit](https://github.com/theelims/ESP32-sveltekit)'s functionality: a library rather than a template, every service a subtree reachable over HTTP, WebSocket, serial, ESP-NOW and MQTT, the whole interface within a 50 KB bundle, and settings in NVS with no filesystem partition.
 
 ## Services
@@ -56,7 +58,7 @@ On a classic ESP32 with ESP-IDF and `-Os`, the five services add 113 KB of flash
 
 ## Releases
 
-Each push to main runs the host tests, then [`release.yml`](.github/workflows/release.yml) builds the example for ESP32, ESP32-C3 and ESP32-S3 and publishes a release under the next patch version: `tesserkit-minimal-<target>.bin` for updates, `tesserkit-minimal-<target>-factory.bin` to flash a new board at 0x0. Devices running the example built with `-DWITH_GITHUB=1` find it and offer it under Firmware. For a minor or major release, raise the version in `library.json`; `[skip ci]` in a commit message skips the release.
+Each push to main runs the host tests, then [`release.yml`](.github/workflows/release.yml) builds the example for ESP32, ESP32-C3 and ESP32-S3 and publishes a release under the next patch version: `tesserkit-minimal-<target>.bin` for updates, `tesserkit-minimal-<target>-factory.bin` to flash a new board at 0x0. Devices running the example built with `-DWITH_GITHUB=1` find it and offer it under Firmware. The same run publishes the launcher above to GitHub Pages, with the TesserUI the release is built with. For a minor or major release, raise the version in `library.json`; `[skip ci]` in a commit message skips the release.
 
 Applications release their own firmware with the same workflow:
 

@@ -136,8 +136,8 @@ public:
 class Mdns {
 public:
     virtual ~Mdns() = default;
-    // <hostname>.local with an _http._tcp service on `port` (none if 0);
-    // off when `on` is false.
+    // <hostname>.local with _http._tcp and _tesser._tcp services on `port`
+    // (none if 0); off when `on` is false.
     virtual void set(bool on, const char* hostname, const char* version, uint16_t port) = 0;
 };
 

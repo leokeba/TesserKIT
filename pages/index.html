@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="description" content="Reach a TesserKIT device over USB, Bluetooth or the network: TesserUI's launcher." />
+    <title>TesserKIT</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <!-- TesserUI's bundle, published by .github/workflows/release.yml with the
+         firmware it serves. A launcher: it opens ?api=, or the device the user
+         picks (TesserUI's DESIGN.md section 9.7). -->
+    <script>
+      window.TESSER = { launcher: true, title: 'TesserKIT' };
+    </script>
+    <script src="ui.js"></script>
+  </body>
+</html>

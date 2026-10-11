@@ -14,3 +14,6 @@ CONFIG_LWIP_MAX_SOCKETS=16
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
 # Size over debuggability, as shipped firmware is built.
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+# The console's UART also carries the API (the launcher's USB way): the
+# launcher skips log lines, but one written in the middle of a reply breaks it.
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y

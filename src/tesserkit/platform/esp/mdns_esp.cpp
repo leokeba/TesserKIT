@@ -1,4 +1,5 @@
-// <hostname>.local and the _http._tcp service, on ESP-IDF's mdns component.
+// <hostname>.local with the _http._tcp and _tesser._tcp services, on ESP-IDF's
+// mdns component.
 // Left out with TESSERKIT_NO_MDNS.
 #if defined(ESP_PLATFORM) && !defined(TESSERKIT_NO_MDNS)
 
@@ -31,7 +32,9 @@ public:
         }
         mdns_hostname_set(hostname);
         mdns_instance_name_set(hostname);
-        if (mdns_service_exists("_http", "_tcp", nullptr)) mdns_service_remove("_http", "_tcp");
+        for (const char* type : {"_http", "_tesser"}) {
+            if (mdns_service_exists(type, "_tcp", nullptr)) mdns_service_remove(type, "_tcp");
+        }
         if (!port) return;
         version_ = version;
         mdns_txt_item_t txt[] = {
@@ -41,6 +44,9 @@ public:
             {"tesser", "1"},
         };
         mdns_service_add(nullptr, "_http", "_tcp", port, txt, sizeof(txt) / sizeof(txt[0]));
+        // What TesserAPI's HttpServer::advertise() announces, and TesserUI's
+        // bridge browses for the launcher (TesserUI's DESIGN.md section 9.7).
+        mdns_service_add(nullptr, "_tesser", "_tcp", port, txt, 2);  // api and ws
     }
 
 private:

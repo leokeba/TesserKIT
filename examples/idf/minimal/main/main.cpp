@@ -1,7 +1,9 @@
 // A TesserKIT device with ESP-IDF: Wi-Fi with a captive portal, time,
 // firmware updates, backups, timers, accounts and status under /sys, next to a small
 // application tree. Flash it, join the "tesserkit-demo-xxxx" network from a
-// phone, and the interface opens; add your Wi-Fi network there.
+// phone, and the interface opens; add your Wi-Fi network there. Or reach it
+// from the launcher (https://leokeba.github.io/TesserKIT/): over USB, with no
+// network at all, by its address, or listed under Nearby by TesserUI's bridge.
 //
 // For development, a gitignored main/secrets.h may define WIFI_SSID and
 // WIFI_PASSWORD (the factory default network), WIFI_TX_POWER (dBm) for
@@ -83,6 +85,10 @@ tesserkit::Firmware firmware(dev);
 tesserkit::Backup backup(dev);
 tesserkit::Timers timers(dev);
 tesserkit::Auth auth(dev);  // open until an admin account exists
+// The launcher's USB way: envelopes on the console's UART, one per line, with
+// Admin access (physical access). Logs stay at warnings, so that few land in
+// the middle of a reply (sdkconfig.defaults).
+tesser::UartTransport serialApi(dev.api(), UART_NUM_0);
 #if WITH_ARTNET
 tesserkit::ArtNet artnet(dev);
 #endif
@@ -128,7 +134,9 @@ extern "C" void app_main() {
     mqtt.broker(MQTT_URI).enable(true);
 #endif
 #endif
-    dev.api().mount("led", led).label("LED");
+    dev.api().mount("led", led).label("LED").ui("icon", "bulb");
+    dev.cors("https://leokeba.github.io");  // the launcher, reaching the device by its address
     dev.begin();
+    serialApi.begin();
 }
 #endif
