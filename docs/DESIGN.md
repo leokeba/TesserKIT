@@ -404,17 +404,18 @@ TesserKIT devices are TesserAPI nodes, so the multi-node features are TesserAPI'
 
 ### 10.1 helionext (open-heliostat)
 
-The heliostat (classic ESP32, two DC servo axes with magnetic encoders, ADXL345, GPS) ports as one application tree:
+The heliostat (classic ESP32, two DC servo axes with magnetic encoders, ADXL345, GPS) ports as one application tree. Its motors, encoders, sequencers and sensors come from [TesserMotion](https://github.com/leokeba/TesserMotion), a sibling library on TesserAPI, so devices without motors don't carry them:
 
 | Today | TesserKIT |
 |---|---|
 | `HeliostatService` (`/rest/heliostat`, router + save maps) | `/heliostat`: `currentSource`, `currentTarget` (enums over the sources' names, or strings with a `visibleWhen`), `sunTracker`, `mountOrientation` (`ui.form`: the draft, apply and read-back flow is TesserUI's form) |
 | `sourcesMap` with add, remove, rename actions | `/heliostat/sources`: a keyed list (key `name`) of `{name, azimuth, elevation}`; add, remove and rename are list writes |
-| `ServoControllerService` ×2 | `api.mount("azimuth", azimuthServo)`: already the `motors` fixture of TesserUI |
-| Movement and target sequencers (keyframes, ≤ 16) | lists of `{t, value}` with the actions `start`, `stop`, `clear`; the keyframe chart is a custom element `x-keyframes` (§14) |
+| `ServoControllerService` ×2 | TesserMotion's `Axis`: `api.mount("azimuth", azimuth)` |
+| Movement and target sequencers (keyframes, ≤ 16) | TesserMotion's `Sequencer`: lists of `{t, value}` with the actions `start`, `stop`, `clear`, drawn by the custom element `x-keyframes` (§14) |
 | `AccelCalibService`, `MountOrientationResolveService` | objects with `status` enums, `progress` bars, `visibleWhen` on the result fields, and `start`, `solve`, `apply` actions |
-| `ArtNetService`, GPS services | `/artnet`, `/gps` objects; GPS feeds `clock.external()` and the sun tracker's position |
+| `ArtNetService`, GPS services | `/artnet`; `/gps` is TesserMotion's `NmeaGps`, which feeds `clock.external()` and the sun tracker's position |
 | Sun tracker "Sync Time" | `/sys/time/set` |
+| ADXL345 | TesserMotion's `Adxl345`; the calibration and mount orientation solvers stay in the application |
 | Teleplot UDP telemetry | watched values with `ui.widget "chart"` |
 | ESP32-sveltekit Wi-Fi, NTP, OTA, core dump | `Network`, `Time`, `Firmware`, `System` |
 
