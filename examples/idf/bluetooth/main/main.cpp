@@ -14,6 +14,7 @@
 // WIFI_PASSWORD (the factory default network) and WIFI_TX_POWER (dBm).
 #include "TesserKIT.h"
 #include "tesser/transports/ble_transport.h"
+#include "driver/ledc.h"
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -21,14 +22,45 @@
 
 namespace {
 
+// The LED: LED_GPIO (-DLED_GPIO=n), by default GPIO 2, the blue LED of most
+// ESP32 devkits, dimmed with PWM. Each write applies at once, whoever makes it
+// (the interface, a timer, Art-Net, MQTT, the settings restored at boot).
+#if !defined(LED_GPIO)
+#define LED_GPIO 2
+#endif
+
 struct Led {
     bool on = false;
     int brightness = 128;
+
+    void begin() {
+        ledc_timer_config_t timer = {};
+        timer.speed_mode = LEDC_LOW_SPEED_MODE;
+        timer.duty_resolution = LEDC_TIMER_8_BIT;
+        timer.timer_num = LEDC_TIMER_0;
+        timer.freq_hz = 5000;
+        timer.clk_cfg = LEDC_AUTO_CLK;
+        ledc_timer_config(&timer);
+        ledc_channel_config_t channel = {};
+        channel.gpio_num = LED_GPIO;
+        channel.speed_mode = LEDC_LOW_SPEED_MODE;
+        channel.channel = LEDC_CHANNEL_0;
+        channel.timer_sel = LEDC_TIMER_0;
+        ledc_channel_config(&channel);
+        apply();
+    }
+    void apply() const {
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, on ? static_cast<uint32_t>(brightness) : 0);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    }
 };
 
 void describe(tesser::Object& o, Led& led) {
-    o.value("on", led.on).persist();
-    o.value("brightness", led.brightness).range(0, 255).step(5).persist();
+    o.value("on", [&led] { return led.on; }, [&led](bool on) { led.on = on; led.apply(); }).persist();
+    o.value("brightness", [&led] { return led.brightness; }, [&led](int b) { led.brightness = b; led.apply(); })
+        .range(0, 255)
+        .step(5)
+        .persist();
 }
 
 Led led;
@@ -54,6 +86,7 @@ extern "C" void app_main() {
     net.txPower(WIFI_TX_POWER);
 #endif
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");
+    led.begin();
     dev.api().mount("led", led).label("LED").ui("icon", "bulb");
     dev.cors("https://leokeba.github.io");  // the launcher, reaching the device by its address
     dev.begin();                             // NVS too, which NimBLE needs
