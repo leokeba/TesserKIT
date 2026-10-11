@@ -46,6 +46,10 @@ public:
         config.url = url;
         config.timeout_ms = 15000;
         config.buffer_size = 1536;
+        // The request line holds the whole URL: GitHub's assets redirect to a
+        // signed CDN URL of about 950 characters, which the default 512 bytes
+        // refused ("Out of buffer").
+        config.buffer_size_tx = 2048;
         config.user_agent = "TesserKIT";  // GitHub's API requires one
 #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
         config.crt_bundle_attach = esp_crt_bundle_attach;
@@ -62,7 +66,9 @@ private:
         // Release assets redirect to a CDN: follow, as esp_https_ota does.
         int status = 0;
         for (int i = 0;; i++) {
-            if (esp_http_client_open(client, 0) != ESP_OK) return Check::fail(Status::NotFound, "server unreachable");
+            esp_err_t err = esp_http_client_open(client, 0);
+            if (err == ESP_ERR_HTTP_CONNECT) return Check::fail(Status::NotFound, "server unreachable");
+            if (err != ESP_OK) return Check::fail(Status::Internal, "the request couldn't be sent");
             if (esp_http_client_fetch_headers(client) < 0) return Check::fail(Status::Timeout, "no answer from the server");
             status = esp_http_client_get_status_code(client);
             bool redirect = status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
