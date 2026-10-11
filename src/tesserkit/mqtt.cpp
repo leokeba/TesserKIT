@@ -107,7 +107,7 @@ void Mqtt::describe(tesser::Object& o) {
     s.value("error", static_cast<const std::string&>(error_)).label("Last error");
     s.value("published", static_cast<const uint32_t&>(published_)).label("Messages published").watch();
     s.value("dropped", static_cast<const uint32_t&>(dropped_)).label("Messages dropped").watch().ui("advanced");
-    lost_ = &o.event("lost").label("MQTT connection lost").ui("toast", "warn").ui("hidden");
+    lost_ = &o.event("lost").label("Connection lost").ui("toast", "warn").ui("hidden");
 }
 
 uint32_t Mqtt::settingsGen() const {

@@ -134,7 +134,7 @@ void Network::describe(tesser::Object& o) {
     st.value("channel", static_cast<const uint8_t&>(linkChannel_));
     st.value("bssid", static_cast<const std::string&>(linkBssid_)).label("BSSID").ui("advanced");
     // For clients on the access point, which must follow the new address.
-    joined_ = &w.event("joined").label("Wi-Fi connected").ui("toast", "ok").ui("hidden");
+    joined_ = &w.event("joined").label("Joined").ui("toast", "ok").ui("hidden");
 
     networksNode_ = &w.list("networks", networks_)
                          .key("ssid")

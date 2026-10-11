@@ -113,7 +113,7 @@ void ArtNet::describe(tesser::Object& o) {
         .watch()
         .ui("visibleWhen", "received=true");
     s.value("error", static_cast<const std::string&>(error_)).label("Last error");
-    refused_ = &o.event("refused").label("Art-Net write refused").ui("toast", "warn").ui("hidden");
+    refused_ = &o.event("refused").label("Write refused").ui("toast", "warn").ui("hidden");
 }
 
 void ArtNet::start() {

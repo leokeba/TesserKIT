@@ -254,7 +254,7 @@ void Firmware::GithubFeed::describe(tesser::Object& o) {
                       .readOnly()
                       .ui("labels", "Not checked,Checking,Up to date,Update available,Check failed");
     errorNode_ = &g.value("error", static_cast<const std::string&>(error_)).ui("visibleWhen", "status=failed");
-    newRelease_ = &g.event("newRelease").label("Firmware update available").ui("toast", "info").ui("hidden");
+    newRelease_ = &g.event("newRelease").label("New release").ui("toast", "info").ui("hidden");
     g.value("autoCheck", autoCheck_).persist().writeAccess(Access::Admin).label("Check daily");
     g.action("check", [this](tesser::Call& call) {
          if (!idle()) {
@@ -467,7 +467,7 @@ void Firmware::describe(tesser::Object& o) {
                          .ui("visibleWhen", "state!=idle");
     errorNode_ = &o.value("error", static_cast<const std::string&>(error_)).ui("visibleWhen", "state=failed");
     if (ota_ && p.http) {
-        updateFailed_ = &o.event("updateFailed").label("Firmware update failed").ui("toast", "error").ui("hidden");
+        updateFailed_ = &o.event("updateFailed").label("Update failed").ui("toast", "error").ui("hidden");
     }
     if (ota_ && p.http && feed_) feed_->describe(o);
     pendingNode_ = &o.value("pending", static_cast<const bool&>(pending_)).ui("hidden");
