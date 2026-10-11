@@ -1,0 +1,486 @@
+#include "tesserkit/files.h"
+
+#include <dirent.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <utility>
+
+namespace tesserkit {
+
+using tesser::Access;
+using tesser::Check;
+using tesser::Status;
+
+namespace {
+
+constexpr int64_t kValidTime = 1577836800;  // 2020-01-01: older mtimes are a clock that wasn't set
+
+Check unmounted() { return Check::fail(Status::NotAllowed, "no filesystem"); }
+
+bool isDir(const std::string& p) {
+    struct stat st;
+    return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+bool exists(const std::string& p) {
+    struct stat st;
+    return stat(p.c_str(), &st) == 0;
+}
+
+// The directory holding `rel` ("" at the root), and its last name.
+std::pair<std::string, std::string> split(const std::string& rel) {
+    size_t slash = rel.rfind('/');
+    if (slash == std::string::npos) return {"", rel};
+    return {rel.substr(0, slash), rel.substr(slash + 1)};
+}
+
+// A file being uploaded, written to a hidden temporary file beside it and
+// renamed over it once complete.
+class PathSink : public tesser::FileSink {
+public:
+    PathSink(Files& files, std::string target, std::string temp, FILE* f)
+        : files_(files), target_(std::move(target)), temp_(std::move(temp)), f_(f) {}
+    ~PathSink() override {
+        if (f_) fclose(f_);
+        if (!done_) ::remove(temp_.c_str());
+    }
+    Check write(const uint8_t* data, size_t len) override {
+        if (fwrite(data, 1, len, f_) != len) return Check::fail(Status::TooLarge, "the filesystem is full");
+        return Check::ok();
+    }
+    Check finish(tesser::JsonWriter& reply) override {
+        (void)reply;
+        bool flushed = fclose(f_) == 0;
+        f_ = nullptr;
+        if (!flushed) return Check::fail(Status::TooLarge, "the filesystem is full");
+        // Some VFS drivers don't rename over an existing file.
+        if (::rename(temp_.c_str(), target_.c_str()) != 0 &&
+            (::remove(target_.c_str()) != 0 || ::rename(temp_.c_str(), target_.c_str()) != 0)) {
+            return Check::fail(Status::Internal, "the file couldn't be written");
+        }
+        done_ = true;
+        files_.changed();
+        return Check::ok();
+    }
+
+private:
+    Files& files_;
+    std::string target_, temp_;
+    FILE* f_;
+    bool done_ = false;
+};
+
+class PathSource : public tesser::FileSource {
+public:
+    PathSource(FILE* f, int64_t size) : f_(f), size_(size) {}
+    ~PathSource() override { fclose(f_); }
+    int64_t size() const override { return size_; }
+    int read(uint8_t* buf, size_t cap) override {
+        size_t n = fread(buf, 1, cap, f_);
+        if (n == 0 && ferror(f_)) return -1;
+        return static_cast<int>(n);
+    }
+
+private:
+    FILE* f_;
+    int64_t size_;
+};
+
+}  // namespace
+
+Files::Files(Device& dev) : Service(dev, "files") { dev.files_ = this; }
+
+Files& Files::partition(const char* label) {
+    label_ = label;
+    return *this;
+}
+
+Files& Files::root(const char* path) {
+    root_ = path;
+    while (root_.size() > 1 && root_.back() == '/') root_.pop_back();
+    return *this;
+}
+
+Check Files::checkName(std::string_view name) {
+    if (name.empty() || name.size() > kMaxName) return Check::fail(Status::InvalidValue, "1 to 32 characters");
+    if (name[0] == '.') return Check::fail(Status::InvalidValue, "can't start with a dot");
+    for (char c : name) {
+        if (c == '/' || c == '\\' || static_cast<unsigned char>(c) < 0x20 || c == 0x7F) {
+            return Check::fail(Status::InvalidValue, "no slashes or control characters");
+        }
+    }
+    return Check::ok();
+}
+
+// Normalizes `rel` ("/a/b/", "a/b") to "a/b", checking each name; "" is the
+// root. False if it isn't valid.
+static bool normalize(std::string_view rel, std::string& out) {
+    out.clear();
+    size_t i = 0;
+    while (i < rel.size()) {
+        size_t end = rel.find('/', i);
+        if (end == std::string_view::npos) end = rel.size();
+        std::string_view name = rel.substr(i, end - i);
+        i = end + 1;
+        if (name.empty()) continue;
+        if (!Files::checkName(name).isOk()) return false;
+        if (!out.empty()) out += '/';
+        out.append(name.data(), name.size());
+    }
+    return out.size() <= Files::kMaxPath;
+}
+
+std::string Files::path(std::string_view rel) const {
+    std::string n;
+    if (!normalize(rel, n)) return std::string();
+    return n.empty() ? root_ : root_ + "/" + n;
+}
+
+std::vector<FileEntry> Files::list(std::string_view dir, size_t max, bool* truncated) const {
+    std::vector<FileEntry> out;
+    if (truncated) *truncated = false;
+    std::string p = path(dir);
+    if (!mounted_ || p.empty()) return out;
+    DIR* d = opendir(p.c_str());
+    if (!d) return out;
+    while (struct dirent* e = readdir(d)) {
+        if (e->d_name[0] == '.') continue;  // ".", "..", and uploads in progress
+        FileEntry f;
+        f.name = e->d_name;
+        struct stat st;
+        if (stat((p + "/" + f.name).c_str(), &st) != 0) continue;
+        f.isDir = S_ISDIR(st.st_mode);
+        f.size = f.isDir ? 0 : static_cast<uint32_t>(st.st_size);
+        f.modified = st.st_mtime >= kValidTime ? static_cast<int64_t>(st.st_mtime) : 0;
+        out.push_back(std::move(f));
+    }
+    closedir(d);
+    std::sort(out.begin(), out.end(), [](const FileEntry& a, const FileEntry& b) {
+        return a.isDir != b.isDir ? a.isDir : a.name < b.name;
+    });
+    if (out.size() > max) {
+        out.resize(max);
+        if (truncated) *truncated = true;
+    }
+    return out;
+}
+
+Check Files::mkdir(std::string_view rel) {
+    if (!mounted_) return unmounted();
+    std::string n;
+    if (!normalize(rel, n) || n.empty()) return Check::fail(Status::InvalidValue, "not a valid path");
+    // Each directory on the way.
+    for (size_t slash = n.find('/');; slash = n.find('/', slash + 1)) {
+        std::string p = root_ + "/" + n.substr(0, slash);
+        if (!isDir(p)) {
+            if (exists(p)) return Check::fail(Status::InvalidValue, "a file has that name");
+            if (::mkdir(p.c_str(), 0775) != 0) return Check::fail(Status::Internal, "the directory couldn't be made");
+        }
+        if (slash == std::string::npos) break;
+    }
+    changed();
+    return Check::ok();
+}
+
+Check Files::write(std::string_view rel, std::string_view data) {
+    if (!mounted_) return unmounted();
+    std::string n;
+    if (!normalize(rel, n) || n.empty()) return Check::fail(Status::InvalidValue, "not a valid path");
+    auto parts = split(n);
+    if (!parts.first.empty()) {
+        Check c = mkdir(parts.first);
+        if (!c.isOk()) return c;
+    }
+    std::string target = root_ + "/" + n;
+    if (isDir(target)) return Check::fail(Status::InvalidValue, "a directory has that name");
+    std::string temp = root_ + "/" + (parts.first.empty() ? "" : parts.first + "/") + "." + parts.second;
+    FILE* f = fopen(temp.c_str(), "wb");
+    if (!f) return Check::fail(Status::Internal, "the file couldn't be written");
+    bool ok = fwrite(data.data(), 1, data.size(), f) == data.size();
+    ok = fclose(f) == 0 && ok;
+    if (ok && ::rename(temp.c_str(), target.c_str()) != 0) {
+        ok = ::remove(target.c_str()) == 0 && ::rename(temp.c_str(), target.c_str()) == 0;
+    }
+    if (!ok) {
+        ::remove(temp.c_str());
+        return Check::fail(Status::TooLarge, "the filesystem is full");
+    }
+    changed();
+    return Check::ok();
+}
+
+Check Files::read(std::string_view rel, std::string& out, size_t max) {
+    if (!mounted_) return unmounted();
+    std::string p = path(rel);
+    struct stat st;
+    if (p.empty() || stat(p.c_str(), &st) != 0 || S_ISDIR(st.st_mode)) return Check::fail(Status::NotFound, "no such file");
+    if (static_cast<uint64_t>(st.st_size) > max) return Check::fail(Status::TooLarge, "the file is too large");
+    FILE* f = fopen(p.c_str(), "rb");
+    if (!f) return Check::fail(Status::Internal, "the file couldn't be read");
+    out.resize(static_cast<size_t>(st.st_size));
+    size_t n = fread(&out[0], 1, out.size(), f);
+    fclose(f);
+    if (n != out.size()) return Check::fail(Status::Internal, "the file couldn't be read");
+    return Check::ok();
+}
+
+// Removes `p`, a file or a directory with what it holds.
+static bool removeAll(const std::string& p) {
+    if (!isDir(p)) return ::remove(p.c_str()) == 0;
+    DIR* d = opendir(p.c_str());
+    if (!d) return false;
+    std::vector<std::string> names;
+    while (struct dirent* e = readdir(d)) {
+        if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0) names.push_back(e->d_name);
+    }
+    closedir(d);
+    bool ok = true;
+    for (const std::string& n : names) ok = removeAll(p + "/" + n) && ok;
+    return ::rmdir(p.c_str()) == 0 && ok;
+}
+
+Check Files::remove(std::string_view rel) {
+    if (!mounted_) return unmounted();
+    std::string n;
+    if (!normalize(rel, n) || n.empty()) return Check::fail(Status::InvalidValue, "not a valid path");
+    std::string p = root_ + "/" + n;
+    if (!exists(p)) return Check::fail(Status::NotFound, "no such file");
+    bool ok = removeAll(p);
+    changed();
+    return ok ? Check::ok() : Check::fail(Status::Internal, "it couldn't be removed");
+}
+
+Check Files::rename(std::string_view from, std::string_view to) {
+    if (!mounted_) return unmounted();
+    std::string a, b;
+    if (!normalize(from, a) || a.empty() || !normalize(to, b) || b.empty()) {
+        return Check::fail(Status::InvalidValue, "not a valid path");
+    }
+    if (!exists(root_ + "/" + a)) return Check::fail(Status::NotFound, "no such file");
+    if (exists(root_ + "/" + b)) return Check::fail(Status::InvalidValue, "that name is taken");
+    if (b.compare(0, a.size() + 1, a + "/") == 0) return Check::fail(Status::InvalidValue, "into itself");
+    if (::rename((root_ + "/" + a).c_str(), (root_ + "/" + b).c_str()) != 0) {
+        return Check::fail(Status::Internal, "it couldn't be renamed");
+    }
+    changed();
+    return Check::ok();
+}
+
+uint64_t Files::freeBytes() const {
+    uint64_t total = 0, used = 0;
+    if (!mounted_ || !fs_->usage(total, used)) return 0;
+    return used < total ? total - used : 0;
+}
+
+std::unique_ptr<tesser::FileSink> Files::sink(std::string_view rel, tesser::FileRequest& request) {
+    std::string n;
+    if (!mounted_) {
+        request.refuse(Status::NotAllowed, "no filesystem");
+        return nullptr;
+    }
+    if (!normalize(rel, n) || n.empty()) {
+        request.refuse(Status::InvalidValue, "not a valid path");
+        return nullptr;
+    }
+    std::string target = root_ + "/" + n;
+    struct stat st;
+    bool there = stat(target.c_str(), &st) == 0;
+    if (there && S_ISDIR(st.st_mode)) {
+        request.refuse(Status::InvalidValue, "a directory has that name");
+        return nullptr;
+    }
+    // The old file is there until the new one is complete.
+    if (request.size > freeBytes()) {
+        request.refuse(Status::TooLarge, "not enough space");
+        return nullptr;
+    }
+    auto parts = split(n);
+    if (!parts.first.empty() && !isDir(root_ + "/" + parts.first)) {
+        request.refuse(Status::NotFound, "no such directory");
+        return nullptr;
+    }
+    std::string temp = root_ + "/" + (parts.first.empty() ? "" : parts.first + "/") + "." + parts.second;
+    FILE* f = fopen(temp.c_str(), "wb");
+    if (!f) {
+        request.refuse(Status::Internal, "the file couldn't be written");
+        return nullptr;
+    }
+    return std::unique_ptr<tesser::FileSink>(new PathSink(*this, std::move(target), std::move(temp), f));
+}
+
+std::unique_ptr<tesser::FileSource> Files::source(std::string_view rel, tesser::FileRequest& request) {
+    std::string p = mounted_ ? path(rel) : std::string();
+    struct stat st;
+    if (p.empty() || stat(p.c_str(), &st) != 0 || S_ISDIR(st.st_mode)) {
+        request.refuse(Status::NotFound, "no such file");
+        return nullptr;
+    }
+    FILE* f = fopen(p.c_str(), "rb");
+    if (!f) {
+        request.refuse(Status::Internal, "the file couldn't be read");
+        return nullptr;
+    }
+    request.filename = split(p).second;
+    return std::unique_ptr<tesser::FileSource>(new PathSource(f, static_cast<int64_t>(st.st_size)));
+}
+
+std::string Files::relative(std::string_view name) const {
+    std::string r = dir_ == "/" ? std::string() : dir_.substr(1) + "/";
+    r.append(name.data(), name.size());
+    return r;
+}
+
+Check Files::setDir(const std::string& dir) {
+    std::string n;
+    if (!normalize(dir, n)) return Check::fail(Status::InvalidValue, "not a valid path");
+    if (!mounted_) return unmounted();
+    if (!isDir(n.empty() ? root_ : root_ + "/" + n)) return Check::fail(Status::NotFound, "no such directory");
+    dir_ = "/" + n;
+    if (dirNode_) dirNode_->changed();
+    refresh();
+    return Check::ok();
+}
+
+void Files::refresh() {
+    listed_ = generation();
+    if (mounted_) {
+        uint64_t total = 0, used = 0;
+        if (fs_->usage(total, used)) {
+            total_ = total;
+            used_ = used;
+        }
+        // The directory shown may have gone.
+        if (!isDir(path(dir_))) {
+            dir_ = "/";
+            if (dirNode_) dirNode_->changed();
+        }
+    }
+    entries_ = list(dir_, kMaxEntries, &truncated_);
+    if (object_) object_->changed();
+}
+
+void Files::describe(tesser::Object& o) {
+    object_ = &o;
+    o.label("Files").ui("icon", "folder").readAccess(Access::Admin);
+    o.value("mounted", static_cast<const bool&>(mounted_)).ui("advanced");
+    o.value("total", static_cast<const uint64_t&>(total_)).unit("B");
+    o.value("used", static_cast<const uint64_t&>(used_)).unit("B");
+    dirNode_ = &o.value("dir", [this] { return dir_; }, [this](const std::string& d) { return setDir(d); })
+                    .label("Directory");
+    o.action("up", [this] {
+         size_t slash = dir_.rfind('/');
+         return setDir(slash == 0 ? "/" : dir_.substr(0, slash));
+     }).label("Parent directory");
+    entriesNode_ = &o.list("entries", entries_,
+                           [this](tesser::Object& e, FileEntry& f) {
+                               // The element is temporary: handlers keep copies.
+                               std::string rel = relative(f.name);
+                               bool dir = f.isDir;
+                               e.value("name", f.name);
+                               e.value("size", f.size).unit("B");
+                               e.value("isDir", f.isDir).label("Directory").ui("icon", "folder");
+                               e.value("modified", f.modified).ui("advanced");
+                               e.file("content")
+                                   .download([this, rel, dir](tesser::FileRequest& r) -> std::unique_ptr<tesser::FileSource> {
+                                       if (dir) {
+                                           r.refuse(Status::NotAllowed, "a directory");
+                                           return nullptr;
+                                       }
+                                       return source(rel, r);
+                                   })
+                                   .upload([this, rel, dir](tesser::FileRequest& r) -> std::unique_ptr<tesser::FileSink> {
+                                       if (dir) {
+                                           r.refuse(Status::NotAllowed, "a directory");
+                                           return nullptr;
+                                       }
+                                       return sink(rel, r);
+                                   })
+                                   .maxSize(total_)  // so a client can refuse it before sending
+                                   .label("Content")
+                                   .ui("confirm", "Replace this file?")
+                                   .ui("visibleWhen", "isDir=false");
+                               e.action("open", [this, rel, dir] {
+                                    return dir ? setDir(rel) : Check::fail(Status::NotAllowed, "not a directory");
+                                }).ui("visibleWhen", "isDir=true");
+                               e.action("rename", [this, rel](const std::string& to) {
+                                    Check c = checkName(to);
+                                    if (!c.isOk()) return c;
+                                    c = rename(rel, split(rel).first + (split(rel).first.empty() ? "" : "/") + to);
+                                    if (c.isOk()) refresh();
+                                    return c;
+                                });
+                               e.action("delete", [this, rel] {
+                                    Check c = remove(rel);
+                                    refresh();
+                                    return c;
+                                }).ui("confirm", "Delete it, and what it holds?");
+                           })
+                         .key("name")
+                         .readOnly()
+                         .maxSize(kMaxEntries)
+                         .label("Entries");
+    o.value("truncated", static_cast<const bool&>(truncated_))
+        .doc("The directory holds more entries than are listed")
+        .ui("advanced");
+    uploadNode_ = &o.file("upload").upload([this](tesser::FileRequest& r) -> std::unique_ptr<tesser::FileSink> {
+            Check c = checkName(r.filename);
+            if (!c.isOk()) {
+                r.refuse(c.status, r.filename.empty() ? "the file has no name" : c.message);
+                return nullptr;
+            }
+            return sink(relative(r.filename), r);
+        })
+        .label("Upload a file")
+        .doc("Into the directory shown; a file of the same name is replaced");
+    o.action("mkdir", [this](const std::string& name) {
+         Check c = checkName(name);
+         if (!c.isOk()) return c;
+         c = mkdir(relative(name));
+         if (c.isOk()) refresh();
+         return c;
+     }).label("New directory");
+    o.action("refresh", [this] { refresh(); }).label("Refresh");
+    o.action("format", [this] {
+         if (!mounted_) return unmounted();
+         bool ok = fs_->format();
+         dir_ = "/";
+         if (dirNode_) dirNode_->changed();
+         changed();
+         refresh();
+         return ok ? Check::ok() : Check::fail(Status::Internal, "the filesystem couldn't be formatted");
+     })
+        .label("Erase every file")
+        .ui("confirm", "Erase every file?")
+        .ui("advanced");
+}
+
+void Files::start() {
+    Platform& p = dev_.platform();
+    if (!p.fs) p.fs = espFilesystem();
+    fs_ = p.fs;
+    mounted_ = fs_ && fs_->mount(label_, root_.c_str());
+    if (!mounted_) tesser::logError("tesserkit: no filesystem (a \"files\" or \"spiffs\" partition, and LittleFS)");
+    changed();
+    refresh();
+    // A file larger than the partition is refused before it is sent.
+    if (mounted_) uploadNode_->maxSize(total_);
+    refreshBackups();
+}
+
+void Files::tick(uint32_t nowMs) {
+    (void)nowMs;
+    if (generation() != listed_) {
+        refresh();
+        refreshBackups();
+    }
+}
+
+void Files::factoryReset() {
+    if (mounted_) remove(kBackupDir);
+}
+
+}  // namespace tesserkit

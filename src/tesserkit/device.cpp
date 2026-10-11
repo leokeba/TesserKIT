@@ -279,6 +279,7 @@ MqttClient* espMqtt() { return nullptr; }
 MqttClient* espMqttTls() { return nullptr; }
 Ble* espBle() { return nullptr; }
 NowTpRadio* espNowTp() { return nullptr; }
+Filesystem* espFilesystem() { return nullptr; }
 #endif
 
 }  // namespace tesserkit

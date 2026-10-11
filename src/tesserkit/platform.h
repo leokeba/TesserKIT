@@ -214,6 +214,21 @@ public:
     virtual bool erase() = 0;
 };
 
+// A flash filesystem (LittleFS): Files'. Files themselves are read and written
+// through stdio and dirent below the mount point, the same on the host.
+class Filesystem {
+public:
+    virtual ~Filesystem() = default;
+    // Mounts the partition labelled `label` (null: "files", else "spiffs")
+    // at `root`, formatting one that holds no filesystem. True if it is
+    // mounted, by this call or before it (an application's LittleFS.begin()).
+    virtual bool mount(const char* label, const char* root) = 0;
+    // Bytes of the partition, and in use.
+    virtual bool usage(uint64_t& total, uint64_t& used) = 0;
+    // Erases every file; mounted again after.
+    virtual bool format() = 0;
+};
+
 // A UDP socket bound to a port: ArtNet's. Used from the device's task.
 class UdpSocket {
 public:
@@ -344,6 +359,7 @@ struct Platform {
     MqttClient* mqtt = nullptr;
     Ble* ble = nullptr;
     NowTpRadio* nowtp = nullptr;
+    Filesystem* fs = nullptr;
 };
 
 // The ESP implementations (null on the host).
@@ -359,5 +375,6 @@ MqttClient* espMqtt();     // null if the build has no MQTT client
 MqttClient* espMqttTls();  // the same, verifying brokers with the certificate bundle
 Ble* espBle();             // null if the build has no Bluetooth LE (NimBLE, or Arduino's BLE)
 NowTpRadio* espNowTp();    // null if the build has no NowTP
+Filesystem* espFilesystem();  // null if the build has no LittleFS
 
 }  // namespace tesserkit

@@ -21,6 +21,7 @@
 namespace tesserkit {
 
 class Device;
+class Files;
 
 // The device's overall state (docs/DESIGN.md section 4.3).
 enum class State : uint8_t { Booting, Provisioning, Connecting, Online, Updating, Error };
@@ -113,6 +114,9 @@ public:
     // begin(); on ESP, what is left empty is the ESP implementation.
     Platform& platform() { return platform_; }
     Core& core() { return *platform_.core; }
+    // The Files service, if the application has one (docs/DESIGN.md
+    // section 5.12): other services keep their files there.
+    Files* files() const { return files_; }
 #if defined(ESP_PLATFORM)
     tesser::HttpServer& http() { return http_; }
     tesserui::WebUi& web() { return web_; }
@@ -164,6 +168,7 @@ private:
     BootInfo info_;
     tesser::Storage* storage_ = nullptr;
     Service* services_ = nullptr;
+    Files* files_ = nullptr;
     std::string hostname_;
     std::string version_;
     bool ui_ = true;
@@ -202,6 +207,7 @@ private:
 #endif
 
     friend class Service;
+    friend class Files;
 };
 
 }  // namespace tesserkit

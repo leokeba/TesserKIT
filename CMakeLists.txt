@@ -7,6 +7,8 @@ set(TESSERKIT_CORE_SRCS
     src/tesserkit/time_service.cpp
     src/tesserkit/firmware.cpp
     src/tesserkit/backup.cpp
+    src/tesserkit/files.cpp
+    src/tesserkit/stored_backups.cpp
     src/tesserkit/crypto.cpp
     src/tesserkit/auth.cpp
     src/tesserkit/timers.cpp
@@ -58,9 +60,10 @@ if(ESP_PLATFORM)
              src/tesserkit/platform/esp/mqtt_esp.cpp
              src/tesserkit/platform/esp/ble_esp.cpp
              src/tesserkit/platform/esp/nowtp_esp.cpp
+             src/tesserkit/platform/esp/filesystem_esp.cpp
         INCLUDE_DIRS "src"
         REQUIRES esp_http_server esp_wifi esp_netif nvs_flash
-        PRIV_REQUIRES esp_event esp_timer app_update esp_http_client mbedtls lwip mdns mqtt espcoredump
+        PRIV_REQUIRES esp_event esp_timer app_update esp_http_client mbedtls lwip mdns mqtt espcoredump joltwallet__littlefs
                       esp_partition spi_flash efuse esp_app_format ${TESSERKIT_TSENS_REQ})
     if(NOT CONFIG_TESSERKIT_MDNS)
         target_compile_definitions(${COMPONENT_LIB} PRIVATE TESSERKIT_NO_MDNS=1)

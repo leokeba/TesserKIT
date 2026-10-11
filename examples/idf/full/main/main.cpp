@@ -72,7 +72,8 @@ tesserkit::System sys(dev);           // /sys/status, restart, factory reset, co
 tesserkit::Network net(dev);          // Wi-Fi, access point, captive portal, mDNS
 tesserkit::Time timekeeper(dev);      // SNTP, time zone
 tesserkit::Firmware firmware(dev);    // upload, URL, GitHub releases, rollback
-tesserkit::Backup backup(dev);        // the settings as a file
+tesserkit::Files files(dev);          // LittleFS: stored backups, the application's files
+tesserkit::Backup backup(dev);        // the settings as a file, and stored on the device
 tesserkit::Timers timers(dev);        // daily schedules
 tesserkit::Auth auth(dev);            // accounts and sign-in
 tesserkit::Mqtt mqtt(dev);            // a broker bridge

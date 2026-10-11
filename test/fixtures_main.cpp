@@ -13,6 +13,7 @@ int main(int argc, char** argv) {
     tesserkit::Network network(r.dev);
     tesserkit::Time time(r.dev);
     tesserkit::Firmware firmware(r.dev);
+    tesserkit::Files files(r.dev);
     tesserkit::Backup backup(r.dev);
     tesserkit::Timers timers(r.dev);
     tesserkit::Auth auth(r.dev);
@@ -20,6 +21,7 @@ int main(int argc, char** argv) {
     tesserkit::ArtNet artnet(r.dev);
     tesserkit::Bluetooth bluetooth(r.dev);
     tesserkit::NowTp nowtp(r.dev);
+    files.root(r.fake.fs.dir.c_str());
     firmware.github("leokeba/TesserKIT", "tesserkit-minimal-{target}.bin");
     if (!r.dev.begin()) return 1;
     rig::Reply s = r.schema("/");

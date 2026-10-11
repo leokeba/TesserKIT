@@ -355,6 +355,21 @@ struct NowTp : tesserkit::NowTpRadio {
     }
 };
 
+// A filesystem in a temporary directory of the host, removed with it. Files
+// is given that directory as its root (Files::root(fs.dir)).
+struct Filesystem : tesserkit::Filesystem {
+    Filesystem();
+    ~Filesystem() override;
+    std::string dir;
+    uint64_t total = 262144;  // the partition's size; used is what the files hold
+    bool present = true;      // false: no partition
+    std::string label, root;  // what mount() got
+    int formats = 0;
+    bool mount(const char* label, const char* root) override;
+    bool usage(uint64_t& total, uint64_t& used) override;
+    bool format() override;
+};
+
 struct Platform {
     Core core;
     Wifi wifi;
@@ -367,6 +382,7 @@ struct Platform {
     Mqtt mqtt;
     Ble ble;
     NowTp nowtp;
+    Filesystem fs;
     void install(tesserkit::Device& dev, bool withCoredump = true) {
         tesserkit::Platform& p = dev.platform();
         p.core = &core;
@@ -380,6 +396,7 @@ struct Platform {
         p.mqtt = &mqtt;
         p.ble = &ble;
         p.nowtp = &nowtp;
+        p.fs = &fs;
     }
 };
 

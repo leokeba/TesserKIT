@@ -114,13 +114,13 @@ struct Rig {
 
     // A file transfer over the core (HTTP's job on the device).
     Reply upload(std::string_view path, const std::string& data, bool asAdmin = true, size_t chunk = 2048,
-                 size_t stopAfter = SIZE_MAX) {
+                 size_t stopAfter = SIZE_MAX, std::string_view filename = {}) {
         tesser::FileTransfer t(dev.api());
         tesser::Client c;
         c.authenticated = asAdmin;
         tesser::StringReply reply;
         Reply out;
-        if (t.openUpload(path, c, data.size(), reply) != tesser::FileTransfer::Open::Ok) {
+        if (t.openUpload(path, c, data.size(), reply, filename) != tesser::FileTransfer::Open::Ok) {
             out.status = reply.status;
             out.body = reply.body;
             return out;
@@ -139,6 +139,10 @@ struct Rig {
         out.body = reply.body;
         out.done = true;
         return out;
+    }
+    // An upload under the name the client gives (HTTP's ?filename=).
+    Reply uploadNamed(std::string_view path, std::string_view filename, const std::string& data) {
+        return upload(path, data, true, 2048, SIZE_MAX, filename);
     }
     Reply download(std::string_view path, bool asAdmin = true, std::string* filename = nullptr) {
         tesser::FileTransfer t(dev.api());

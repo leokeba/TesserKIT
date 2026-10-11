@@ -14,6 +14,7 @@
 #include "tesserkit/backup.h"
 #include "tesserkit/bluetooth.h"
 #include "tesserkit/device.h"
+#include "tesserkit/files.h"
 #include "tesserkit/firmware.h"
 #include "tesserkit/image.h"
 #include "tesserkit/mqtt.h"

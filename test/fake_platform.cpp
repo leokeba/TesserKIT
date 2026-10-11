@@ -1,8 +1,11 @@
 #include "fake_platform.h"
 
+#include <dirent.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 namespace fake {
 
@@ -271,6 +274,60 @@ std::string Mqtt::last(const std::string& topic) const {
         if (it->topic == topic) return it->payload;
     }
     return "<none>";
+}
+
+namespace {
+
+// What `p` holds, in bytes; removes it too if `erase` (not `p` itself if
+// `keep`).
+uint64_t walk(const std::string& p, bool erase, bool keep) {
+    struct stat st;
+    if (stat(p.c_str(), &st) != 0) return 0;
+    uint64_t bytes = 0;
+    if (S_ISDIR(st.st_mode)) {
+        if (DIR* d = opendir(p.c_str())) {
+            std::vector<std::string> names;
+            while (struct dirent* e = readdir(d)) {
+                if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0) names.push_back(e->d_name);
+            }
+            closedir(d);
+            for (const std::string& n : names) bytes += walk(p + "/" + n, erase, false);
+        }
+        if (erase && !keep) rmdir(p.c_str());
+    } else {
+        bytes = static_cast<uint64_t>(st.st_size);
+        if (erase) unlink(p.c_str());
+    }
+    return bytes;
+}
+
+}  // namespace
+
+Filesystem::Filesystem() {
+    char tmpl[] = "/tmp/tesserkit-fs-XXXXXX";
+    if (mkdtemp(tmpl)) dir = tmpl;
+}
+
+Filesystem::~Filesystem() {
+    if (!dir.empty()) walk(dir, true, false);
+}
+
+bool Filesystem::mount(const char* l, const char* r) {
+    label = l ? l : "";
+    root = r ? r : "";
+    return present && !dir.empty() && root == dir;
+}
+
+bool Filesystem::usage(uint64_t& t, uint64_t& used) {
+    t = total;
+    used = walk(dir, false, false);
+    return true;
+}
+
+bool Filesystem::format() {
+    formats++;
+    walk(dir, true, true);
+    return true;
 }
 
 }  // namespace fake

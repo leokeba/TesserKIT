@@ -10,7 +10,7 @@ TesserKIT is the device framework built on [TesserAPI](https://github.com/leokeb
 - **Every service is a subtree.** A service describes itself into the TesserAPI tree under `/sys`, with values, actions, events, lists and files. It is then reachable over every TesserAPI transport (HTTP, WebSocket, serial, NowTP), through gateways, and from MQTT, with no endpoint code of its own.
 - **Zero UI code.** Services carry TesserUI hints (labels, units, widgets, confirmations, layout); the generic renderer draws their pages. No service has a hand-written page, and neither does an application unless it wants one (custom elements, TesserUI §9.8).
 - **Pay for what you use.** A service that isn't instantiated isn't linked. There are no feature flags.
-- **Small.** The whole interface is TesserUI's bundle (≤ 50 KB gzipped, against ESP32-sveltekit's ~240 KB). Settings live in NVS: no filesystem partition. Measured budgets in §11.
+- **Small.** The whole interface is TesserUI's bundle (≤ 50 KB gzipped, against ESP32-sveltekit's ~240 KB). Settings live in NVS: a filesystem partition is needed only by the optional Files service (§5.12). Measured budgets in §11.
 - **Host-tested.** Service logic is platform-independent and runs against a fake platform on the host (§12).
 
 ### Non-goals
@@ -27,8 +27,8 @@ TesserKIT is the device framework built on [TesserAPI](https://github.com/leokeb
 | Language | C++17, TesserAPI's rules: no exceptions, no RTTI, never `throw`/`dynamic_cast`/`typeid`; calling an empty `std::function` aborts. |
 | Frameworks | ESP-IDF ≥ 5.1 and Arduino-ESP32 ≥ 3.0, like TesserAPI. |
 | Chips | Classic ESP32 without PSRAM, 4 MB flash (reference); ESP32-C3; ESP32-S3. |
-| Partitions | Every first-release service fits a 1.25 MB app slot, so Arduino's default 4 MB table (two OTA slots, no `min_spiffs`) works; with Mqtt an Arduino sketch needs a larger slot. TesserKIT ships a table without a filesystem for more headroom (§11). |
-| Dependencies | TesserAPI, TesserUI (C++ part: `WebUi`), ArduinoJson 7. Optional: NowTP. ESP-IDF components only (`esp_wifi`, `esp_netif`, `mdns`, `esp_https_ota`, `mqtt`, `esp_http_client`, `nvs_flash`, `app_update`): the same code on Arduino and ESP-IDF. |
+| Partitions | Every first-release service fits a 1.25 MB app slot, so Arduino's default 4 MB table (two OTA slots, no `min_spiffs`) works; with Mqtt an Arduino sketch needs a larger slot. TesserKIT ships a table without a filesystem for more headroom, and one with a LittleFS partition for Files (§11). |
+| Dependencies | TesserAPI, TesserUI (C++ part: `WebUi`), ArduinoJson 7. Optional: NowTP. ESP-IDF components only (`esp_wifi`, `esp_netif`, `mdns`, `esp_https_ota`, `mqtt`, `esp_http_client`, `nvs_flash`, `app_update`; `joltwallet/littlefs` for Files, which Arduino-ESP32 ships): the same code on Arduino and ESP-IDF. |
 | Platform code | Only in `src/tesserkit/platform/`. Services see a narrow interface (§3.3) with an ESP implementation and a host fake. |
 | Threading | One task of TesserKIT's own (§4.2), plus the transports' tasks. Everything a service does to the tree runs under the API lock. |
 
@@ -85,6 +85,7 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
   artnet/               ArtNet (§5.9)
   bluetooth/            Bluetooth (§5.10)
   nowtp/                NowTp (§5.11)
+  files/                Files (§5.12)
 /peers                  the nodes NowTp finds nearby, mounted beside the application's tree
 ```
 
@@ -94,7 +95,7 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
 
 ### 3.3 Platform layer
 
-Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads and release checks), `Coredump`, `Udp` (Art-Net), `MqttClient`, `Ble` (Bluetooth LE) and `NowTpRadio` (ESP-NOW):
+Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads and release checks), `Coredump`, `Udp` (Art-Net), `MqttClient`, `Ble` (Bluetooth LE), `NowTpRadio` (ESP-NOW) and `Filesystem` (LittleFS: mounting, usage, formatting; the files themselves through stdio and `dirent`, the same on the host):
 
 - `src/tesserkit/platform/esp/` implements them on ESP-IDF APIs, which Arduino-ESP32 3.x also ships, so one implementation serves both.
 - `test/fake_platform.*` implements them in memory for host tests: a Wi-Fi radio whose scans and connections the test scripts, a clock the test advances, an OTA partition that's a byte vector.
@@ -270,10 +271,21 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 /sys/backup
   settings      file, Admin: download = the persisted state as JSON; upload = restore it
   restartAfter *(p) boolean (default true)
+  save          action (string: a name, "" for the date), Admin: store the settings on the device   (with Files)
+  stored        read-only keyed list (key "name"), newest first, Admin:                            (with Files)
+    name, size (B), saved (epoch s)
+    content     file: download it, as <hostname>-<name>.json
+    restore     action: restore it, as an upload does
+    delete      action
+  keep *(p)     integer 1–50 (default 10): stored backups kept                                      (with Files)
 ```
 
 - **Download:** `api.persistedState()`, secrets included (it is Admin-only), as `<hostname>-settings.json`.
 - **Restore:** applied with `api.restore(json, &skipped)` (TesserAPI §12): lenient like a boot load, so a backup from an older firmware restores whatever still fits; the reply (`{"skipped": [...], "restart": bool}`) lists the skipped paths. Every record is saved at once, then the device restarts one second later if `restartAfter` was set when the restore began (the backup's own `restartAfter` applies to the next one).
+- **Stored on the device** when the application has a Files service (§5.12): `save` writes the settings to `backups/<name>.json` there, replacing a backup of that name. An empty name is the local time (`2026-10-12-1430`, `-2` if taken) once the clock is valid, else `backup-001`, `backup-002`... Names are 1 to 27 characters (the file name's 32 with `.json`). Beyond `keep`, the oldest backups go, by modification time (a clock that wasn't set reads as oldest), never the one just saved. A timer can call `/sys/backup/save` daily (§5.6). `backup.save(name)` does the same from the application, and `backup.keep(n)` sets the default.
+- **Undoable restores:** before any restore (an upload or a stored backup), the settings it replaces are stored as `before-restore`, overwritten by the next restore and not counted by `keep`.
+- **Factory reset** removes the stored backups: they hold the settings, secrets included, which a reset must erase. Other files stay.
+- **Linked with Files only:** Backup reaches the stored backups through `Files`' virtual functions, so a firmware without Files doesn't link them (about 37 KB on Arduino, mostly the file helpers and `snprintf`).
 - This replaces spin-seq's hand-written export and import, for every application.
 
 ### 5.6 Timers
@@ -404,7 +416,36 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - **Factory defaults:** `nowtp.mountPeers(false).channel(6).longRange(true).txPower(15).pairingCode("...")`.
 - Replaces §9's `dev.peers()`: the service is how a TesserKIT device joins a NowTP field.
 
-### 5.12 Later
+### 5.12 Files
+
+```
+/sys/files              Admin, read and write
+  mounted       boolean, read-only (advanced)
+  total, used   integers (B), read-only: the partition, and what its files take
+  dir           string: the directory listed ("/", "/logs"); a write must name one
+  up            action: the parent directory
+  entries       read-only keyed list (key "name"), ≤ 64, directories first, then by name:
+    name, size (B), isDir (ui.icon "folder"), modified (epoch s, 0 if the clock wasn't set; advanced)
+    content     file: download it; upload replaces it (ui.visibleWhen "isDir=false"; maxSize: the partition)
+    open        action: list this directory (ui.visibleWhen "isDir=true")
+    rename      action (string): a new name, in the same directory
+    delete      action: the file, or the directory with what it holds (ui.confirm)
+  truncated     boolean, read-only (advanced): the directory holds more than 64 entries
+  upload        file: a new file in `dir`, named by the client (TesserAPI's ?filename=); one of that name is replaced
+  mkdir         action (string): a directory in `dir`
+  refresh       action: list again (after the application wrote files)
+  format        action: erase every file (ui.confirm, advanced)
+```
+
+- **The partition** is a LittleFS data partition labelled `files` (TesserKIT's `*_files.csv` tables, §11), else `spiffs` (Arduino's default and `min_spiffs` tables), mounted at `/files`; `files.partition(label)` and `files.root(path)` change them. A partition that holds no filesystem (new, or SPIFFS from an older firmware) is formatted. One an application already mounted (Arduino's `LittleFS.begin()`) is used as it is, at the root it was given. Without a partition, or without LittleFS in the build, `mounted` is false and every operation is `not_allowed`.
+- **Names** are 1 to 32 characters, without `/`, `\` or control characters, and don't start with a dot; UTF-8 is fine. Paths below the root are at most 63 characters. Anything else is `invalid_value`, so no request reaches outside the root.
+- **Uploads** go to a hidden temporary file (`.<name>`) beside the target and are renamed over it once complete, so a cut transfer or a power cut leaves the old file or the new one, never a part. An upload announcing more than the free space is `too_large` before any byte is written. Writes run outside the API lock (TesserAPI §4.6); the listing follows within a period of the device's task.
+- **One directory at a time:** `dir` is the device's, shared by its clients: a browser opening a directory moves the others' listing too. Keys can't hold `/`, so a listing of the whole tree would need another key; one directory keeps every row addressable by name.
+- **The application** reads and writes its own files through stdio below `files.root()`, or with the helpers (`files.write(rel, data)`, `read`, `remove`, `rename`, `mkdir`, `list`), which other services use too. After writing through stdio, `files.changed()` updates the listing.
+- **Factory reset** doesn't format: files are often data rather than settings. Only the stored backups go (§5.5).
+- Of the examples, only `examples/idf/full` has Files, on `tesserkit_4mb_files.csv`.
+
+### 5.13 Later
 
 | Service | Content |
 |---|---|
@@ -418,7 +459,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 ### 6.1 Storage
 
 - **Records:** TesserAPI's persistence (§12 there) saves the persisted nodes of the tree as one NVS blob per top-level node, debounced 2 s after the last change: `/sys` (every service's settings) is one record, each of the application's top-level objects another. A change rewrites only its own record, and NVS spreads writes across its pages, so frequent changes don't wear one sector.
-- **No filesystem:** nothing needs LittleFS or SPIFFS. Applications that want files mount one themselves.
+- **No filesystem for settings:** the persisted state stays in NVS, with or without Files (§5.12). Files gives applications, and the stored backups, a LittleFS partition.
 - **Factory reset:** `Storage::erase()` removes every record, then the device restarts. The application's persisted values return to their defaults too.
 
 ### 6.2 Factory defaults
@@ -538,26 +579,29 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 | ArtNet (2026-10-11, ESP-IDF 6.2-dev, `-DWITH_ARTNET=1` against the example without it) | 9.2 KB |
 | Mqtt (the same, `-DWITH_MQTT=1`): TesserKIT's bridge 14.5 KB, esp-mqtt 12.7 KB, TCP transports, esp-tls and the TLS crypto they link, stdio | 110 KB |
 | Mqtt with `CONFIG_MQTT_TRANSPORT_SSL=n` and `CONFIG_MQTT_TRANSPORT_WEBSOCKET=n` (mqtt:// only) | 102 KB |
+| Files with the stored backups (2026-10-12, `examples/idf/full` with and without `Files`): LittleFS, the VFS directory calls, the service | 40.9 KB |
 
 - **Where it goes** (with mDNS): TesserKIT's own code 42 KB (Network 15 KB, most of it the `std::function`s behind bound values and the keyed list), ESP-IDF's `mdns` 34 KB, libc's time zone support 17 KB (`tzset()` parses with `vfscanf`), lwIP's DHCP server, DNS client and sockets 7.6 KB, the access point in the Wi-Fi driver 6 KB, OTA 2.6 KB.
 - **Against the budget:** 60 KB is exceeded. Features stay, as options where they are large (mDNS, downloads); the rest is smaller only at the cost of clarity, and is left as it is until a measured application needs the space.
-- **Arduino:** the Minimal sketch with every first-release service is 1.18 MB on ESP32 and ESP32-C3, within the default table's 1.25 MB slot (1.21 MB on ESP32 as of 2026-10-11, with that day's TesserAPI and TesserUI; 1.24 MB with ArtNet). With Mqtt it is 1.36 MB on ESP32: Arduino's prebuilt esp-mqtt can't drop its transports, so such a sketch needs a larger app slot (`min_spiffs.csv`, or TesserKIT's tables).
+- **Arduino:** the Minimal sketch with every first-release service is 1.18 MB on ESP32 and ESP32-C3, within the default table's 1.25 MB slot (1.21 MB on ESP32 as of 2026-10-11, with that day's TesserAPI and TesserUI; 1.24 MB with ArtNet). With Mqtt it is 1.36 MB on ESP32: Arduino's prebuilt esp-mqtt can't drop its transports, so such a sketch needs a larger app slot (`min_spiffs.csv`, or TesserKIT's tables). As of 2026-10-12 (TesserAPI 0a44fdf, TesserUI 612d892) the Minimal sketch is 1.31 MB, 99.9% of the slot; with Files it is 1.38 MB, so a sketch with Files needs `min_spiffs.csv` (whose 128 KB `spiffs` partition Files then uses) or `tesserkit_4mb_files.csv`.
+
+**Files on hardware** (2026-10-12, DEVKIT-V3, `examples/idf/full`): uploads of 100 KB at about 40 KB/s (LittleFS writes; firmware uploads, which erase up front, go at 70 KB/s), downloads at about 110 KB/s.
 
 **RAM with everything** (2026-10-11, `examples/idf/full` on a classic ESP32 without PSRAM, ESP-IDF 6.1-dev): 46 KB of heap free with Wi-Fi, HTTP, Bluetooth and NowTP running, 29 KB with an MQTT session too. Stacks used, measured with `vTaskList`: the HTTP server 3 KB, TesserKIT's task 2.4 KB, NowTP's transport 2.8 KB, esp-mqtt 1.5 KB. NowTP takes about 25 KB while running, an MQTT session 15 KB, and an HTTPS connection about 34 KB at its peak (a GitHub release check), its 8 KB task included.
 
 - **HTTPS waits for memory:** a release check or an HTTPS download doesn't start below 44 KB of free heap (`not enough free memory for HTTPS now`), since a handshake would fail, or take the memory the rest of the firmware needs: such a device aborted on an allocation in TesserKIT's task. On a classic ESP32 without PSRAM, every service at once leaves no room for HTTPS while MQTT is connected; the ESP32-S3, or a board with PSRAM, has plenty.
 - **What the full example gives up for it:** mbedTLS allocates its buffers as it needs them and frees the certificates once verified, six Wi-Fi receive buffers rather than ten (a little less throughput under load), and NimBLE configured as a one-client peripheral (§5.10). The HTTP server's stack is 6 KB rather than 8 (3 KB used).
-- **Flash:** `examples/idf/full` is 1.47 MB on ESP32 and ESP32-S3, in a 1.94 MB slot.
+- **Flash:** `examples/idf/full` is 1.53 MB on ESP32 with Files (2026-10-12), in `tesserkit_4mb_files.csv`'s 1.75 MB slot.
 
-**Partition table** (`partitions/tesserkit_4mb.csv`, recommended): `nvs` 20 KB, `otadata`, `ota_0` and `ota_1` 1.94 MB each, `coredump` 64 KB. No filesystem, no `phy_init` (the PHY data is in the app by default). `tesserkit_8mb.csv` has 3.94 MB slots.
+**Partition table** (`partitions/tesserkit_4mb.csv`, recommended): `nvs` 20 KB, `otadata`, `ota_0` and `ota_1` 1.94 MB each, `coredump` 64 KB. No filesystem, no `phy_init` (the PHY data is in the app by default). `tesserkit_8mb.csv` has 3.94 MB slots. With Files: `tesserkit_4mb_files.csv` has 1.75 MB slots and a 384 KB `files` partition (LittleFS), `tesserkit_8mb_files.csv` 3 MB slots and 1.94 MB of files. Both keep `nvs` where the other tables have it, so the settings survive a change of table (flashed over serial: an OTA update can't change the table).
 
 **Comparison:** the same measurements are taken on ESP32-sveltekit's demo with matching features (Wi-Fi, AP, NTP, upload OTA, status), and reported in the README.
 
 ## 12. Testing
 
-1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), time and DST, timers (catch-up, no double runs), firmware upload checks, release checks (versions, GitHub's answers and failures, scheduling), backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge (topics, commands with User access, sessions, intervals), Art-Net (scaling, gates, changes only, ArtPollReply's bytes), Bluetooth (the name following the hostname, switching off and on, the client shown), NowTp (waiting for the network, the nodes listed and read-only, pairing, the factory reset forgetting the key), HTTPS refused without the memory for it. The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
+1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), time and DST, timers (catch-up, no double runs), firmware upload checks, release checks (versions, GitHub's answers and failures, scheduling), backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge (topics, commands with User access, sessions, intervals), Art-Net (scaling, gates, changes only, ArtPollReply's bytes), Bluetooth (the name following the hostname, switching off and on, the client shown), NowTp (waiting for the network, the nodes listed and read-only, pairing, the factory reset forgetting the key), HTTPS refused without the memory for it, Files (names and paths refused, uploads replaced whole and cut short, directories, space, formatting, the application's own writes) and the stored backups (names, `keep`, `before-restore`, the factory reset). The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
 2. **Golden schemas:** each service's schema with its hints, checked in as `fixtures/*.json`. TesserUI renders them in its golden-model tests, so a hint change shows as a diff in both repositories.
-3. **On target:** `examples/idf/minimal` (and `examples/arduino/Minimal`, with `--app /lamp`), driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, sign-in with tokens over HTTP and WebSocket, a timer running, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. Releases: `test/e2e_github.py` serves a release endpoint and a newer image from the test machine, and watches the device find it, install it and come back up to date; `--check-only` checks the device's own feed (GitHub's API). A real GitHub download (2026-10-11, DEVKIT-V3: v0.1.2's asset through its ~950-character signed CDN redirect, 1.5 MB in 25 s, installed and booted): the mock server's short URLs had hidden that the HTTP client's request buffer was too small for it. Bluetooth: `examples/idf/bluetooth`, driven from a Mac with `bleak` (Nordic UART): an open device is Admin, a locked one public, sign-in with a line token gives Admin, a bad token public, and a reconnection starts public again. `examples/idf/full` (2026-10-11, DEVKIT-V3 beside DEVKIT-R1 running TesserAPI's test firmware): every service up, R1 found over NowTP and mounted under `/peers`, the envelopes on the serial line among the logs, a GitHub release check over HTTPS beside Bluetooth and NowTP, and with an MQTT session too (when it ran out of memory, which the guard of §11 now refuses). *(later)* a test firmware with every service and serial scripts.
+3. **On target:** `examples/idf/minimal` (and `examples/arduino/Minimal`, with `--app /lamp`), driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, sign-in with tokens over HTTP and WebSocket, a timer running, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. Releases: `test/e2e_github.py` serves a release endpoint and a newer image from the test machine, and watches the device find it, install it and come back up to date; `--check-only` checks the device's own feed (GitHub's API). A real GitHub download (2026-10-11, DEVKIT-V3: v0.1.2's asset through its ~950-character signed CDN redirect, 1.5 MB in 25 s, installed and booted): the mock server's short URLs had hidden that the HTTP client's request buffer was too small for it. Bluetooth: `examples/idf/bluetooth`, driven from a Mac with `bleak` (Nordic UART): an open device is Admin, a locked one public, sign-in with a line token gives Admin, a bad token public, and a reconnection starts public again. `examples/idf/full` (2026-10-11, DEVKIT-V3 beside DEVKIT-R1 running TesserAPI's test firmware): every service up, R1 found over NowTP and mounted under `/peers`, the envelopes on the serial line among the logs, a GitHub release check over HTTPS beside Bluetooth and NowTP, and with an MQTT session too (when it ran out of memory, which the guard of §11 now refuses). Files: `test/e2e_files.py` on `examples/idf/full` (2026-10-12, DEVKIT-V3, 39 checks): directories, a 100 KB upload and download compared byte for byte, a name with a space and accents (`filename*=UTF-8''`), refused names and sizes, replace, rename and delete, and stored backups saved, downloaded, restored and deleted. Two transfers on one path can't overlap over HTTP there: ESP-IDF's server handles one request at a time, so the second waits for the first (TesserAPI's host tests cover `busy`). *(later)* a test firmware with every service and serial scripts.
 4. **CI:** each push to main runs the host tests, then releases the example and publishes the launcher (§13). *(later)* ESP-IDF builds (5.1, 5.4, 5.5, latest × ESP32, ESP32-C3, ESP32-S3), Arduino-ESP32 3.x builds of the examples, the footprint budgets.
 
 ## 13. Packaging
@@ -568,14 +612,14 @@ TesserKIT/
   src/TesserKIT.h
   src/tesserkit/            device, services
   src/tesserkit/platform/   ESP implementation of the platform layer
-  partitions/               tesserkit_4mb.csv, tesserkit_8mb.csv
+  partitions/               tesserkit_4mb.csv, tesserkit_8mb.csv, and *_files.csv with a LittleFS partition
   examples/arduino/         Minimal, Bluetooth
   examples/idf/             minimal, bluetooth, full (every service and transport)
   test/                     host tests, fake platform, test firmware
   CMakeLists.txt, idf_component.yml, library.json, library.properties
 ```
 
-- ESP-IDF component and PlatformIO/Arduino library, like TesserAPI and TesserUI. Dependencies: TesserAPI and TesserUI as public requirements; `espressif/mdns`, and `espressif/mqtt` from ESP-IDF 6 (part of ESP-IDF before); NowTP detected as TesserAPI does (`__has_include` or the build's component list).
+- ESP-IDF component and PlatformIO/Arduino library, like TesserAPI and TesserUI. Dependencies: TesserAPI and TesserUI as public requirements; `espressif/mdns`, `espressif/mqtt` from ESP-IDF 6 (part of ESP-IDF before), and `joltwallet/littlefs`, linked only with Files; NowTP detected as TesserAPI does (`__has_include` or the build's component list).
 - Versions follow semver; TesserKIT pins compatible TesserAPI and TesserUI ranges.
 - **Releases:** `.github/workflows/firmware.yml` is a reusable workflow for ESP-IDF projects. It computes the next version, builds each target in `espressif/idf`'s container with `-DPROJECT_VER=<version>` (which becomes `/sys/firmware/version`), and publishes a release tagged `v<version>` with notes generated from the commits and, per target, `<name>-<target>.bin` (what `github()` installs) and `<name>-<target>-factory.bin` (bootloader, partition table and app merged, flashed at 0x0 on a new board). The version is the last `vX.Y.Z` tag with its patch raised, or what `version-command` prints when that is higher: a minor or major release is a commit raising that version (`library.json` here). A rerun on a released commit keeps its version. `dependencies` checks out repositories next to the project, where a developer's siblings are. Several firmwares go into one release with `projects`, a JSON list of `{project, name, build-args}`, instead of `project`, `name` and `build-args`. TesserKIT's `release.yml` calls it on each push to main, after the host tests, for `examples/idf/minimal` with `-DWITH_GITHUB=1` (`tesserkit-minimal-*`) and `examples/idf/full` (`tesserkit-full-*`, NowTP checked out beside) on ESP32, ESP32-C3 and ESP32-S3; applications call it for their own firmware (`uses: leokeba/TesserKIT/.github/workflows/firmware.yml@main`). `[skip ci]` in a commit message skips the release.
 - **Launcher:** `release.yml` also publishes the launcher (§8) to GitHub Pages after the host tests: TesserUI's bundle, built from TesserUI's main as the firmware's is, with `pages/index.html`, which makes it a launcher titled TesserKIT (`window.TESSER = {launcher: true, title: "TesserKIT"}`).
@@ -596,6 +640,8 @@ TesserKIT/
 | `view=hash` | TesserUI's schema cache for directly reached nodes |
 | Automatic re-advertisement when the tree changes | gateways with mounted peers |
 | `Storage::erase()`, `Api::restore()` | factory reset, backups |
+
+Done 2026-10-12, for Files (TesserAPI 0a44fdf): file nodes in list elements transfer (`/sys/files/entries/<name>/content`), and an upload carries the client's file name (`?filename=`, `FileRequest::filename`).
 
 Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presenting a token on a line, an unauthenticated line or untrusted NowTP peer taking the level of the empty token, `BleTransport` controlled at runtime (`start()`, `stop()`, `setName()`, `peerAddress()`), read-only lists.
 
@@ -620,6 +666,7 @@ Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presentin
 | `$now` as a `ui.value` | §5.3 |
 | Keyed lists and arrays in tables; arrays as charts | §5.2, §10 |
 | `x-keyframes`, `x-sky` custom elements (examples, not in the bundle) | §10.1 |
+| File nodes in list rows (download and upload buttons), `?filename=` on uploads, a `folder` icon (TesserUI 612d892, 2026-10-12) | §5.12, §5.5 |
 
 ## 15. Roadmap
 
@@ -638,7 +685,9 @@ Mqtt and ArtNet were built ahead of the roadmap (2026-10-11), ArtNet for tiny-he
 
 - **A library rather than a template:** ESP32-sveltekit's forks (helionext, spin-seq) carry the framework's code and diverge from upstream. A library is updated by version.
 - **Services under `/sys`, generic UI:** the alternative, a hand-written page per service, is what makes ESP32-sveltekit's interface 240 KB and every service cost a page.
-- **NVS, no filesystem:** the persisted state is small (a few KB), NVS levels wear, and the flash a filesystem partition takes goes to the app slots instead.
+- **NVS, no filesystem for settings:** the persisted state is small (a few KB), NVS levels wear, and the flash a filesystem partition takes goes to the app slots instead. Files (§5.12) is for what isn't settings, and it is optional, with its own partition tables.
+- **LittleFS for Files:** it survives power cuts and levels wear, and has directories. SPIFFS has no directories and is no longer developed; FAT with wear levelling isn't safe against power cuts.
+- **Stored backups go with a factory reset:** they hold the Wi-Fi passwords and accounts a reset is there to erase (a device given away). Recovering from an accidental reset takes a downloaded backup.
 - **The platform layer:** the services' logic (state machines, validation) is where bugs live, and it is host-testable only if ESP calls are behind an interface. ESP32-sveltekit has no tests.
 - **Stateless signed tokens** rather than sessions in RAM: logins survive restarts and OTA updates, and nothing grows per client. Revocation is all-or-nothing (`logoutAll`), acceptable for devices with a handful of users.
 - **Versions from tags, not from a file CI commits:** a release's version is derived from the last tag, so main never moves under a developer's feet and no bot commit triggers another run; the manifests' version only marks minor and major steps.

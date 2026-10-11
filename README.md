@@ -1,8 +1,8 @@
 # TesserKIT
 
-A device framework for ESP32 firmware with a rich web interface and a small footprint. It provides what every connected device needs besides its own function, network setup, time, firmware updates, backups, users, MQTT, Art-Net, Bluetooth, ESP-NOW and system status, as subtrees of a [TesserAPI](https://github.com/leokeba/TesserAPI) tree, drawn by [TesserUI](https://github.com/leokeba/TesserUI)'s generic renderer with no UI code.
+A device framework for ESP32 firmware with a rich web interface and a small footprint. It provides what every connected device needs besides its own function, network setup, time, firmware updates, backups, files, users, MQTT, Art-Net, Bluetooth, ESP-NOW and system status, as subtrees of a [TesserAPI](https://github.com/leokeba/TesserAPI) tree, drawn by [TesserUI](https://github.com/leokeba/TesserUI)'s generic renderer with no UI code.
 
-> **Status: phase 2, with parts of 4.** Device, System, Network, Time, Firmware, Backup, Timers, Auth, Mqtt, ArtNet, Bluetooth and NowTp work, on the host (121 tests) and on hardware (classic ESP32, ESP-IDF and Arduino, `test/e2e_device.py`). Porting helionext is under way in its own repository. The specification is [docs/DESIGN.md](docs/DESIGN.md).
+> **Status: phase 2, with parts of 4.** Device, System, Network, Time, Firmware, Backup, Timers, Auth, Mqtt, ArtNet, Bluetooth, NowTp and Files work, on the host (138 tests) and on hardware (classic ESP32, ESP-IDF and Arduino, `test/e2e_device.py`). Porting helionext is under way in its own repository. The specification is [docs/DESIGN.md](docs/DESIGN.md).
 
 ```cpp
 #include <TesserKIT.h>
@@ -12,7 +12,8 @@ tesserkit::System sys(dev);           // /sys/status, restart, factory reset, co
 tesserkit::Network net(dev);          // Wi-Fi, access point, captive portal, mDNS
 tesserkit::Time timekeeper(dev);      // SNTP, time zone, set from the browser
 tesserkit::Firmware firmware(dev);    // upload, rollback; .downloads() for URLs, .github() for releases
-tesserkit::Backup backup(dev);        // download and restore the settings
+tesserkit::Backup backup(dev);        // download and restore the settings, or store them on the device
+tesserkit::Files files(dev);          // LittleFS: browse, upload, download (optional, needs a partition)
 tesserkit::Timers timers(dev);        // daily schedules over the whole tree
 tesserkit::Auth auth(dev);            // accounts, roles, sign-in
 tesserkit::Bluetooth bluetooth(dev);  // the interface from a phone, over Bluetooth LE
@@ -29,7 +30,7 @@ A fresh device opens an access point named after it (`heliostat-a67c`) with a ca
 
 Or open the launcher, [leokeba.github.io/TesserKIT](https://leokeba.github.io/TesserKIT/), in Chrome: it reaches a device over USB or Bluetooth with no network at all, by its address, or among those [TesserUI's bridge](https://github.com/leokeba/TesserUI/tree/main/bridge) finds nearby.
 
-It aims at most of [ESP32-sveltekit](https://github.com/theelims/ESP32-sveltekit)'s functionality: a library rather than a template, every service a subtree reachable over HTTP, WebSocket, serial, ESP-NOW and MQTT, the whole interface within a 50 KB bundle, and settings in NVS with no filesystem partition.
+It aims at most of [ESP32-sveltekit](https://github.com/theelims/ESP32-sveltekit)'s functionality: a library rather than a template, every service a subtree reachable over HTTP, WebSocket, serial, ESP-NOW and MQTT, the whole interface within a 50 KB bundle, and settings in NVS, with a filesystem partition only for the optional Files service.
 
 ## Services
 
@@ -39,7 +40,8 @@ It aims at most of [ESP32-sveltekit](https://github.com/theelims/ESP32-sveltekit
 | `Network` | `/sys/network` | Saved networks (a keyed list, passwords never readable), scan, station state machine with backoff, access point (always, when offline, never), captive portal, mDNS |
 | `Time` | `/sys/time` | SNTP, POSIX time zone (the interface picks it from IANA names), set from the browser's clock, external sources (GPS, RTC) |
 | `Firmware` | `/sys/firmware` | Upload with progress, checked for the chip before anything is written; download from a URL and updates from GitHub releases, checked daily on the device (opt-in); confirmation after a minute online, rollback |
-| `Backup` | `/sys/backup` | The persisted state as JSON, secrets included (Admin only), restored leniently across firmware versions |
+| `Backup` | `/sys/backup` | The persisted state as JSON, secrets included (Admin only), restored leniently across firmware versions; with Files, backups stored on the device (by date, the oldest pruned), restored in a click, and the settings a restore replaced kept as `before-restore` |
+| `Files` | `/sys/files` | A LittleFS partition browsed one directory at a time: upload, download, rename, delete, new directories; uploads replace a file whole or not at all. Needs a `files` partition (`partitions/tesserkit_4mb_files.csv`) or Arduino's `spiffs` |
 | `Timers` | `/sys/timers` | Daily schedules on chosen weekdays: set any value or call any action of the tree at a local time |
 | `Auth` | `/sys/auth` | Accounts with user and admin roles, salted PBKDF2 hashes, stateless signed tokens, sign-in from TesserUI's dialog |
 | `Mqtt` | `/sys/mqtt` | A broker bridge: chosen subtrees published as retained topics, one per leaf, with intervals; `<prefix>/<path>/set` commands with user access; online/offline availability; TLS with the certificate bundle (opt-in) |

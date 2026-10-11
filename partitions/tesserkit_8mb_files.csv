@@ -1,0 +1,9 @@
+# TesserKIT's 8 MB table with a filesystem: two OTA slots of 3 MB, 1.94 MB of
+# LittleFS for the Files service, a core dump. See docs/DESIGN.md section 11.
+# Name,     Type, SubType,  Offset,   Size
+nvs,        data, nvs,      0x9000,   0x5000
+otadata,    data, ota,      0xe000,   0x2000
+ota_0,      app,  ota_0,    0x10000,  0x300000
+ota_1,      app,  ota_1,    0x310000, 0x300000
+files,      data, spiffs,   0x610000, 0x1E0000
+coredump,   data, coredump, 0x7F0000, 0x10000
