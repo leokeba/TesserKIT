@@ -133,6 +133,8 @@ void Network::describe(tesser::Object& o) {
         .ui("widget", "chart");
     st.value("channel", static_cast<const uint8_t&>(linkChannel_));
     st.value("bssid", static_cast<const std::string&>(linkBssid_)).label("BSSID").ui("advanced");
+    // For clients on the access point, which must follow the new address.
+    joined_ = &w.event("joined").label("Wi-Fi connected").ui("toast", "ok").ui("hidden");
 
     networksNode_ = &w.list("networks", networks_)
                          .key("ssid")
@@ -338,6 +340,7 @@ void Network::connected(uint32_t nowMs) {
     }
     staStatus_->changed();
     tesser::logWarning("tesserkit: joined \"%s\" as %s", linkSsid_.c_str(), linkIp_.c_str());
+    joined_->emit(linkIp_.empty() ? linkSsid_ : linkIp_ + " on " + linkSsid_);
     if (linkChannel_) dev_.channel(linkChannel_);
 }
 

@@ -469,4 +469,50 @@ TEST(firmware_image_header) {
     CHECK(!tesserkit::checkImageHead(reinterpret_cast<const uint8_t*>(img.data()), img.size(), 2).isOk());
 }
 
+TEST(firmware_failed_downloads_are_events) {
+    FwRig r;
+    CHECK(r.dev.begin());
+    rig::Events ev(r, "/sys/firmware/updateFailed");
+    std::string s = r.schema("/sys/firmware/updateFailed").body;
+    CHECK_EQ(at(s, "ui/toast"), "\"error\"");
+    CHECK_EQ(at(s, "ui/hidden"), "true");
+    // A download fails after its action replied.
+    CHECK_EQ(r.set("/sys/firmware/download", "\"http://x/missing.bin\"").status, Status::Ok);
+    r.fake.core.runTasks();
+    std::vector<std::string> got = ev.take();
+    CHECK_EQ(got.size(), size_t(1));
+    if (!got.empty()) CHECK_EQ(got[0], "\"HTTP 404\"");
+    // An upload's error is in its own reply.
+    CHECK_EQ(r.upload("/sys/firmware/image", fake::image(9, 5000)).status, Status::InvalidValue);
+    CHECK(ev.take().empty());
+}
+
+TEST(firmware_github_new_releases_are_events) {
+    GithubRig r;
+    r.fake.http.files[kLatest] = releaseJson("v1.2.0", {"fw-esp32.bin"});
+    CHECK(r.dev.begin());
+    rig::Events ev(r, "/sys/firmware/github/newRelease");
+    CHECK_EQ(at(r.schema("/sys/firmware/github/newRelease").body, "ui/toast"), "\"info\"");
+    // Found by the automatic check: told once.
+    r.run(60100);
+    r.fake.core.runTasks();
+    std::vector<std::string> got = ev.take();
+    CHECK_EQ(got.size(), size_t(1));
+    if (!got.empty()) CHECK_EQ(got[0], "\"v1.2.0\"");
+    r.skip(tesserkit::Firmware::kCheckEveryMs);
+    r.fake.core.runTasks();
+    CHECK_EQ(r.fw.release(), tesserkit::ReleaseState::Available);
+    CHECK(ev.take().empty());
+    // A client that asks has the answer in its reply.
+    r.fake.http.files[kLatest] = releaseJson("v1.3.0", {"fw-esp32.bin"});
+    CHECK_EQ(r.check().body, "\"v1.3.0\"");
+    CHECK(ev.take().empty());
+    r.fake.http.files[kLatest] = releaseJson("v1.4.0", {"fw-esp32.bin"});
+    r.skip(tesserkit::Firmware::kCheckEveryMs);
+    r.fake.core.runTasks();
+    got = ev.take();
+    CHECK_EQ(got.size(), size_t(1));
+    if (!got.empty()) CHECK_EQ(got[0], "\"v1.4.0\"");
+}
+
 }  // namespace firmware_cases

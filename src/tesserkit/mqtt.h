@@ -73,6 +73,7 @@ private:
     std::string error_;
     uint32_t published_ = 0, dropped_ = 0;
     tesser::Node* status_ = nullptr;
+    tesser::EventNode* lost_ = nullptr;
 
     std::vector<tesser::Node*> settings_;  // a change restarts the session
     tesser::Node* publishNode_ = nullptr;

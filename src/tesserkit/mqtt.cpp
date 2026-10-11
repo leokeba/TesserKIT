@@ -107,6 +107,7 @@ void Mqtt::describe(tesser::Object& o) {
     s.value("error", static_cast<const std::string&>(error_)).label("Last error");
     s.value("published", static_cast<const uint32_t&>(published_)).label("Messages published").watch();
     s.value("dropped", static_cast<const uint32_t&>(dropped_)).label("Messages dropped").watch().ui("advanced");
+    lost_ = &o.event("lost").label("MQTT connection lost").ui("toast", "warn").ui("hidden");
 }
 
 uint32_t Mqtt::settingsGen() const {
@@ -170,12 +171,18 @@ void Mqtt::event(const Event& e) {
             return;
         case Event::Type::MqttDisconnected:
             if (e.value != session_) return;
+            if (!e.text.empty()) setError(e.text);
             if (connected_) {
                 connected_ = false;
                 status_->changed();
                 unbridge();
+                // Not stopped here: the broker or the network went.
+                if (e.text.empty()) {
+                    lost_->emit();
+                } else {
+                    lost_->emit(e.text);
+                }
             }
-            if (!e.text.empty()) setError(e.text);
             return;
         case Event::Type::MqttMessage:
             if (e.value == session_ && connected_) command(e.text, e.data);

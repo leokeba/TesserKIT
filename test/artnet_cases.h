@@ -226,4 +226,22 @@ TEST(artnet_mapped_values) {
     CHECK_EQ(tesserkit::ArtNet::mapped(mapping("", 5, 0, 0, 1), f, 4, ValueKind::Number), "");
 }
 
+TEST(artnet_refused_writes_are_events) {
+    ArtNetRig r;
+    r.artnet.map(mapping("/led/brightness", 1, 0, 0, 1000));
+    CHECK(r.dev.begin());
+    rig::Events ev(r, "/sys/artnet/refused");
+    CHECK_EQ(at(r.schema("/sys/artnet/refused").body, "ui/toast"), "\"warn\"");
+    r.send(dmx(0, {255}));
+    std::vector<std::string> got = ev.take();
+    CHECK_EQ(got.size(), size_t(1));
+    if (!got.empty()) CHECK_EQ(got[0], "\"/led/brightness: invalid_value: out of range\"");
+    // The same error again isn't news; after a write that worked, it is.
+    r.send(dmx(0, {200}));
+    CHECK(ev.take().empty());
+    r.send(dmx(0, {10}));
+    r.send(dmx(0, {255}));
+    CHECK_EQ(ev.take().size(), size_t(1));
+}
+
 }  // namespace artnet_cases

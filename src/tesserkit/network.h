@@ -96,6 +96,7 @@ private:
     std::vector<tesser::Node*> apNodes_;
     tesser::Node* staStatus_ = nullptr;
     tesser::Node* apStatus_ = nullptr;
+    tesser::EventNode* joined_ = nullptr;
     uint16_t networksGen_ = 0, hostnameGen_ = 0, mdnsGen_ = 0;
     uint32_t apGen_ = 0;
 

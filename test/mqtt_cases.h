@@ -226,4 +226,26 @@ TEST(mqtt_settings_are_checked) {
     CHECK_EQ(r.as(tesser::Access::User, Op::Set, "/sys/mqtt/enabled", "false").status, Status::Unauthorized);
 }
 
+TEST(mqtt_lost_sessions_are_events) {
+    MqttRig r;
+    r.online();
+    rig::Events ev(r, "/sys/mqtt/lost");
+    CHECK_EQ(at(r.schema("/sys/mqtt/lost").body, "ui/toast"), "\"warn\"");
+    r.fake.mqtt.drop("broker gone");
+    r.settle();
+    std::vector<std::string> got = ev.take();
+    CHECK_EQ(got.size(), size_t(1));
+    if (!got.empty()) CHECK_EQ(got[0], "\"broker gone\"");
+    // Failed retries aren't news, nor a session the settings stop.
+    r.fake.mqtt.drop("still gone");
+    r.settle();
+    r.fake.mqtt.connect();
+    r.settle();
+    CHECK_EQ(r.value("/sys/mqtt/status/connected"), "true");
+    CHECK_EQ(r.set("/sys/mqtt/enabled", "false").status, Status::Ok);
+    r.run(1500);
+    CHECK_EQ(r.value("/sys/mqtt/status/connected"), "false");
+    CHECK(ev.take().empty());
+}
+
 }  // namespace mqtt_cases

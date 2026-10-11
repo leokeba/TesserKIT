@@ -242,6 +242,8 @@ private:
     tesser::Node* latestNode_ = nullptr;
     tesser::Node* stateNode_ = nullptr;
     tesser::Node* errorNode_ = nullptr;
+    tesser::EventNode* newRelease_ = nullptr;
+    std::string announced_;  // the last release told of
 };
 
 void Firmware::GithubFeed::describe(tesser::Object& o) {
@@ -252,6 +254,7 @@ void Firmware::GithubFeed::describe(tesser::Object& o) {
                       .readOnly()
                       .ui("labels", "Not checked,Checking,Up to date,Update available,Check failed");
     errorNode_ = &g.value("error", static_cast<const std::string&>(error_)).ui("visibleWhen", "status=failed");
+    newRelease_ = &g.event("newRelease").label("Firmware update available").ui("toast", "info").ui("hidden");
     g.value("autoCheck", autoCheck_).persist().writeAccess(Access::Admin).label("Check daily");
     g.action("check", [this](tesser::Call& call) {
          if (!idle()) {
@@ -376,6 +379,12 @@ void Firmware::GithubFeed::checked(const Latest& r) {
         setState(newer ? ReleaseState::Available : ReleaseState::Current);
         nextCheckMs_ = now + kCheckEveryMs;
         if (newer) tesser::logWarning("tesserkit: firmware %s is available", r.tag.c_str());
+        // Told once per release, and only when found by an automatic check:
+        // a client that asked has the answer in its reply.
+        if (newer && r.tag != announced_) {
+            announced_ = r.tag;
+            if (waiters_.empty()) newRelease_->emit(r.tag);
+        }
     } else {
         assetUrl_.clear();
         setState(ReleaseState::Failed);
@@ -457,6 +466,9 @@ void Firmware::describe(tesser::Object& o) {
                          .ui("widget", "bar")
                          .ui("visibleWhen", "state!=idle");
     errorNode_ = &o.value("error", static_cast<const std::string&>(error_)).ui("visibleWhen", "state=failed");
+    if (ota_ && p.http) {
+        updateFailed_ = &o.event("updateFailed").label("Firmware update failed").ui("toast", "error").ui("hidden");
+    }
     if (ota_ && p.http && feed_) feed_->describe(o);
     pendingNode_ = &o.value("pending", static_cast<const bool&>(pending_)).ui("hidden");
     o.value("pendingNote", "This firmware rolls back at the next restart unless it is kept. It is kept automatically "
@@ -561,6 +573,12 @@ void Firmware::failed(const char* message) {
     tesser::logWarning("tesserkit: update failed: %s", error_.c_str());
 }
 
+void Firmware::downloadFailed(const char* message) {
+    tesser::Lock lock(dev_.api());
+    failed(message);
+    if (updateFailed_) updateFailed_->emit(error_);
+}
+
 void Firmware::installed() {
     tesser::Lock lock(dev_.api());
     progress_ = 100;
@@ -606,7 +624,7 @@ Check Firmware::download(const std::string& url) {
         if (c.isOk()) {
             installed();
         } else {
-            failed(c.message ? c.message : "download failed");
+            downloadFailed(c.message ? c.message : "download failed");
         }
     });
     if (!spawned) {

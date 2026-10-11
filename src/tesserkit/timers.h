@@ -52,6 +52,7 @@ private:
     bool started_ = false;
     bool caughtUp_ = false;
     tesser::Node* list_ = nullptr;
+    tesser::EventNode* failed_ = nullptr;
     uint32_t lastCheckMs_ = 0;
     std::map<std::string, int64_t> ran_;  // timer → the local minute it last ran in
     std::unique_ptr<tesser::LocalClient> client_;

@@ -87,6 +87,7 @@ void Timers::describe(tesser::Object& o) {
         .writeAccess(Access::Admin)
         .persist()
         .ui("advanced");
+    failed_ = &o.event("timerFailed").label("Timer failed").ui("toast", "warn").ui("hidden");
 }
 
 void Timers::start() {
@@ -141,7 +142,10 @@ void Timers::run(const Timer& t) {
 void Timers::finished(const std::string& name, std::string result) {
     for (Timer& t : timers_) {
         if (name != t.name) continue;
-        if (result != "ok") tesser::logWarning("tesserkit: timer \"%s\": %s", t.name, result.c_str());
+        if (result != "ok") {
+            tesser::logWarning("tesserkit: timer \"%s\": %s", t.name, result.c_str());
+            failed_->emit(std::string(t.name) + ": " + result);
+        }
         t.last = std::move(result);
         list_->changed();
         return;

@@ -113,6 +113,7 @@ void ArtNet::describe(tesser::Object& o) {
         .watch()
         .ui("visibleWhen", "received=true");
     s.value("error", static_cast<const std::string&>(error_)).label("Last error");
+    refused_ = &o.event("refused").label("Art-Net write refused").ui("toast", "warn").ui("hidden");
 }
 
 void ArtNet::start() {
@@ -219,6 +220,7 @@ void ArtNet::failed(const std::string& error) {
     if (!error.empty()) tesser::logWarning("tesserkit: Art-Net: %s", error.c_str());
     error_ = error;
     status_->changed();
+    if (!error.empty()) refused_->emit(error);
 }
 
 void ArtNet::pollReply(uint32_t ip) {

@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <ArduinoJson.h>
 
@@ -161,6 +162,32 @@ struct Rig {
         while ((n = t.read(buf, sizeof(buf))) > 0) out.body.append(reinterpret_cast<char*>(buf), static_cast<size_t>(n));
         out.status = n < 0 ? Status::Internal : Status::Ok;
         out.done = true;
+        return out;
+    }
+};
+
+// A client subscribed to an event, as a UI is: the payloads it receives, as
+// JSON. Subscribe after Device::begin().
+struct Events {
+    tesser::LocalClient client;
+    std::vector<std::string> got;
+    Events(Rig& r, std::string_view path) : client(r.dev.api()) {
+        client.onNotification([this](JsonObjectConst envelope) {
+            if (std::string(envelope["op"] | "") != "event") return;
+            std::string body;
+            serializeJson(envelope["body"], body);
+            got.push_back(body);
+        });
+        bool ok = false;
+        client.subscribe(path, [&ok](Status s, JsonVariantConst) { ok = s == Status::Ok; });
+        client.process();
+        CHECK(ok);
+    }
+    // What arrived since the last call.
+    std::vector<std::string> take() {
+        client.process();
+        std::vector<std::string> out;
+        out.swap(got);
         return out;
     }
 };

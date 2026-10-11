@@ -187,4 +187,19 @@ TEST(timers_persist_whatever_the_tree_at_boot) {
     CHECK_EQ(r.value("/sys/timers/a/path"), "\"/led/on\"");
 }
 
+TEST(timers_failures_are_events) {
+    TimerRig r;
+    r.timers.add(r.timer("bad", "08:00", "/led/on", "\"yes\""));
+    r.timers.add(r.timer("good", "08:00", "/led/on", "true"));
+    r.fake.clock.epoch = kWednesday0759;
+    CHECK(r.dev.begin());
+    rig::Events ev(r, "/sys/timerFailed");
+    CHECK_EQ(at(r.schema("/sys/timerFailed").body, "ui/toast"), "\"warn\"");
+    r.advance(61000);
+    CHECK(r.on);
+    std::vector<std::string> got = ev.take();
+    CHECK_EQ(got.size(), size_t(1));
+    if (!got.empty()) CHECK_EQ(got[0], "\"bad: invalid_value: expected boolean\"");
+}
+
 }  // namespace timer_cases

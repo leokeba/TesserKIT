@@ -353,4 +353,22 @@ TEST(network_ipv4_parsing) {
     CHECK_EQ(tesserkit::formatIpv4(0x0A000001), "10.0.0.1");
 }
 
+TEST(network_joining_is_an_event) {
+    NetRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    rig::Events ev(r, "/sys/network/wifi/joined");
+    CHECK_EQ(at(r.schema("/sys/network/wifi/joined").body, "ui/toast"), "\"ok\"");
+    r.settle();
+    CHECK(r.net.connected());
+    // With the address clients on the access point must follow.
+    std::vector<std::string> got = ev.take();
+    CHECK_EQ(got.size(), size_t(1));
+    if (!got.empty()) CHECK_EQ(got[0], "\"192.168.1.50 on Home\"");
+    r.fake.wifi.drop();
+    r.settle();
+    CHECK_EQ(ev.take().size(), size_t(1));
+}
+
 }  // namespace network_cases

@@ -184,6 +184,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
                          static/ { enabled, ip, mask, gateway, dns } ui.collapsed
     scan               deferred action, Admin → [{ssid, rssi, channel, secure}]
     status/            connected, ssid, ip, rssi (watched, dBm), channel, bssid
+    joined             event, ok toast: "192.168.1.50 on Workshop", the address clients on the AP must follow
   ap/
     mode *(p)          enum: always, fallback, never (default fallback), Admin
     ssid *(p)          string ≤ 32 (default: the hostname), Admin
@@ -245,6 +246,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
   state         enum: idle, receiving, downloading, verifying, rebooting, failed; watched
   progress      integer, %, watched, ui.widget "bar"
   error         string
+  updateFailed  event, error toast: a download's error (with fw.downloads(); an upload's is its reply)
   pending       boolean: running a new image that isn't confirmed yet
   confirm       action, Admin: mark the running image valid now
   rollback      action, Admin, ui.confirm: boot the previous image
@@ -253,6 +255,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
     latest      string: the latest release's tag
     status      enum: unchecked, checking, current, available, failed
     error       string (status = failed)
+    newRelease  event, info toast: the tag of a newer release an automatic check found, once per release
     autoCheck   boolean, persisted, Admin
     check       deferred action → the latest release's tag
     update      action, Admin, ui.confirm: install the latest release (status = available)
@@ -300,6 +303,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
   value         string: its JSON value or argument ("null" for an action without one)
   last          string, read-only: the last run's result
 /sys/timersCatchUp *(p)  boolean: at boot, run each timer's most recent missed occurrence of today
+/sys/timerFailed    event, warn toast: "<name>: <error>" for a run that failed
 ```
 
 - At the given local time on the given days, a timer performs `set <path> <value>` through the API, as an Admin local client, exactly as if a client had sent it. Its result is logged and kept in a read-only `last` (`"ok"` or the error), which a boot load and a restored backup bring back with the list.
@@ -342,6 +346,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
   prefix *(p)           string (empty: "tesser/<hostname>"), no + or #, no slash at either end, advanced
   publish *(p)          list ≤ 8 of {path, interval ms 0–86400000 (default 1000)}
   status/               connected, error, published, dropped (watched counters)
+  lost                  event, warn toast: a connected session dropped by the broker or the network, with the error
 ```
 
 - **Session:** the client connects once the device is online, and reconnects by itself (ESP-IDF's esp-mqtt, every 5 s, keepalive 30 s). A change to `enabled`, `uri`, the credentials, `clientId` or `prefix` restarts the session once the settings have been still for 1 s, so editing several fields reconnects once. Each session has a number, carried by its platform events, so a stopped session's late events are ignored.
@@ -362,6 +367,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
   universe *(p)         integer 0–32767: the 15-bit port-address (net, sub-net, universe)
   mappings *(p)         list ≤ 8 of {path, coarse 0–512, fine 0–512, min, max, threshold 0–255}
   status/               packets, universe (the last seen), received (hidden), age (s since a frame of ours, -1 none; shown once received), error
+  refused               event, warn toast: a new error in status/error
 ```
 
 - **Receiving:** an Art-Net 4 node on UDP 6454 (unicast and broadcast). TesserKIT's task drains the socket without blocking every period and keeps the last ArtDmx frame of its universe; ArtDmx for other universes only counts.
@@ -490,6 +496,7 @@ The UI is TesserUI's generic renderer, self-hosted by the device (TesserUI §9.4
 - **Menu:** `/sys` has `ui.page`, so TesserUI's menu (TesserUI §6.3) shows it as one entry with a sub-entry, and a page, per service. Each service names its icon (`ui.icon`): Status `info`, Network `wifi`, Time `clock`, Firmware `download`, Backup `refresh`, Timers `play`, Users `lock`, MQTT `link`, Art-Net `bulb`.
 - **Services' pages** are their trees with hints: labels, units, `confirm` on destructive actions, `style danger`, `advanced` on rarely used settings, `form` where several fields must change together (the access point), `visibleWhen` for conditional fields (static IP), `chart` on heap and RSSI.
 - **The application's pages** are its tree, plus TesserUI views (§8 there) for dashboards and custom elements (§9.8 there) for what generic widgets can't draw.
+- **Notifications:** what happens in the background, after any reply, is an event with `ui.toast` (TesserUI §7.8) and `ui.hidden`: a toast, not an events log on the service's page. Network's `joined`, Firmware's `updateFailed` and `newRelease`, `timerFailed`, Mqtt's `lost` and ArtNet's `refused`. A moment a reply or a widget already shows isn't one: a failed upload, a manual release check, a pairing (its state is on the page), a restore. Clients only hear events while subscribed, so what a device does at boot (a rollback, a crash) stays a value (`resetReason`, `coredumpPresent`).
 - **Login:** when a request answers `unauthorized`, TesserUI's sign-in dialog calls `/sys/auth/login` with a name and password (TesserUI §7.4). Without the Auth service it never needs to: everyone is Admin.
 - **Theming and text:** `dev.web().theme(...)`, `.text(...)`, `.title(...)` (TesserUI §9.4).
 - **The launcher** (TesserUI §9.7): the same bundle on GitHub Pages, `https://leokeba.github.io/TesserKIT/`, published by CI with the TesserUI the example firmware is built with (§13). It reaches a device without the device serving a page:
@@ -521,7 +528,7 @@ TesserKIT devices are TesserAPI nodes, so the multi-node features are TesserAPI'
 | `features.ini` (`FT_*`) | instantiate the service, or don't |
 | `factory_settings.ini` | initializers and `default...()` calls (§6.2) |
 | `SecurityManager` predicates `NONE_REQUIRED`, `IS_AUTHENTICATED`, `IS_ADMIN` | `readAccess`/`writeAccess` `Public`, `User`, `Admin` |
-| `NotificationService::pushNotification` | an event with `ui.toast` (TesserUI §5.2) |
+| `NotificationService::pushNotification` | an event with `ui.toast` and `ui.hidden` (§8, TesserUI §7.8) |
 | `AnalyticsService` | watched values with `ui.widget "chart"` |
 | Svelte pages per service, menu entries | none for services; the application's tree, views and custom elements |
 | `WWWData.h` (one handler per asset, `immutable` caching) | TesserUI's bundle: two handlers, ETag revalidation, so a firmware update never serves a stale UI |
@@ -667,6 +674,7 @@ Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presentin
 | Keyed lists and arrays in tables; arrays as charts | §5.2, §10 |
 | `x-keyframes`, `x-sky` custom elements (examples, not in the bundle) | §10.1 |
 | File nodes in list rows (download and upload buttons), `?filename=` on uploads, a `folder` icon (TesserUI 612d892, 2026-10-12) | §5.12, §5.5 |
+| Toasts from events on any page: TesserUI only toasts the events of the page on screen, which already shows their service's state, and drops hidden ones. The services' events (§8) need to reach a user on the application's page, toasts only. Probably an events-only subscription in TesserAPI. Asked 2026-10-12. | §8 |
 
 ## 15. Roadmap
 

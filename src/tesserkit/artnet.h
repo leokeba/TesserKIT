@@ -58,6 +58,7 @@ private:
     uint16_t lastUniverse_ = 0;
     std::string error_;
     tesser::Node* status_ = nullptr;
+    tesser::EventNode* refused_ = nullptr;
 
     tesser::Node* universeNode_ = nullptr;
     tesser::Node* mappingsNode_ = nullptr;

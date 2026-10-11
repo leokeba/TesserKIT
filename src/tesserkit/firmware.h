@@ -67,6 +67,8 @@ private:
     bool begin(FirmwareState state);
     void setState(FirmwareState s);
     tesser::Check download(const std::string& url);
+    // A download fails after its action replied: also told as an event.
+    void downloadFailed(const char* message);
 
     Ota* ota_ = nullptr;
     FirmwareState state_ = FirmwareState::Idle;
@@ -77,6 +79,7 @@ private:
     tesser::Node* progressNode_ = nullptr;
     tesser::Node* errorNode_ = nullptr;
     tesser::Node* pendingNode_ = nullptr;
+    tesser::EventNode* updateFailed_ = nullptr;
 
     // /sys/firmware/github. Only github() creates one, so the code isn't
     // linked without it.
