@@ -36,29 +36,7 @@ Timers& Timers::catchUp(bool on) {
     return *this;
 }
 
-bool Timers::resolves(const std::string& path) const {
-    const tesser::Node* node = &dev_.api();
-    size_t start = path.empty() || path[0] != '/' ? 0 : 1;
-    while (start < path.size()) {
-        size_t end = path.find('/', start);
-        if (end == std::string::npos) end = path.size();
-        if (end == start) return false;  // "//"
-        switch (node->type()) {
-            case tesser::NodeType::Object:
-                node = static_cast<const tesser::Object*>(node)->child(std::string_view(path).substr(start, end - start));
-                if (!node) return false;
-                break;
-            case tesser::NodeType::List:
-            case tesser::NodeType::Array:
-            case tesser::NodeType::Remote:
-                return true;  // elements and remote trees aren't known here
-            default:
-                return false;  // below a leaf
-        }
-        start = end + 1;
-    }
-    return node != &dev_.api();
-}
+bool Timers::resolves(const std::string& path) const { return tesserkit::resolves(dev_.api(), path); }
 
 void Timers::describe(tesser::Object& o) {
     list_ = &o.list("timers", timers_,

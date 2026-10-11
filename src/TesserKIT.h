@@ -9,11 +9,13 @@
 #include "TesserUI.h"
 #endif
 
+#include "tesserkit/artnet.h"
 #include "tesserkit/auth.h"
 #include "tesserkit/backup.h"
 #include "tesserkit/device.h"
 #include "tesserkit/firmware.h"
 #include "tesserkit/image.h"
+#include "tesserkit/mqtt.h"
 #include "tesserkit/network.h"
 #include "tesserkit/system.h"
 #include "tesserkit/time_service.h"

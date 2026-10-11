@@ -4,8 +4,8 @@
 // phone, and the interface opens; add your Wi-Fi network there.
 //
 // For development, a gitignored main/secrets.h may define WIFI_SSID and
-// WIFI_PASSWORD (the factory default network), and WIFI_TX_POWER (dBm) for
-// boards with a weak supply.
+// WIFI_PASSWORD (the factory default network), WIFI_TX_POWER (dBm) for
+// boards with a weak supply, and MQTT_URI (a broker, with -DWITH_MQTT=1).
 #include "TesserKIT.h"
 
 #if __has_include("secrets.h")
@@ -76,6 +76,12 @@ tesserkit::Firmware firmware(dev);
 tesserkit::Backup backup(dev);
 tesserkit::Timers timers(dev);
 tesserkit::Auth auth(dev);  // open until an admin account exists
+#if WITH_ARTNET
+tesserkit::ArtNet artnet(dev);
+#endif
+#if WITH_MQTT
+tesserkit::Mqtt mqtt(dev);
+#endif
 
 }  // namespace
 
@@ -94,6 +100,24 @@ extern "C" void app_main() {
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");
 #if WITH_DOWNLOADS
     firmware.downloads();  // updates from a URL: TLS and an HTTP client, about 130 KB
+#endif
+#if WITH_ARTNET
+    // Universe 0: channel 1 is the brightness, channel 2 above half turns it on.
+    tesserkit::ArtNetMapping brightness;
+    brightness.path = "/led/brightness";
+    brightness.coarse = 1;
+    brightness.max = 255;
+    tesserkit::ArtNetMapping on;
+    on.path = "/led/on";
+    on.coarse = 2;
+    on.threshold = 128;
+    artnet.map(brightness).map(on);
+#endif
+#if WITH_MQTT
+    mqtt.publish("/led", 0).publish("/sys/status", 10000);
+#if defined(MQTT_URI)
+    mqtt.broker(MQTT_URI).enable(true);
+#endif
 #endif
     dev.api().mount("led", led).label("LED");
     dev.begin();

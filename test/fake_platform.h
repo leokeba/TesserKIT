@@ -3,8 +3,10 @@
 // slot that is a byte vector, an HTTP client serving strings.
 #pragma once
 
+#include <deque>
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -187,6 +189,60 @@ struct Coredump : tesserkit::Coredump {
     }
 };
 
+// UDP: datagrams the test queues for a port, and those sent.
+struct Datagram {
+    uint32_t ip = 0;
+    uint16_t port = 0;
+    std::string data;
+};
+
+struct Udp : tesserkit::Udp {
+    std::map<uint16_t, std::deque<Datagram>> inbox;  // by local port
+    std::vector<Datagram> sent;
+    std::map<uint16_t, bool> open_;  // ports with a socket
+    bool fails = false;
+    int opens = 0;
+
+    std::unique_ptr<tesserkit::UdpSocket> open(uint16_t port) override;
+    // A datagram from `ip`:`fromPort` to the local `port`.
+    void deliver(uint16_t port, const std::string& data, uint32_t ip = 0xC0A80164, uint16_t fromPort = 6454) {
+        inbox[port].push_back({ip, fromPort, data});
+    }
+};
+
+// An MQTT client and its broker: the test connects it, sends messages and
+// reads what was published.
+struct Mqtt : tesserkit::MqttClient {
+    struct Message {
+        std::string topic, payload;
+        bool retain = false;
+    };
+    tesserkit::EventSink sink;
+    tesserkit::MqttConfig config;
+    int32_t session = 0, sessions = 0;
+    bool running = false;
+    bool full = false;  // the outbox refuses messages
+    int stops = 0;
+    std::vector<Message> published;
+    std::map<std::string, Message> retained;  // the broker's
+
+    int32_t start(const tesserkit::MqttConfig& c, tesserkit::EventSink s) override {
+        config = c;
+        sink = std::move(s);
+        running = true;
+        return session = ++sessions;
+    }
+    void stop() override;
+    bool publish(const std::string& topic, const std::string& payload, bool retain) override;
+    // The broker accepted the connection, or lost it.
+    void connect();
+    void drop(const char* why = "connection lost");
+    // A message on a topic the client subscribed to.
+    void message(const std::string& topic, const std::string& payload);
+    // What was last published to `topic` ("<none>" if nothing).
+    std::string last(const std::string& topic) const;
+};
+
 struct Platform {
     Core core;
     Wifi wifi;
@@ -195,6 +251,8 @@ struct Platform {
     Ota ota;
     HttpClient http;
     Coredump coredump;
+    Udp udp;
+    Mqtt mqtt;
     void install(tesserkit::Device& dev, bool withCoredump = true) {
         tesserkit::Platform& p = dev.platform();
         p.core = &core;
@@ -204,6 +262,8 @@ struct Platform {
         p.ota = &ota;
         p.http = &http;
         p.coredump = withCoredump ? &coredump : nullptr;
+        p.udp = &udp;
+        p.mqtt = &mqtt;
     }
 };
 

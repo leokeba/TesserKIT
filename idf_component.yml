@@ -11,6 +11,11 @@ dependencies:
     version: ">=5.1"
   espressif/mdns:
     version: "^1.4.0"
+  # Part of ESP-IDF until 6.0. Linked only by applications using Mqtt.
+  espressif/mqtt:
+    version: "^1.0.0"
+    rules:
+      - if: "idf_version >=6.0"
 files:
   exclude:
     - "test/**/*"

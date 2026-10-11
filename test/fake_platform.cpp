@@ -164,3 +164,89 @@ std::string image(uint16_t chipId, size_t size) {
 }
 
 }  // namespace fake
+
+namespace fake {
+
+namespace {
+
+class UdpSocket : public tesserkit::UdpSocket {
+public:
+    UdpSocket(Udp& udp, uint16_t port) : udp_(udp), port_(port) { udp_.open_[port] = true; }
+    ~UdpSocket() override { udp_.open_[port_] = false; }
+    size_t receive(uint8_t* buf, size_t cap, uint32_t& fromIp, uint16_t& fromPort) override {
+        auto& q = udp_.inbox[port_];
+        if (q.empty()) return 0;
+        Datagram d = q.front();
+        q.pop_front();
+        size_t n = d.data.size() < cap ? d.data.size() : cap;
+        memcpy(buf, d.data.data(), n);
+        fromIp = d.ip;
+        fromPort = d.port;
+        return n;
+    }
+    bool send(uint32_t ip, uint16_t port, const uint8_t* data, size_t len) override {
+        udp_.sent.push_back({ip, port, std::string(reinterpret_cast<const char*>(data), len)});
+        return true;
+    }
+
+private:
+    Udp& udp_;
+    uint16_t port_;
+};
+
+}  // namespace
+
+std::unique_ptr<tesserkit::UdpSocket> Udp::open(uint16_t port) {
+    opens++;
+    if (fails || open_[port]) return nullptr;
+    return std::unique_ptr<tesserkit::UdpSocket>(new UdpSocket(*this, port));
+}
+
+void Mqtt::stop() {
+    if (!running) return;
+    running = false;
+    stops++;
+    // The will, as the ESP client publishes it before disconnecting.
+    publish(config.willTopic, config.willPayload, true);
+}
+
+bool Mqtt::publish(const std::string& topic, const std::string& payload, bool retain) {
+    if (full) return false;
+    Message m{topic, payload, retain};
+    published.push_back(m);
+    if (retain) retained[topic] = m;
+    return true;
+}
+
+void Mqtt::connect() {
+    tesserkit::Event e;
+    e.type = tesserkit::Event::Type::MqttConnected;
+    e.value = session;
+    sink(e);
+}
+
+void Mqtt::drop(const char* why) {
+    tesserkit::Event e;
+    e.type = tesserkit::Event::Type::MqttDisconnected;
+    e.value = session;
+    e.text = why;
+    sink(e);
+}
+
+void Mqtt::message(const std::string& topic, const std::string& payload) {
+    tesserkit::Event e;
+    e.type = tesserkit::Event::Type::MqttMessage;
+    e.value = session;
+    e.text = topic;
+    e.data = payload;
+    sink(e);
+}
+
+std::string Mqtt::last(const std::string& topic) const {
+    for (auto it = published.rbegin(); it != published.rend(); ++it) {
+        if (it->topic == topic) return it->payload;
+    }
+    return "<none>";
+}
+
+}  // namespace fake

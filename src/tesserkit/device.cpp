@@ -19,6 +19,38 @@ const char* toString(State s) {
     return "error";
 }
 
+const tesser::Node* findNode(const tesser::Object& root, std::string_view path, bool* opaque) {
+    if (opaque) *opaque = false;
+    const tesser::Node* node = &root;
+    size_t start = !path.empty() && path[0] == '/' ? 1 : 0;
+    while (start < path.size()) {
+        size_t end = path.find('/', start);
+        if (end == std::string_view::npos) end = path.size();
+        if (end == start) return nullptr;  // "//"
+        switch (node->type()) {
+            case tesser::NodeType::Object:
+                node = static_cast<const tesser::Object*>(node)->child(path.substr(start, end - start));
+                if (!node) return nullptr;
+                break;
+            case tesser::NodeType::List:
+            case tesser::NodeType::Array:
+            case tesser::NodeType::Remote:
+                if (opaque) *opaque = true;
+                return nullptr;
+            default:
+                return nullptr;  // below a leaf
+        }
+        start = end + 1;
+    }
+    return node;
+}
+
+bool resolves(const tesser::Object& root, std::string_view path) {
+    bool opaque;
+    const tesser::Node* node = findNode(root, path, &opaque);
+    return opaque || (node && node != &root);
+}
+
 Service::Service(Device& dev, const char* name) : dev_(dev), name_(name) {
     // Registration order is mount order. Nothing here touches another
     // translation unit's globals: services are often globals themselves.
@@ -241,6 +273,9 @@ Clock* espClock() { return nullptr; }
 Ota* espOta() { return nullptr; }
 HttpClient* espHttpClient() { return nullptr; }
 Coredump* espCoredump() { return nullptr; }
+Udp* espUdp() { return nullptr; }
+MqttClient* espMqtt() { return nullptr; }
+MqttClient* espMqttTls() { return nullptr; }
 #endif
 
 }  // namespace tesserkit

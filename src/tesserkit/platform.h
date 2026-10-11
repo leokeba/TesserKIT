@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -19,7 +20,7 @@
 
 namespace tesserkit {
 
-// Something a platform task reports (Wi-Fi, SNTP). Posted to the device,
+// Something a platform task reports (Wi-Fi, SNTP, MQTT). Posted to the device,
 // which hands it to every service in its own task, under the API lock.
 struct Event {
     enum class Type : uint8_t {
@@ -28,10 +29,14 @@ struct Event {
         StaDisconnected,  // value: the reason (kReasonLeft when asked to)
         ApClients,        // value: stations joined to the access point
         TimeSynced,       // SNTP set the clock
+        MqttConnected,    // value: the session
+        MqttDisconnected, // value: the session; text: why
+        MqttMessage,      // value: the session; text: the topic; data: the payload
     };
     Type type;
     int32_t value = 0;
     std::string text;
+    std::string data;
 
     // StaDisconnected's reason after Wifi::disconnect() (ESP-IDF's
     // WIFI_REASON_ASSOC_LEAVE): not a failure.
@@ -189,6 +194,48 @@ public:
     virtual bool erase() = 0;
 };
 
+// A UDP socket bound to a port: ArtNet's. Used from the device's task.
+class UdpSocket {
+public:
+    virtual ~UdpSocket() = default;
+    // The next waiting datagram, without blocking: its length (truncated to
+    // `cap`), or 0 if none. `fromIp` is a.b.c.d as (a << 24) | ...
+    virtual size_t receive(uint8_t* buf, size_t cap, uint32_t& fromIp, uint16_t& fromPort) = 0;
+    virtual bool send(uint32_t ip, uint16_t port, const uint8_t* data, size_t len) = 0;
+};
+
+class Udp {
+public:
+    virtual ~Udp() = default;
+    // A socket receiving on `port` (unicast and broadcast), or null.
+    virtual std::unique_ptr<UdpSocket> open(uint16_t port) = 0;
+};
+
+struct MqttConfig {
+    std::string uri;  // "mqtt://host:1883", "mqtts://...", "ws://...", "wss://..."
+    std::string user, password, clientId;
+    // Published by the broker if the connection is lost, retained.
+    std::string willTopic, willPayload;
+    // Subscribed to (QoS 1) on each connection.
+    std::vector<std::string> subscriptions;
+};
+
+// An MQTT client: Mqtt's. One session at a time.
+class MqttClient {
+public:
+    virtual ~MqttClient() = default;
+    // Connects, and reconnects whenever the connection is lost, until
+    // stop(). Events carry the session's number in `value`: MqttConnected,
+    // MqttDisconnected, MqttMessage. Returns the session (> 0), or 0.
+    virtual int32_t start(const MqttConfig& config, EventSink sink) = 0;
+    // Publishes the will (a clean disconnection doesn't), then ends the
+    // session, without blocking. Its events may still be in the device's
+    // queue: they carry its number.
+    virtual void stop() = 0;
+    // Queues a message (QoS 0) without blocking; false if it can't.
+    virtual bool publish(const std::string& topic, const std::string& payload, bool retain) = 0;
+};
+
 // What a device runs on. Null members are filled with the ESP
 // implementations by the services that use them.
 struct Platform {
@@ -199,6 +246,8 @@ struct Platform {
     Ota* ota = nullptr;
     HttpClient* http = nullptr;
     Coredump* coredump = nullptr;  // stays null without a core dump partition
+    Udp* udp = nullptr;
+    MqttClient* mqtt = nullptr;
 };
 
 // The ESP implementations (null on the host).
@@ -209,5 +258,8 @@ Clock* espClock();
 Ota* espOta();
 HttpClient* espHttpClient();
 Coredump* espCoredump();
+Udp* espUdp();
+MqttClient* espMqtt();     // null if the build has no MQTT client
+MqttClient* espMqttTls();  // the same, verifying brokers with the certificate bundle
 
 }  // namespace tesserkit

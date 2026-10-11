@@ -27,7 +27,7 @@ TesserKIT is the device framework built on [TesserAPI](https://github.com/leokeb
 | Language | C++17, TesserAPI's rules: no exceptions, no RTTI, never `throw`/`dynamic_cast`/`typeid`; calling an empty `std::function` aborts. |
 | Frameworks | ESP-IDF ≥ 5.1 and Arduino-ESP32 ≥ 3.0, like TesserAPI. |
 | Chips | Classic ESP32 without PSRAM, 4 MB flash (reference); ESP32-C3; ESP32-S3. |
-| Partitions | Every service fits a 1.25 MB app slot, so Arduino's default 4 MB table (two OTA slots, no `min_spiffs`) works. TesserKIT ships a table without a filesystem for more headroom (§11). |
+| Partitions | Every first-release service fits a 1.25 MB app slot, so Arduino's default 4 MB table (two OTA slots, no `min_spiffs`) works; with Mqtt an Arduino sketch needs a larger slot. TesserKIT ships a table without a filesystem for more headroom (§11). |
 | Dependencies | TesserAPI, TesserUI (C++ part: `WebUi`), ArduinoJson 7. Optional: NowTP. ESP-IDF components only (`esp_wifi`, `esp_netif`, `mdns`, `esp_https_ota`, `mqtt`, `esp_http_client`, `nvs_flash`, `app_update`): the same code on Arduino and ESP-IDF. |
 | Platform code | Only in `src/tesserkit/platform/`. Services see a narrow interface (§3.3) with an ESP implementation and a host fake. |
 | Threading | One task of TesserKIT's own (§4.2), plus the transports' tasks. Everything a service does to the tree runs under the API lock. |
@@ -82,6 +82,7 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
   timers                Timers (§5.6), a keyed list
   auth/                 Auth (§5.7)
   mqtt/                 Mqtt (§5.8)
+  artnet/               ArtNet (§5.9)
 ```
 
 - The root stays the application's: `/sys` is one child of it, rendered by TesserUI as a link to its own page, where each service is a card.
@@ -90,7 +91,7 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
 
 ### 3.3 Platform layer
 
-Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads) and `Coredump`:
+Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads), `Coredump`, `Udp` (Art-Net) and `MqttClient`:
 
 - `src/tesserkit/platform/esp/` implements them on ESP-IDF APIs, which Arduino-ESP32 3.x also ships, so one implementation serves both.
 - `test/fake_platform.*` implements them in memory for host tests: a Wi-Fi radio whose scans and connections the test scripts, a clock the test advances, an OTA partition that's a byte vector.
@@ -311,23 +312,45 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 ### 5.8 Mqtt
 
 ```
-/sys/mqtt
-  enabled *(p)      boolean, Admin
-  uri *(p)          string ("mqtts://broker:8883"), Admin
-  user *(p), password *(p) (secret), clientId *(p) (default: hostname), Admin
-  prefix *(p)       string (default "tesser/<hostname>"), Admin
-  publish *(p)      list ≤ 8 of {path, interval ms (default 1000)}, Admin
-  homeAssistant *(p) boolean: publish discovery configs, Admin
-  status/           connected, error
+/sys/mqtt               label "MQTT", Admin
+  enabled *(p)          boolean (default false)
+  uri *(p)              string: mqtt://, mqtts://, ws:// or wss:// ("mqtt://broker.local:1883")
+  user *(p), password *(p) (secret)
+  clientId *(p)         string (empty: the hostname), advanced
+  prefix *(p)           string (empty: "tesser/<hostname>"), no + or #, no slash at either end, advanced
+  publish *(p)          list ≤ 8 of {path, interval ms 0–86400000 (default 1000)}
+  status/               connected, error, published, dropped (watched counters)
 ```
 
-- **Bridge:** for each `publish` entry, the service holds a local subscription (TesserAPI `LocalClient`) to that path, with its interval, and publishes each changed leaf to `<prefix>/<path>` as JSON, retained. Events go to `<prefix>/<path>` unretained.
-- **Commands:** it subscribes to `<prefix>/+/set` (and deeper), and turns a message on `<prefix>/<path>/set` into `set <path> <payload>`, with User access. The reply goes to `<prefix>/<path>/result`.
-- **Availability:** `<prefix>/status`, `online` and a last will of `offline`, retained.
+- **Session:** the client connects once the device is online, and reconnects by itself (ESP-IDF's esp-mqtt, every 5 s, keepalive 30 s). A change to `enabled`, `uri`, the credentials, `clientId` or `prefix` restarts the session once the settings have been still for 1 s, so editing several fields reconnects once. Each session has a number, carried by its platform events, so a stopped session's late events are ignored.
+- **Bridge:** while connected, each `publish` entry is a subscription of its own (TesserAPI `LocalClient`, Admin: what to publish is the admin's choice) with its `interval`. Its snapshot and every change notification are flattened into leaves, each published as JSON to `<prefix>/<path>`, retained: `/led` gives `tesser/lamp-a67c/led/on` → `true`. Arrays and keyed lists are leaves (their JSON). Events under the path go to `<prefix>/<event path>` unretained. A notification flagged `overflow` is followed by a read of the whole subtree. The subscriptions end with the connection, and a reconnection publishes everything again, so retained topics are refreshed. They count against TesserAPI's 16 subscriptions.
+- **Commands:** the client subscribes (QoS 1) to `<prefix>/+/set`, `<prefix>/+/+/set` … 8 levels deep, rather than `<prefix>/#`, which would bring back every retained topic it publishes. A message on `<prefix>/<path>/set` becomes `set <path> <payload>` through a `LocalClient` with **User** access (TesserAPI `setAccess`), so the broker's clients can drive the application but can't reconfigure `/sys`. The payload is JSON; anything that doesn't parse is a string (`ON`, a name), and an empty payload is `null` (an action without argument). The reply goes to `<prefix>/<path>/result`, unretained: `{"status": "ok", "body": true}` or the error.
+- **Availability:** `<prefix>/status` is `online` on each connection and the last will is `offline` (QoS 1), both retained. Stopping a session publishes the will itself before disconnecting, since a clean disconnection doesn't.
+- **Platform:** `MqttClient` (§3.3) on esp-mqtt, a component of ESP-IDF 5 and `espressif/mqtt` from ESP-IDF 6 (a dependency of TesserKIT's manifest for those versions). Publishing only queues: a task of the platform layer (`tk_mqtt_pub`, 4 KB of stack) sends with `esp_mqtt_client_publish()`, from a queue of 32 messages and 16 KB, so TesserKIT's task never waits on the network. esp-mqtt's own queue (`esp_mqtt_client_enqueue`) isn't used: its task sends one queued message per pass and waits up to a second between passes. A message the queue refuses counts in `dropped`.
+- **TLS:** `mqtts://` and `wss://` brokers are verified with ESP-IDF's certificate bundle when the application calls `mqtt.tls()` before `begin()`; without it the bundle isn't linked.
+- **Factory defaults:** `mqtt.broker("mqtt://...", user, password).enable(true).prefix("home/lamp").publish("/led", 0)`.
 - **Home Assistant discovery** *(later)*: for each published leaf, a config under `homeassistant/<component>/<hostname>/<path>/config`, the component chosen from the schema: writable boolean → `switch`, read-only boolean → `binary_sensor`, number with a range → `number`, read-only number → `sensor` (with `unit`), enum → `select`, action without argument → `button`.
-- One generic bridge replaces ESP32-sveltekit's per-service `MqttEndpoint`s. Neither helionext nor spin-seq uses MQTT today, hence its place in the roadmap.
+- One generic bridge replaces ESP32-sveltekit's per-service `MqttEndpoint`s.
 
-### 5.9 Later
+### 5.9 ArtNet
+
+```
+/sys/artnet             label "Art-Net", Admin
+  enabled *(p)          boolean (default true)
+  universe *(p)         integer 0–32767: the 15-bit port-address (net, sub-net, universe)
+  mappings *(p)         list ≤ 8 of {path, coarse 0–512, fine 0–512, min, max, threshold 0–255}
+  status/               packets, universe (the last seen), age (s since a frame of ours, -1 none), error
+```
+
+- **Receiving:** an Art-Net 4 node on UDP 6454 (unicast and broadcast). TesserKIT's task drains the socket without blocking every period and keeps the last ArtDmx frame of its universe; ArtDmx for other universes only counts.
+- **Mappings:** each mapping turns channels of the frame into a write to `path` through the API (a `LocalClient`, Admin, as Timers do), **only when the written value changes**. `coarse` is the channel (1–512, 0: unused), `fine` the low byte's (0: 8 bits). The 16-bit value `v` (8 bits: `coarse × 257`, so 255 is the top) gives `min + v/65535·(max − min)`, written as a number, rounded for an integer node, or `true` from half up for a boolean node. A `threshold` (1–255) makes a gate: `true` while the coarse channel is at or above it. A frame too short for a mapping's channels leaves it alone. New mappings or a new universe write everything again on the next frame.
+- **Errors:** a refused write is kept in `status/error` (`/led/brightness: invalid_value: out of range`) until a write to the same path succeeds.
+- **Discovery:** an ArtPoll is answered with an ArtPollReply, unicast to the controller on port 6454: the device's address (station, else access point), its MAC, version, short name the label, long name the hostname, one DMX output port on the configured port-address, and a node report with the packet count.
+- **Platform:** `Udp` (§3.3) on lwIP sockets. A port that can't be opened is tried again every 5 s.
+- **Factory defaults:** `artnet.universe(0).map({"/heliostat/artnet/azimuth", 1, 2, 0, 360})`.
+- What a value means stays the application's: tiny-heliostat maps channels onto `/heliostat/artnet/azimuth` and `elevation` and decides there whether Art-Net takes over (§10.1). It replaces helionext's `ArtNetService` and serves any lighting-controlled device.
+
+### 5.10 Later
 
 | Service | Content |
 |---|---|
@@ -335,7 +358,6 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 | Sleep | `sleep` action (deep sleep), wake-up pin and level *(p)*, `dev.onSleep(fn)` for the application to park its hardware. |
 | Ethernet | §5.2. |
 | Log | §5.1. |
-| ArtNet | `/sys/artnet` *(proposed)*: `enabled`, `universe`, and `mappings`, a list ≤ 8 of `{path, coarse, fine, min, max}` (channels 1–512, 0 unused, `fine` 0 for 8 bits), each written to its path through the API as `min + v/65535·(max−min)`, on change only, as Timers writes to paths; a mapping with a threshold writes a boolean (a gate). Answers ArtPoll (short name the label, long name the hostname) on UDP 6454. `status/`: packets, age, last universe. For tiny-heliostat (§10.1) and lighting-controlled devices. |
 
 ## 6. Persistence
 
@@ -411,7 +433,7 @@ The heliostat is ported in its own repository, [tiny-heliostat](https://github.c
 - Classic ESP32 DevKitC, ESP-IDF only. Two DC servo axes with magnetic encoders, GPS.
 - Motors, encoders, axes, sequencers and the GPS come from [TesserMotion](https://github.com/leokeba/TesserMotion), a sibling library on TesserAPI, so devices without motors don't carry them. `NmeaGps` feeds `clock.external()` (§5.3) through the application's `onTick`.
 - `/heliostat` holds the sun position, the modes, and the named directions: one keyed list `directions` (helionext's `targetsMap`), with `source` and `target` naming entries and a `mode` enum.
-- Art-Net is received into `/heliostat/artnet` (`azimuth`, `elevation`); the heliostat decides what the values mean. A generic receiver mapping channels to tree paths is proposed as `/sys/artnet` (§5.9).
+- Art-Net is received into `/heliostat/artnet` (`azimuth`, `elevation`); the heliostat decides what the values mean. TesserKIT's ArtNet service (§5.9) writes them, mapped from DMX channels.
 - The calibration routines, the mount orientation, autotune, several heliostats and settings migration are dropped for now.
 - TesserKIT provides `/sys`: Device, System, Network, Time, Firmware (upload), Backup, Timers, Auth; the interface uses `dev.web().asset()` for the custom elements `x-sky` and `x-keyframes`, and TesserUI's `Views`.
 
@@ -443,7 +465,7 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 | Flash: the UI | TesserUI's bundle, ≤ 50 KB |
 | Flash: an application with every first-release service, Wi-Fi and HTTP | ≤ 1.25 MB, to fit Arduino's default partition table |
 | RAM at rest, above Wi-Fi and `esp_http_server` | ≤ 12 KB, the task's stack included |
-| Stack | TesserKIT's task: 6 KB |
+| Stack | TesserKIT's task: 6 KB (Mqtt adds esp-mqtt's task, 6 KB, and its publishing task, 4 KB) |
 
 **Measured** (2026-10-10, ESP-IDF 6.1-dev, ESP32, `-Os`): `examples/idf/minimal` against its `-DFOOTPRINT_BASELINE=1` build, the same application on TesserAPI, TesserUI and a plain Wi-Fi station.
 
@@ -452,10 +474,13 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 | Device + System + Network + Time + Firmware + Backup | 113.3 KB |
 | The same with `CONFIG_TESSERKIT_MDNS=n` (`TESSERKIT_NO_MDNS`) | 77.8 KB |
 | `fw.downloads()` adds TLS, the certificate bundle and the HTTP client | about 130 KB |
+| ArtNet (2026-10-11, ESP-IDF 6.2-dev, `-DWITH_ARTNET=1` against the example without it) | 9.2 KB |
+| Mqtt (the same, `-DWITH_MQTT=1`): TesserKIT's bridge 14.5 KB, esp-mqtt 12.7 KB, TCP transports, esp-tls and the TLS crypto they link, stdio | 110 KB |
+| Mqtt with `CONFIG_MQTT_TRANSPORT_SSL=n` and `CONFIG_MQTT_TRANSPORT_WEBSOCKET=n` (mqtt:// only) | 102 KB |
 
 - **Where it goes** (with mDNS): TesserKIT's own code 42 KB (Network 15 KB, most of it the `std::function`s behind bound values and the keyed list), ESP-IDF's `mdns` 34 KB, libc's time zone support 17 KB (`tzset()` parses with `vfscanf`), lwIP's DHCP server, DNS client and sockets 7.6 KB, the access point in the Wi-Fi driver 6 KB, OTA 2.6 KB.
 - **Against the budget:** 60 KB is exceeded. Features stay, as options where they are large (mDNS, downloads); the rest is smaller only at the cost of clarity, and is left as it is until a measured application needs the space.
-- **Arduino:** the Minimal sketch with every first-release service is 1.18 MB on ESP32 and ESP32-C3, within the default table's 1.25 MB slot.
+- **Arduino:** the Minimal sketch with every first-release service is 1.18 MB on ESP32 and ESP32-C3, within the default table's 1.25 MB slot (1.21 MB on ESP32 as of 2026-10-11, with that day's TesserAPI and TesserUI; 1.24 MB with ArtNet). With Mqtt it is 1.36 MB on ESP32: Arduino's prebuilt esp-mqtt can't drop its transports, so such a sketch needs a larger app slot (`min_spiffs.csv`, or TesserKIT's tables).
 
 **Partition table** (`partitions/tesserkit_4mb.csv`, recommended): `nvs` 20 KB, `otadata`, `ota_0` and `ota_1` 1.94 MB each, `coredump` 64 KB. No filesystem, no `phy_init` (the PHY data is in the app by default). `tesserkit_8mb.csv` has 3.94 MB slots.
 
@@ -463,7 +488,7 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 
 ## 12. Testing
 
-1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), time and DST, timers (catch-up, no double runs), firmware upload checks, backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge's topic mapping. The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
+1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), time and DST, timers (catch-up, no double runs), firmware upload checks, backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge (topics, commands with User access, sessions, intervals), Art-Net (scaling, gates, changes only, ArtPollReply's bytes). The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
 2. **Golden schemas:** each service's schema with its hints, checked in as `fixtures/*.json`. TesserUI renders them in its golden-model tests, so a hint change shows as a diff in both repositories.
 3. **On target:** `examples/idf/minimal` (and `examples/arduino/Minimal`, with `--app /lamp`), driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, sign-in with tokens over HTTP and WebSocket, a timer running, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. *(later)* a test firmware with every service and serial scripts.
 4. **CI:** host tests, ESP-IDF builds (5.1, 5.4, 5.5, latest × ESP32, ESP32-C3, ESP32-S3), Arduino-ESP32 3.x builds of the examples, the footprint budgets.
@@ -483,7 +508,7 @@ TesserKIT/
   CMakeLists.txt, idf_component.yml, library.json, library.properties
 ```
 
-- ESP-IDF component and PlatformIO/Arduino library, like TesserAPI and TesserUI. Dependencies: TesserAPI and TesserUI as public requirements; NowTP detected as TesserAPI does (`__has_include` or the build's component list).
+- ESP-IDF component and PlatformIO/Arduino library, like TesserAPI and TesserUI. Dependencies: TesserAPI and TesserUI as public requirements; `espressif/mdns`, and `espressif/mqtt` from ESP-IDF 6 (part of ESP-IDF before); NowTP detected as TesserAPI does (`__has_include` or the build's component list).
 - Versions follow semver; TesserKIT pins compatible TesserAPI and TesserUI ranges.
 
 ## 14. Follow-ups wanted in other layers
@@ -534,7 +559,9 @@ TesserKIT/
 | 2 *(done)* | Timers, Auth | spin-seq's timers and a locked-down device. |
 | 3 | helionext on TesserKIT, in tiny-heliostat (§10.1) | Every helionext page usable, with custom elements only for the keyframes and the sky. |
 | 4 | spin-seq on TesserKIT, NowTP channel following and pairing, shared clock | A master and three remotes run a synchronized sequence; fleet update through the master. |
-| 5 | Mqtt, GitHub releases, Battery, Sleep, Ethernet, Log | *(later)* |
+| 5 | GitHub releases, Battery, Sleep, Ethernet, Log, Home Assistant discovery | *(later)* |
+
+Mqtt and ArtNet were built ahead of the roadmap (2026-10-11), ArtNet for tiny-heliostat.
 
 ## 16. Decisions
 
@@ -544,3 +571,6 @@ TesserKIT/
 - **The platform layer:** the services' logic (state machines, validation) is where bugs live, and it is host-testable only if ESP calls are behind an interface. ESP32-sveltekit has no tests.
 - **Stateless signed tokens** rather than sessions in RAM: logins survive restarts and OTA updates, and nothing grows per client. Revocation is all-or-nothing (`logoutAll`), acceptable for devices with a handful of users.
 - **Firmware updates checked on the device, not in the browser:** the browser may have no internet (a field on the device's access point), and the device is the one that knows its chip and slot.
+- **MQTT commands with User access:** a broker is shared, and its clients aren't the device's admins. They drive the application; `/sys` (Wi-Fi, firmware, accounts) stays with whoever signs in to the device.
+- **`/set` filters by depth, not `#`:** `<prefix>/#` would bring every retained topic the device publishes back to it. Eight filters cost the broker nothing and bound the paths a command reaches, which writable application nodes don't exceed.
+- **Art-Net through the API, on change:** writes go through the same validation, access checks and notifications as a client's, so a console can't set what a browser couldn't, and a still console costs nothing. Meaning (takeover, which mode) stays in the application's node.

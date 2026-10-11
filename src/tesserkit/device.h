@@ -6,6 +6,7 @@
 #include <atomic>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "tesser/api.h"
@@ -24,6 +25,14 @@ class Device;
 // The device's overall state (docs/DESIGN.md section 4.3).
 enum class State : uint8_t { Booting, Provisioning, Connecting, Online, Updating, Error };
 const char* toString(State s);
+
+// The node at `path` below `root` ("/a/b" or "a/b"), or null. Below a list,
+// an array or a remote node, elements aren't known here: null, with
+// `opaque` set. The root itself is "/".
+const tesser::Node* findNode(const tesser::Object& root, std::string_view path, bool* opaque = nullptr);
+// Whether `path` names a node below `root`, or may (below a list, an array
+// or a remote node).
+bool resolves(const tesser::Object& root, std::string_view path);
 
 // A service: a subtree of /sys with a platform side (docs/DESIGN.md section
 // 5). Constructing one registers it with its device; Device::begin() then

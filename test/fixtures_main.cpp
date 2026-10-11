@@ -16,6 +16,8 @@ int main(int argc, char** argv) {
     tesserkit::Backup backup(r.dev);
     tesserkit::Timers timers(r.dev);
     tesserkit::Auth auth(r.dev);
+    tesserkit::Mqtt mqtt(r.dev);
+    tesserkit::ArtNet artnet(r.dev);
     if (!r.dev.begin()) return 1;
     rig::Reply s = r.schema("/");
     if (s.status != rig::Status::Ok) return 1;
