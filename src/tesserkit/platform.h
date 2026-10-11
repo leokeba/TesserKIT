@@ -261,8 +261,12 @@ public:
 class Ble {
 public:
     virtual ~Ble() = default;
-    // Starts the stack and advertises under `name`. False if it couldn't.
+    // Starts the stack and advertises under `name`, again after end().
+    // False if it couldn't.
     virtual bool begin(tesser::Api& api, const char* name) = 0;
+    // Stops the stack and gives its memory back, dropping the client. False
+    // if the transport can't (advertise(false) is what's left).
+    virtual bool end() = 0;
     // Stops advertising and drops the client, or advertises again. False if
     // the transport can't do it while running (it then applies at the next
     // boot).

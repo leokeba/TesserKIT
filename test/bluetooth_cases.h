@@ -43,15 +43,37 @@ TEST(bluetooth_shows_its_client) {
     CHECK_EQ(r.value("/sys/bluetooth/status/client"), "\"\"");
 }
 
-TEST(bluetooth_switches_off_and_on) {
+TEST(bluetooth_switched_off_gives_its_memory_back) {
     BluetoothRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    r.fake.ble.connectedNow = true;
+    r.run(600);
+    CHECK_EQ(r.value("/sys/bluetooth/status/connected"), "true");
+    CHECK_EQ(r.set("/sys/bluetooth/enabled", "false").status, Status::Ok);
+    r.run(600);
+    CHECK_EQ(r.fake.ble.ends, 1);  // the stack is stopped, not only silent
+    CHECK(!r.fake.ble.started);
+    CHECK(!r.fake.ble.connectedNow);  // the client is dropped
+    CHECK_EQ(r.value("/sys/bluetooth/status/connected"), "false");
+    CHECK_EQ(r.value("/sys/bluetooth/restartNeeded"), "false");
+    CHECK_EQ(r.set("/sys/bluetooth/enabled", "true").status, Status::Ok);
+    r.settle();
+    CHECK(r.fake.ble.advertising);
+    CHECK_EQ(r.fake.ble.begins, 2);
+}
+
+TEST(bluetooth_off_without_release_stops_advertising) {
+    BluetoothRig r;
+    r.fake.ble.releasable = false;  // Arduino's library
     CHECK(r.dev.begin());
     r.settle();
     r.fake.ble.connectedNow = true;
     CHECK_EQ(r.set("/sys/bluetooth/enabled", "false").status, Status::Ok);
     r.settle();
+    CHECK(r.fake.ble.started);
     CHECK(!r.fake.ble.advertising);
-    CHECK(!r.fake.ble.connectedNow);  // the client is dropped
+    CHECK(!r.fake.ble.connectedNow);
     CHECK_EQ(r.value("/sys/bluetooth/restartNeeded"), "false");
     CHECK_EQ(r.set("/sys/bluetooth/enabled", "true").status, Status::Ok);
     r.settle();
@@ -74,6 +96,7 @@ TEST(bluetooth_off_at_boot_starts_when_enabled) {
 TEST(bluetooth_without_runtime_control_waits_for_a_restart) {
     BluetoothRig r;
     r.fake.ble.runtime = false;
+    r.fake.ble.releasable = false;
     CHECK(r.dev.begin());
     r.settle();
     CHECK_EQ(r.set("/sys/bluetooth/enabled", "false").status, Status::Ok);

@@ -29,16 +29,28 @@ namespace {
 class EspBle : public Ble {
 public:
     bool begin(tesser::Api& api, const char* name) override {
-        if (ble_) return true;
-        ble_.reset(new tesser::BleTransport(api));
+        if (!ble_) ble_.reset(new tesser::BleTransport(api));
 #if defined(ARDUINO)
+        if (ble_->begun()) return true;
         ble_->begin(name);
         // Arduino's transport handles requests in poll(), outside the
         // device's task, which holds the API lock while it runs.
         if (xTaskCreate(pollTask, "tk_ble", 6144, ble_.get(), 4, nullptr) != pdPASS) return false;
         return true;
 #else
+        if (ble_->begun()) return true;
         return ble_->begin(name) == ESP_OK;
+#endif
+    }
+    bool end() override {
+#if defined(ARDUINO)
+        // The BLE library leaks its service at each deinit: stop() instead.
+        return false;
+#else
+        // NimBLE's host and the controller, about 45 KB on a classic ESP32.
+        // It doesn't wait for the request task: fine under the API lock, and
+        // when the client switching it off is a Bluetooth one.
+        return ble_ && ble_->end() == ESP_OK;
 #endif
     }
     bool advertise(bool on) override {

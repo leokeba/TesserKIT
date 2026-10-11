@@ -46,20 +46,22 @@ void Bluetooth::apply() {
     if (!ble_) return;
     if (enabled_ && !started_) {
         name_ = dev_.hostname();
-        started_ = ble_->begin(dev_.api(), name_.c_str());
+        started_ = advertising_ = ble_->begin(dev_.api(), name_.c_str());
         if (!started_) tesser::logError("tesserkit: Bluetooth didn't start");
-        advertising_ = started_;
-    } else if (started_ && enabled_ != advertising_) {
-        if (ble_->advertise(enabled_)) {
-            advertising_ = enabled_;
-        } else if (!restart_) {
-            restart_ = true;
-            restartNode_->changed();
+    } else if (enabled_ && !advertising_) {
+        if (ble_->advertise(true)) advertising_ = true;
+    } else if (!enabled_ && started_) {
+        // Its memory back when the transport can, else at least silent.
+        if (ble_->end()) {
+            started_ = advertising_ = false;
+        } else if (advertising_ && ble_->advertise(false)) {
+            advertising_ = false;
         }
     }
-    // Back to what runs: nothing waits for a restart any more.
-    if (restart_ && enabled_ == advertising_) {
-        restart_ = false;
+    // What runs isn't what is asked for: only a restart applies it.
+    bool restart = started_ && enabled_ != advertising_;
+    if (restart != restart_) {
+        restart_ = restart;
         restartNode_->changed();
     }
 }

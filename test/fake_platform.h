@@ -251,13 +251,20 @@ struct Mqtt : tesserkit::MqttClient {
 // Bluetooth LE: the test connects a client and reads what was advertised.
 struct Ble : tesserkit::Ble {
     bool started = false, advertising = false, connectedNow = false;
-    bool runtime = true;  // advertise() and name() work while running
+    bool runtime = true;     // advertise() and name() work while running
+    bool releasable = true;  // end() gives the stack's memory back
     std::string advertised, clientAddress;
-    int begins = 0;
+    int begins = 0, ends = 0;
     bool begin(tesser::Api&, const char* name) override {
         begins++;
         started = advertising = true;
         advertised = name;
+        return true;
+    }
+    bool end() override {
+        if (!releasable) return false;
+        ends++;
+        started = advertising = connectedNow = false;
         return true;
     }
     bool advertise(bool on) override {
