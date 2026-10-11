@@ -72,7 +72,8 @@ void Timers::describe(tesser::Object& o) {
                                            : Check::ok();
                             })
                             .ui("placeholder", "true");
-                        e.value("last", static_cast<const std::string&>(t.last)).label("Last run");
+                        // Read-only, not const: a backup or a boot restores it.
+                        e.value("last", t.last).readOnly().label("Last run");
                     })
                  .key("name")
                  .maxSize(16)

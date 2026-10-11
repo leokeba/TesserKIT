@@ -58,6 +58,18 @@ TEST(timers_run_at_their_minute) {
     CHECK_EQ(r.value("/sys/timers/lights/last"), "\"ok\"");
 }
 
+TEST(timers_last_run_is_restored) {
+    TimerRig r;
+    r.timers.add(r.timer("lights", "08:00", "/led/on", "true"));
+    CHECK(r.dev.begin());
+    std::vector<std::string> skipped;
+    CHECK_EQ(r.dev.api().restore("{\"sys\":{\"timers\":[{\"name\":\"lights\",\"last\":\"ok\"}]}}", &skipped),
+             Status::Ok);
+    CHECK_EQ(skipped.size(), 0u);
+    CHECK_EQ(r.value("/sys/timers/lights/last"), "\"ok\"");
+    CHECK_EQ(r.set("/sys/timers/lights/last", "\"no\"").status, Status::ReadOnly);
+}
+
 TEST(timers_follow_the_days) {
     TimerRig r;
     r.timers.add(r.timer("weekend", "08:00", "/led/press", "null", 0x60));   // Sat, Sun
