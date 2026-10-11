@@ -35,7 +35,7 @@ private:
 
 void Backup::describe(tesser::Object& o) {
     Device& dev = dev_;
-    o.label("Backup").writeAccess(Access::Admin);
+    o.label("Backup").ui("icon", "refresh").writeAccess(Access::Admin);
     o.file("settings")
         .label("Settings")
         .readAccess(Access::Admin)

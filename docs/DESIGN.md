@@ -397,6 +397,7 @@ They apply only when the stored state doesn't set the value, so a user's change 
 
 The UI is TesserUI's generic renderer, self-hosted by the device (TesserUI §9.4): `/` and `/ui.js`, about 41 KB of flash. Nothing is TesserKIT-specific in the bundle:
 
+- **Menu:** `/sys` has `ui.page`, so TesserUI's menu (TesserUI §6.3) shows it as one entry with a sub-entry, and a page, per service. Each service names its icon (`ui.icon`): Status `info`, Network `wifi`, Time `clock`, Firmware `download`, Backup `refresh`, Timers `play`, Users `lock`, MQTT `link`, Art-Net `bulb`.
 - **Services' pages** are their trees with hints: labels, units, `confirm` on destructive actions, `style danger`, `advanced` on rarely used settings, `form` where several fields must change together (the access point), `visibleWhen` for conditional fields (static IP), `chart` on heap and RSSI.
 - **The application's pages** are its tree, plus TesserUI views (§8 there) for dashboards and custom elements (§9.8 there) for what generic widgets can't draw.
 - **Login:** when a request answers `unauthorized`, TesserUI's sign-in dialog calls `/sys/auth/login` with a name and password (TesserUI §7.4). Without the Auth service it never needs to: everyone is Admin.

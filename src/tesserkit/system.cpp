@@ -36,7 +36,7 @@ void System::describe(tesser::Object& o) {
     const BootInfo& info = dev.info();
     resetReason_ = info.resetReason;
 
-    auto& s = o.object("status").label("Status");
+    auto& s = o.object("status").label("Status").ui("icon", "info");
     dev.stateNode(&s.value("state", dev.stateVar(),
                            {"booting", "provisioning", "connecting", "online", "updating", "error"})
                        .readOnly());

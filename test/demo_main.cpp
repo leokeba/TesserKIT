@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
     t.value = "true";
     timers.add(t);
     Led led;
-    dev.api().mount("led", led).label("LED");
+    dev.api().mount("led", led).label("LED").ui("icon", "bulb");
     if (!dev.begin()) return 1;
     fake.clock.sync(realMs());  // SNTP answers at once
 

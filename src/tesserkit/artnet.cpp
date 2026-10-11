@@ -63,6 +63,7 @@ std::string ArtNet::mapped(const ArtNetMapping& m, const uint8_t* dmx, size_t le
 
 void ArtNet::describe(tesser::Object& o) {
     o.label("Art-Net")
+        .ui("icon", "bulb")
         .doc("Lighting consoles drive nodes of the tree through the DMX channels of one universe")
         .writeAccess(Access::Admin);
     o.value("enabled", enabled_).persist();

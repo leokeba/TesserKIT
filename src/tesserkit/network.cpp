@@ -106,7 +106,7 @@ Network& Network::txPower(int8_t dBm) {
 
 void Network::describe(tesser::Object& o) {
     Device& dev = dev_;
-    o.label("Network").writeAccess(Access::Admin);
+    o.label("Network").ui("icon", "wifi").writeAccess(Access::Admin);
     hostnameNode_ = &o.value("hostname", [&dev] { return dev.hostname(); },
                              [&dev](const std::string& h) { dev.hostname(h.c_str()); })
                          .validate([](const std::string& h) {
