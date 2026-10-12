@@ -80,6 +80,7 @@ tesserkit::Mqtt mqtt(dev);            // a broker bridge
 tesserkit::ArtNet artnet(dev);        // lighting consoles
 tesserkit::Bluetooth bluetooth(dev);  // the launcher from a phone
 tesserkit::NowTp nowtp(dev);          // the nodes nearby over ESP-NOW (after Network: Wi-Fi first)
+tesserkit::Sequencer sequencer(dev);  // /sequencer: steps played in turn
 // The launcher's USB way: envelopes on the console's UART, Admin (physical
 // access). Logs stay at warnings (sdkconfig.defaults).
 tesser::UartTransport serialApi(dev.api(), UART_NUM_0);
@@ -111,6 +112,18 @@ extern "C" void app_main() {
     evening.path = "/led/on";
     evening.value = "true";
     timers.add(evening);
+    // A blink: on and off every half second, until stopped (off then).
+    for (bool lit : {true, false}) {
+        tesserkit::Step s;
+        snprintf(s.name, sizeof(s.name), "%s", lit ? "on" : "off");
+        s.path = "/led/on";
+        s.value = lit ? "true" : "false";
+        s.wait = tesserkit::Wait::Time;
+        s.ms = 500;
+        s.next = lit ? "+1" : "on";
+        sequencer.add(s);
+    }
+    sequencer.finally("/led/on", "false");
     mqtt.tls().publish("/led", 0).publish("/sys/status", 10000);
 #if defined(MQTT_URI)
     mqtt.broker(MQTT_URI).enable(true);

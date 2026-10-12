@@ -87,6 +87,7 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
   nowtp/                NowTp (§5.11)
   files/                Files (§5.12)
 /peers                  the nodes NowTp finds nearby, mounted beside the application's tree
+/sequencer              Sequencer (§5.13): the application's, so at the root
 ```
 
 - The root stays the application's: `/sys` is one child of it, rendered by TesserUI as a link to its own page, where each service is a card.
@@ -318,7 +319,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 ```
 
 - At the given local time on the given days, a timer performs `set <path> <value>` through the API, as an Admin local client, exactly as if a client had sent it. Its result is logged and kept in a read-only `last` (`"ok"` or the error), which a boot load and a restored backup bring back with the list.
-- A write to a timer checks that `path` resolves and that `value` parses; whether the value fits the node is checked when it runs (the node may accept different values by then). Below a list, an array or a remote node, the path can't be checked further and is accepted. The check applies once the service has started: a boot load keeps stored timers whose node the application adds after `begin()`, and a run then reports `not_found`.
+- A write to a timer checks that `path` resolves and that `value` parses; whether the value fits the node is checked when it runs (the node may accept different values by then). Below a list, an array, a remote node or a `*` segment (every child, TesserAPI's fan-out, §14), the path can't be checked further and is accepted. The check applies once the service has started: a boot load keeps stored timers whose node the application adds after `begin()`, and a run then reports `not_found`.
 - Timers wait for a valid time (§5.3). They are checked every second, and a time change (DST, a sync) never runs a timer twice in one minute: a run is remembered by its local date and minute.
 - Factory defaults: `timers.add(timer)`, `timers.catchUp(true)`.
 - This generalizes spin-seq's daily timers: any action or value of the tree can be scheduled, not just sequencer commands.
@@ -462,7 +463,39 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - **Factory reset** doesn't format: files are often data rather than settings. Only the stored backups go (§5.5).
 - Of the examples, only `examples/idf/full` has Files, on `tesserkit_4mb_files.csv`.
 
-### 5.13 Later
+### 5.13 Sequencer
+
+```
+/sequencer              label "Sequencer", ui.icon "play"; the application's: at the root, beside its tree
+  steps *(p)            list, ≤ 32, Admin; a step is addressed by index, and optionally named:
+    name                string ≤ 24, optional; can't start with a digit, + or -
+    path                string: the node to set or call (as in Timers, §5.6)
+    value               string: its JSON value or argument ("null" for an action without one)
+    wait                enum "reply" | "time" | "none" (default reply)
+    ms                  integer 0–86 400 000 (ms)
+    next                string: the next step, a name, an index, or "+1", "-2"… from this one; "" ends
+  boot *(p)             string: the step to play from at boot (a name or an index; "" none), Admin
+  finally/ *(p)         path, value: a set when playing stops (advanced), Admin
+  play                  action (string): from a step (a name or an index; "" the first), following next, User
+  execute               action (string): one step, without following next (advanced), User
+  stop                  action, User
+  status/               read-only, watched: running, step (index, -1 stopped), name, elapsed (ms), duration (ms), error
+  failed                event, warn toast: "<step>: <error>"
+```
+
+- **A step is a write.** It performs `set <path> <value>` through the API as an Admin local client, like a timer: a value, an action with its argument, or a patch of an object (whose actions run after its values, TesserAPI §6.3). So a step sets several values and starts something at once, and the sequencer drives anything of the tree, the application's nodes, `/sys` and the nodes under `/peers`, with no command language of its own. A step without a name is shown as `#<index>`.
+- **Waiting:** `reply` waits for the write's reply, which a deferred action sends when what it started has finished (a move); with `ms` > 0 it waits at most that long, reports `no reply in <ms> ms` and goes on, and a later reply is ignored. `time` waits `ms` from the step's start, or until stopped when `ms` is 0 (a last step that holds). `none` goes on at once, so steps that don't wait run together, in one period.
+- **Next:** after its wait, a playing step goes to `next`, by name (the first step with it), by index, or relative to itself. Empty ends the sequence. A next that names no step reports it and stops. More step starts in one period than there are steps is a loop of steps that never wait: reported, and stopped. Whether next names a step is checked when it runs, so steps refer to steps written later.
+- **Starting and stopping:** `play` and `execute` take effect at the device's next period (≤ 20 ms), and a step name that resolves to nothing is `not_found` at once. A play or an execute while playing takes over at its step. A stop and a play in one period apply in that order. `boot` plays at the first period after `begin()`.
+- **Finally:** when playing stops (a stop, the end of a sequence, an executed step done, an unknown next, a loop), unless another play takes over, the `finally` set runs: a motor stopped, a light turned off. So `execute` of a step that waits a time is spin-seq's "run for d ms, then stop".
+- **Failures** (a step's error reply, a timeout, an unknown next, a finally that failed) are logged, kept in `status/error` and sent as the `failed` event. A step's error doesn't stop the sequence: on a fleet, one node that doesn't answer shouldn't stop the others.
+- **Checks on write:** `path` must resolve (with Timers' exceptions), `value` and `finally/value` must parse, `name`, `next` and `boot` must have the syntax of a name, an index or (`next` only) an offset. A step's own result isn't stored: it would be a write to the persisted list at every step.
+- **Several:** `Sequencer(dev, "lights")` mounts at `/lights`, so an application has one per subject.
+- **Several nodes:** a step on the master writes to the nodes under `/peers`: `/peers/spinner-2/sequencer/play` `"intro"`, or `/peers/*/sequencer/play` for all of them through TesserAPI's fan-out (§14). The writes leave one after the other, a few milliseconds apart per node; a start at the same instant on every node (NowTP's network time, §9) is *(later)*.
+- **Factory defaults:** `sequencer.add(step)`, `.boot("intro")`, `.finally("/motor/stop", "null")`. From code, under the API lock: `play(step)`, `execute(step)`, `stop()`, `running()`, `current()`, `find(ref)`.
+- This replaces spin-seq's JSON sequencer (§10.2), which had a command language for its motor and its broadcasts.
+
+### 5.14 Later
 
 | Service | Content |
 |---|---|
@@ -507,7 +540,7 @@ The UI is TesserUI's generic renderer, self-hosted by the device (TesserUI §9.4
 - **Menu:** `/sys` has `ui.page`, so TesserUI's menu (TesserUI §6.3) shows it as one entry with a sub-entry, and a page, per service. Each service names its icon (`ui.icon`): Status `info`, Network `wifi`, Time `clock`, Firmware `download`, Backup `refresh`, Timers `play`, Users `lock`, MQTT `link`, Art-Net `bulb`.
 - **Services' pages** are their trees with hints: labels, units, `confirm` on destructive actions, `style danger`, `advanced` on rarely used settings, `form` where several fields must change together (the access point), `visibleWhen` for conditional fields (static IP), `chart` on heap and RSSI.
 - **The application's pages** are its tree, plus TesserUI views (§8 there) for dashboards and custom elements (§9.8 there) for what generic widgets can't draw.
-- **Notifications:** what happens in the background, after any reply, is an event with `ui.toast` (TesserUI §7.8) and `ui.hidden`: a toast, not an events log on the service's page. Network's `joined`, Firmware's `updateFailed` and `newRelease`, `timerFailed`, Mqtt's `lost` and ArtNet's `refused`. TesserUI shows them on any page, as "<parent's label> › <label>: <payload>" ("Wi-Fi › Joined: 192.168.1.50 on Workshop"), so their labels don't repeat their parent's. A moment a reply or a widget already shows isn't one: a failed upload, a manual release check, a pairing (its state is on the page), a restore. Clients only hear events while subscribed, so what a device does at boot (a rollback, a crash) stays a value (`resetReason`, `coredumpPresent`).
+- **Notifications:** what happens in the background, after any reply, is an event with `ui.toast` (TesserUI §7.8) and `ui.hidden`: a toast, not an events log on the service's page. Network's `joined`, Firmware's `updateFailed` and `newRelease`, `timerFailed`, Mqtt's `lost`, ArtNet's `refused` and the Sequencer's `failed`. TesserUI shows them on any page, as "<parent's label> › <label>: <payload>" ("Wi-Fi › Joined: 192.168.1.50 on Workshop"), so their labels don't repeat their parent's. A moment a reply or a widget already shows isn't one: a failed upload, a manual release check, a pairing (its state is on the page), a restore. Clients only hear events while subscribed, so what a device does at boot (a rollback, a crash) stays a value (`resetReason`, `coredumpPresent`).
 - **Login:** when a request answers `unauthorized`, TesserUI's sign-in dialog calls `/sys/auth/login` with a name and password (TesserUI §7.4). Without the Auth service it never needs to: everyone is Admin.
 - **Theming and text:** `dev.web().theme(...)`, `.text(...)`, `.title(...)` (TesserUI §9.4).
 - **The launcher** (TesserUI §9.7): the same bundle on GitHub Pages, `https://leokeba.github.io/TesserKIT/`, published by CI with the TesserUI the example firmware is built with (§13). It reaches a device without the device serving a page:
@@ -524,7 +557,7 @@ TesserKIT devices are TesserAPI nodes, so the multi-node features are TesserAPI'
 
 - **UI host:** a TesserKIT device with the NowTp service (§5.11) mounts the nodes nearby under `/peers` and advertises itself. The UI shows a page per node, forwarded over ESP-NOW (TesserUI §9.5).
 - **NowTP-only nodes** run TesserAPI and NowTP without TesserKIT's Wi-Fi services, or with a subset: `System` and `Firmware` work over any transport, except uploads (HTTP only).
-- **Fleet operations** are writes through the gateway to each peer: update every peer's firmware (§5.4), set a value on all of them, trigger a sequence. A view (TesserUI §8) with `each("/peers", ...)` shows a fleet dashboard.
+- **Fleet operations** are writes through the gateway to each peer, or to all of them with a `*` (`/peers/*/sequencer/play`, TesserAPI's fan-out, §14): update every peer's firmware (§5.4), set a value on all of them, trigger a sequence (§5.13). A view (TesserUI §8) with `each("/peers", ...)` shows a fleet dashboard.
 - **Synchronized actions** (spin-seq's "start together") need a shared clock: NowTP's clock offset (§14) lets a gateway say "start at T" to every peer, instead of re-broadcasting with retries.
 
 ## 10. Porting from ESP32-sveltekit
@@ -563,16 +596,17 @@ spin-seq (ESP32-S3 XIAO, TMC5160 stepper, magnetic encoder, master and remotes) 
 | Today | TesserKIT |
 |---|---|
 | `SpinSequencerService` `/rest/spin-seq` + UDP JSON router (port 9600) | `/controller`, `/sequencer`, `/io`, `/welcome`; the UDP router is replaced by TesserAPI over NowTP (and a UDP datagram transport if older installations must keep working, §14) |
-| Sequencer commands: an array of free-form JSON | a list of typed commands `{c: enum, d, n, p: {pos, dist, speed, acc, en}, b, ...}`, so the table is generic and validated; `execute` and `select` are actions with typed arguments |
-| `bootCommandIndex`, `isRunning` | persisted values |
+| `JsonSeq`: an array of free-form JSON commands (`p` parameters, `c` motor command, `d` duration, `n` next, `t` trigger, `b` broadcast, `w` remote writes, `id` deduplication) | the Sequencer service (§5.13): steps that are writes to the tree (`/controller` values and actions), `wait` and `ms` for `d`, `next` by name, index or offset, `wait: none` for `t`, writes to `/peers` for `b` and `w`; NowTP's reliable delivery replaces `id` |
+| `bootCommandIndex`, `isRunning` | `/sequencer/boot` *(p)*; a sequence isn't resumed at boot unless `boot` says so |
+| A single command run for `d` ms, then the motor stopped | `execute`, with `finally` stopping the motor |
 | Remotes list from mDNS, `ESPNowService`, `UdpSenderService` | the master is a UI host: NowTP discovery mounts the remotes under `/peers`; the console and stats come from NowTP's diagnostics |
 | Master page fanning out over HTTP from the browser | a view with `each("/peers", "$/sequencer/status")` and actions on the master that write to every peer |
 | Fleet OTA via GitHub | `/sys/firmware` on each peer, driven through the gateway (§5.4) |
-| `JsonTimer` daily timers | `/sys/timers` with `path` `/sequencer/execute` |
+| `JsonTimer` daily timers | `/sys/timers` with `path` `/sequencer/play` |
 | Config export and import | `/sys/backup` |
 | Front-panel button and LED | the application's own; `dev.onState()` for the LED's network states |
 
-Commands broadcast to every remote (`b`) become writes to each peer through the gateway, or a scheduled start with NowTP's shared clock (§9).
+Commands broadcast to every remote (`b`) become a master's step writing to `/peers/*/sequencer/play`, and later a scheduled start with NowTP's shared clock (§9).
 
 ## 11. Footprint
 
@@ -618,7 +652,7 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 
 ## 12. Testing
 
-1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), Ethernet (preferred to the station, the station's wait for it, recovery on a cable, a static address), time and DST, timers (catch-up, no double runs), firmware upload checks, release checks (versions, GitHub's answers and failures, scheduling), backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge (topics, commands with User access, sessions, intervals), Art-Net (scaling, gates, changes only, ArtPollReply's bytes), Bluetooth (the name following the hostname, switching off and on, the client shown), NowTp (waiting for the network, the nodes listed and read-only, pairing, the factory reset forgetting the key), HTTPS refused without the memory for it, Files (names and paths refused, uploads replaced whole and cut short, directories, space, formatting, the application's own writes) and the stored backups (names, `keep`, `before-restore`, the factory reset). The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
+1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), Ethernet (preferred to the station, the station's wait for it, recovery on a cable, a static address), time and DST, timers (catch-up, no double runs), firmware upload checks, release checks (versions, GitHub's answers and failures, scheduling), backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge (topics, commands with User access, sessions, intervals), Art-Net (scaling, gates, changes only, ArtPollReply's bytes), Bluetooth (the name following the hostname, switching off and on, the client shown), NowTp (waiting for the network, the nodes listed and read-only, pairing, the factory reset forgetting the key), HTTPS refused without the memory for it, Files (names and paths refused, uploads replaced whole and cut short, directories, space, formatting, the application's own writes), the stored backups (names, `keep`, `before-restore`, the factory reset) and the Sequencer (each wait, names, indices and offsets, finally, take-overs, loops, failures, boot). The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
 2. **Golden schemas:** each service's schema with its hints, checked in as `fixtures/*.json`. TesserUI renders them in its golden-model tests, so a hint change shows as a diff in both repositories.
 3. **On target:** `examples/idf/minimal` (and `examples/arduino/Minimal`, with `--app /lamp`), driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, sign-in with tokens over HTTP and WebSocket, a timer running, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. Releases: `test/e2e_github.py` serves a release endpoint and a newer image from the test machine, and watches the device find it, install it and come back up to date; `--check-only` checks the device's own feed (GitHub's API). A real GitHub download (2026-10-11, DEVKIT-V3: v0.1.2's asset through its ~950-character signed CDN redirect, 1.5 MB in 25 s, installed and booted): the mock server's short URLs had hidden that the HTTP client's request buffer was too small for it. Bluetooth: `examples/idf/bluetooth`, driven from a Mac with `bleak` (Nordic UART): an open device is Admin, a locked one public, sign-in with a line token gives Admin, a bad token public, and a reconnection starts public again. `examples/idf/full` (2026-10-11, DEVKIT-V3 beside DEVKIT-R1 running TesserAPI's test firmware): every service up, R1 found over NowTP and mounted under `/peers`, the envelopes on the serial line among the logs, a GitHub release check over HTTPS beside Bluetooth and NowTP, and with an MQTT session too (when it ran out of memory, which the guard of §11 now refuses). Files: `test/e2e_files.py` on `examples/idf/full` (2026-10-12, DEVKIT-V3, 39 checks): directories, a 100 KB upload and download compared byte for byte, a name with a space and accents (`filename*=UTF-8''`), refused names and sizes, replace, rename and delete, and stored backups saved, downloaded, restored and deleted. Two transfers on one path can't overlap over HTTP there: ESP-IDF's server handles one request at a time, so the second waits for the first (TesserAPI's host tests cover `busy`). *(later)* a test firmware with every service and serial scripts.
 4. **CI:** each push to main runs the host tests, then releases the example and publishes the launcher (§13). *(later)* ESP-IDF builds (5.1, 5.4, 5.5, latest × ESP32, ESP32-C3, ESP32-S3), Arduino-ESP32 3.x builds of the examples, the footprint budgets.
@@ -661,6 +695,8 @@ TesserKIT/
 | `Storage::erase()`, `Api::restore()` | factory reset, backups |
 
 Done 2026-10-12, for Files (TesserAPI 0a44fdf): file nodes in list elements transfer (`/sys/files/entries/<name>/content`), and an upload carries the client's file name (`?filename=`, `FileRequest::filename`).
+
+Asked on 2026-10-12, for the Sequencer (§5.13), not done yet: a `*` path segment in set, matching every child of an object or element of a list, the set applied to each match (remote nodes forwarded in parallel, matches without the rest of the path skipped), and a reply saying what happened to each. It narrows TesserAPI's non-goal about wildcards to this one feature.
 
 Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presenting a token on a line, an unauthenticated line or untrusted NowTP peer taking the level of the empty token, `BleTransport` controlled at runtime (`start()`, `stop()`, `setName()`, `peerAddress()`), read-only lists.
 
@@ -716,4 +752,5 @@ Mqtt and ArtNet were built ahead of the roadmap (2026-10-11), ArtNet for tiny-he
 - **`/set` filters by depth, not `#`:** `<prefix>/#` would bring every retained topic the device publishes back to it. Eight filters cost the broker nothing and bound the paths a command reaches, which writable application nodes don't exceed.
 - **Art-Net through the API, on change:** writes go through the same validation, access checks and notifications as a client's, so a console can't set what a browser couldn't, and a still console costs nothing. Meaning (takeover, which mode) stays in the application's node.
 - **Paired NowTP nodes are trusted, not listed MACs:** ESP-NOW frames carry no proof of origin, so a list of trusted MACs is spoofable; NowTP's installation key authenticates every message, and only a node holding it can reach a secured device at all. The key proves membership of the installation, not which node spoke, which is the trust a field of nodes needs.
+- **Sequencer steps are writes, not commands:** spin-seq's sequencer had its own JSON language, a verb per thing it could do (motor commands, broadcasts, writing commands, rebooting). Writes to the tree already reach all of that, validated and access-checked, on this node and on the nodes under `/peers`, so the sequencer drives any device without knowing it. A deferred action's reply stands for "until it has finished".
 - **HTTPS refused below a heap floor:** a handshake that runs the heap out doesn't fail alone, it can abort whatever task allocates next. Refusing it with a message, and trying again at the next check, keeps the device up; the floor comes from a measurement (§11), not a guess.

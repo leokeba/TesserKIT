@@ -101,6 +101,7 @@ int main(int argc, char** argv) {
     tesserkit::ArtNet artnet(dev);
     tesserkit::Bluetooth bluetooth(dev);
     tesserkit::NowTp nowtp(dev);
+    tesserkit::Sequencer sequencer(dev);
     net.defaultNetwork("Workshop", "workshop-pw");
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");
     // A newer release to find and install.
@@ -116,6 +117,18 @@ int main(int argc, char** argv) {
     t.path = "/led/on";
     t.value = "true";
     timers.add(t);
+    // A blink: on and off every half second, until stopped (off then).
+    for (bool lit : {true, false}) {
+        tesserkit::Step s;
+        snprintf(s.name, sizeof(s.name), "%s", lit ? "on" : "off");
+        s.path = "/led/on";
+        s.value = lit ? "true" : "false";
+        s.wait = tesserkit::Wait::Time;
+        s.ms = 500;
+        s.next = lit ? "+1" : "on";
+        sequencer.add(s);
+    }
+    sequencer.finally("/led/on", "false");
     Led led;
     dev.api().mount("led", led).label("LED").ui("icon", "bulb");
     if (!dev.begin()) return 1;

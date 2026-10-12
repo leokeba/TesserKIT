@@ -12,6 +12,7 @@ set(TESSERKIT_CORE_SRCS
     src/tesserkit/crypto.cpp
     src/tesserkit/auth.cpp
     src/tesserkit/timers.cpp
+    src/tesserkit/sequencer.cpp
     src/tesserkit/artnet.cpp
     src/tesserkit/mqtt.cpp
     src/tesserkit/bluetooth.cpp

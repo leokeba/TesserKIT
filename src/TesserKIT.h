@@ -20,6 +20,7 @@
 #include "tesserkit/mqtt.h"
 #include "tesserkit/network.h"
 #include "tesserkit/nowtp.h"
+#include "tesserkit/sequencer.h"
 #include "tesserkit/system.h"
 #include "tesserkit/time_service.h"
 #include "tesserkit/timers.h"

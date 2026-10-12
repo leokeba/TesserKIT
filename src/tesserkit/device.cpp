@@ -29,6 +29,10 @@ const tesser::Node* findNode(const tesser::Object& root, std::string_view path, 
         if (end == start) return nullptr;  // "//"
         switch (node->type()) {
             case tesser::NodeType::Object:
+                if (path.substr(start, end - start) == "*") {  // every child: checked by the API when used
+                    if (opaque) *opaque = true;
+                    return nullptr;
+                }
                 node = static_cast<const tesser::Object*>(node)->child(path.substr(start, end - start));
                 if (!node) return nullptr;
                 break;
