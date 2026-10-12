@@ -737,7 +737,7 @@ Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presentin
 | File nodes in list rows (download and upload buttons), `?filename=` on uploads, a `folder` icon (TesserUI 612d892, 2026-10-12) | §5.12, §5.5 |
 | Toasts from events on any page, and hidden events as toasts only, through an events-only subscription to `/` (TesserUI 0b096d9, TesserAPI 297615d `changes: false`, 2026-10-12) | §8 |
 | The events subscription over plain HTTP, streamed (TesserUI 2bfebb6, 2026-10-12), for the launcher on HTTPS | §8 |
-| File widgets over serial and Bluetooth, with TesserAPI's `upload` and `download` envelopes *(later)* | §5.4, §5.5, §5.12 from the launcher with no network |
+| File widgets over serial and Bluetooth (and a serial port through the bridge), with TesserAPI's `upload` and `download` envelopes; HTTP wherever there is one (TesserUI 4e54d75, 2026-10-13) | §5.4, §5.5, §5.12 from the launcher with no network |
 
 ## 15. Roadmap
 
