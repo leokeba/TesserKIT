@@ -158,6 +158,8 @@ private:
             e.type = Event::Type::StaGotIp;
         } else if (base != WIFI_EVENT) {
             return;
+        } else if (id == WIFI_EVENT_STA_CONNECTED) {
+            e.type = Event::Type::StaAssociated;
         } else if (id == WIFI_EVENT_SCAN_DONE) {
             e.type = Event::Type::ScanDone;
         } else if (id == WIFI_EVENT_STA_DISCONNECTED) {

@@ -73,7 +73,11 @@ public:
     bool apActive() const { return apUp_; }
 
     // Station timing (docs/DESIGN.md section 5.2).
-    static constexpr uint32_t kConnectTimeoutMs = 10000;  // within a deferred scan's wait
+    // An attempt has this long to associate (within a deferred scan's
+    // wait), then this long more for an address: DHCP with lwIP's address
+    // conflict detection (ESP-IDF's default) takes 5 to 10 s.
+    static constexpr uint32_t kConnectTimeoutMs = 10000;
+    static constexpr uint32_t kAddressTimeoutMs = 20000;
     static constexpr uint32_t kScanTimeoutMs = 15000;
     static constexpr uint32_t kApFallbackMs = 15000;  // not joined: the AP comes up
     static constexpr uint32_t kApLingerMs = 30000;    // joined: the AP goes down
@@ -159,7 +163,8 @@ private:
 
     // Station.
     Sta sta_ = Sta::Idle;
-    uint32_t sinceMs_ = 0;
+    uint32_t sinceMs_ = 0;      // the attempt's start, then its association
+    bool associated_ = false;   // the attempt waits for its address
     uint32_t retryAtMs_ = 0;
     uint8_t backoff_ = 0;
     std::vector<std::string> candidates_;

@@ -73,14 +73,14 @@ bool Wifi::connect(const tesserkit::StaConfig& c) {
             post(Event::Type::StaDisconnected, 15);  // 4-way handshake timeout
             return true;
         }
-        linked = true;
         link = tesserkit::StaInfo();
         link.ssid = a.ssid;
         link.ip = c.staticIp ? c.ip : 0xC0A80132;  // 192.168.1.50
         link.rssi = a.rssi;
         link.channel = a.channel;
         for (int i = 0; i < 6; i++) link.bssid[i] = static_cast<uint8_t>(0x10 + i);
-        post(Event::Type::StaGotIp);
+        post(Event::Type::StaAssociated);
+        if (!dhcpSilent) giveAddress();
         return true;
     }
     post(Event::Type::StaDisconnected, 201);  // no AP found

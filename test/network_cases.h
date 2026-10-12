@@ -221,6 +221,54 @@ TEST(network_static_address) {
              "\"enabled=true\"");
 }
 
+TEST(network_slow_dhcp_still_joins) {
+    // A Freebox: associated in 3 s, then DHCP with address conflict
+    // detection binds 7.3 s later, past 10 s from the attempt's start.
+    NetRig r;
+    r.air("Home", "pw");
+    r.net.defaultNetwork("Home", "pw");
+    r.fake.wifi.dhcpSilent = true;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.value("/sys/network/wifi/status/state"), "\"getting an address from \\\"Home\\\"\"");
+    r.run(tesserkit::Network::kConnectTimeoutMs + 2000);
+    CHECK_EQ(r.fake.wifi.connects, 1);  // not abandoned
+    r.fake.wifi.giveAddress();
+    r.settle();
+    CHECK(r.net.connected());
+    CHECK_EQ(r.fake.wifi.connects, 1);
+}
+
+TEST(network_no_address_is_abandoned) {
+    NetRig r;
+    r.air("Home", "pw");
+    r.net.defaultNetwork("Home", "pw");
+    r.fake.wifi.dhcpSilent = true;
+    CHECK(r.dev.begin());
+    rig::Events ev(r, "/sys/network/wifi/failed");
+    r.settle();
+    r.run(tesserkit::Network::kAddressTimeoutMs - 500);
+    CHECK_EQ(r.fake.wifi.connects, 1);
+    r.run(1000);
+    std::vector<std::string> got = ev.take();
+    CHECK_EQ(got.size(), size_t(1));
+    if (!got.empty()) CHECK_EQ(got[0], "\"Couldn't join \\\"Home\\\": no address (DHCP)\"");
+    r.run(2000);
+    CHECK_EQ(r.fake.wifi.connects, 2);  // the next round, after its backoff
+}
+
+TEST(network_scan_doesnt_wait_for_dhcp) {
+    NetRig r;
+    r.air("Home", "pw");
+    r.net.defaultNetwork("Home", "pw");
+    r.fake.wifi.dhcpSilent = true;
+    CHECK(r.dev.begin());
+    r.settle();  // associated, waiting for an address
+    rig::Reply s = r.request(r.admin, rig::Op::Set, "/sys/network/wifi/scan", {}, tesser::Query(), 500);
+    CHECK(s.done);
+    CHECK_EQ(s.status, Status::Ok);
+}
+
 TEST(network_scan) {
     NetRig r;
     r.air("Home", "pw", -55, 3);

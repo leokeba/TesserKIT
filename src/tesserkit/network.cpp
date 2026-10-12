@@ -484,6 +484,7 @@ void Network::connectNext(uint32_t nowMs) {
         if (wifi_->connect(current_)) {
             sta_ = Sta::Connecting;
             sinceMs_ = nowMs;
+            associated_ = false;
             return;
         }
     }
@@ -607,6 +608,12 @@ void Network::event(const Event& e) {
             break;
         case Event::Type::ScanDone:
             if (scanning_) scanDone(wifi_->scanResults(), now);
+            break;
+        case Event::Type::StaAssociated:
+            if (sta_ == Sta::Connecting && !associated_) {
+                associated_ = true;
+                sinceMs_ = now;  // the address's own time starts
+            }
             break;
         case Event::Type::StaGotIp:
             if (sta_ == Sta::Connecting || sta_ == Sta::Connected) connected(now);
@@ -753,16 +760,16 @@ void Network::tick(uint32_t nowMs) {
         tesser::logWarning("tesserkit: Wi-Fi scan timed out");
         scanDone({}, nowMs);
     }
-    if (sta_ == Sta::Connecting && nowMs - sinceMs_ > kConnectTimeoutMs) {
+    if (sta_ == Sta::Connecting && nowMs - sinceMs_ > (associated_ ? kAddressTimeoutMs : kConnectTimeoutMs)) {
         wifi_->disconnect();
-        failed("no answer");
+        failed(associated_ ? "no address (DHCP)" : "no answer");
         connectNext(nowMs);
     } else if (sta_ == Sta::Waiting && static_cast<int32_t>(nowMs - retryAtMs_) >= 0) {
         join(nowMs);
     }
-    // A requested scan waits for a connection attempt to end: the radio
+    // A requested scan waits for an attempt to associate or fail: the radio
     // can't scan while it joins.
-    if (scanWanted_ && sta_ != Sta::Connecting) {
+    if (scanWanted_ && !(sta_ == Sta::Connecting && !associated_)) {
         scanWanted_ = false;
         if (!startScan(false, nowMs)) {
             for (tesser::Pending& p : scanWaiters_) p.fail(Status::Busy, "the radio can't scan now");
@@ -790,7 +797,9 @@ void Network::updateStatus(uint32_t nowMs) {
     } else {
         switch (sta_) {
             case Sta::Connected: s = "connected"; break;
-            case Sta::Connecting: s = "joining \"" + current_.ssid + "\""; break;
+            case Sta::Connecting:
+                s = (associated_ ? "getting an address from \"" : "joining \"") + current_.ssid + "\"";
+                break;
             case Sta::Scanning: s = "looking for networks"; break;
             case Sta::Waiting:
                 s = ethWaits(nowMs)        ? "waiting for Ethernet"

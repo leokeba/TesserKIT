@@ -63,6 +63,7 @@ struct Wifi : tesserkit::Wifi {
     bool scanSilent = false;  // a scan that never ends
     int scans = 0;
     bool connectSilent = false;  // connections that never answer
+    bool dhcpSilent = false;     // associated, but no address comes (giveAddress())
     int connects = 0;
     tesserkit::StaConfig last;
     bool linked = false;
@@ -97,6 +98,11 @@ struct Wifi : tesserkit::Wifi {
     void captivePortal(bool on) override { captive = on; }
     // The router went away.
     void drop();
+    // DHCP answers, late.
+    void giveAddress() {
+        linked = true;
+        post(Event::Type::StaGotIp);
+    }
     void post(Event::Type type, int32_t value = 0) {
         Event e;
         e.type = type;

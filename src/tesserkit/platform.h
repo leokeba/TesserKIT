@@ -30,6 +30,7 @@ namespace tesserkit {
 struct Event {
     enum class Type : uint8_t {
         ScanDone,         // Wifi::scan() finished
+        StaAssociated,    // the station joined a network; its address comes next (StaGotIp)
         StaGotIp,         // the station joined and has an address
         StaDisconnected,  // value: the reason (kReasonLeft when asked to)
         ApClients,        // value: stations joined to the access point
@@ -138,7 +139,8 @@ public:
     // Asynchronous: Event::ScanDone, then scanResults().
     virtual bool scan() = 0;
     virtual std::vector<ScanResult> scanResults() = 0;
-    // Asynchronous: Event::StaGotIp or Event::StaDisconnected.
+    // Asynchronous: Event::StaAssociated then Event::StaGotIp, or
+    // Event::StaDisconnected.
     virtual bool connect(const StaConfig& config) = 0;
     virtual void disconnect() = 0;
     // False while not connected.
