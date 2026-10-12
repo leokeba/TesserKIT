@@ -283,12 +283,12 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
     update      action, Admin, ui.confirm: install the latest release (status = available)
 ```
 
-- **Upload:** a `PUT /api/sys/firmware/image` with the raw `.bin` as body, streamed to the next OTA slot through a TesserAPI file node (§14). TesserUI's file widget shows progress. The image header is checked on the first chunk (wrong chip or not an app image is `invalid_value` before anything is written). A completed upload sets the boot slot and restarts after the reply. The announced size is erased in 64 KB blocks just ahead of the bytes written: a 1 MB image uploads in 12 to 15 s on a classic ESP32 (25 s erasing sector by sector as it arrives). Erasing the whole image at once is as fast but keeps the idle task from running for over 5 s, which trips the task watchdog (a panic on Arduino).
+- **Upload:** a `PUT /api/sys/firmware/image` with the raw `.bin` as body, streamed to the next OTA slot through a TesserAPI file node (§14). TesserUI's file widget shows progress. Over serial, Bluetooth, WebSocket and NowTP the same node takes the image in base64 chunks of `upload` envelopes (TesserAPI §10.1.1), the client sending one at a time: about 2 minutes for 1 MB over a serial line at 115200 baud (8 KB/s), and the chunk that completes the image gets the reply before the restart. The image header is checked on the first chunk (wrong chip or not an app image is `invalid_value` before anything is written). A completed upload sets the boot slot and restarts after the reply. The announced size is erased in 64 KB blocks just ahead of the bytes written: a 1 MB image uploads in 12 to 15 s on a classic ESP32 (25 s erasing sector by sector as it arrives). Erasing the whole image at once is as fast but keeps the idle task from running for over 5 s, which trips the task watchdog (a panic on Arduino).
 - **Download** (`fw.downloads()`, before `begin()`): `esp_http_client` in a task of its own (8 KB of stack), following redirects (release assets redirect to a CDN), streaming through the same checks as an upload, with progress in `progress`. HTTPS uses ESP-IDF's certificate bundle (`CONFIG_MBEDTLS_CERTIFICATE_BUNDLE`). TLS and the client cost about 130 KB of flash, hence the opt-in: without `downloads()`, neither the action nor the client is linked. The action replies at once; completion shows in `state`.
 - **Rollback:** with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, a new image starts as `pending`. It is confirmed automatically once the device has been `online` (or serving, without Wi-Fi) for 60 s, or by `confirm`. A crash or reset before that boots the previous image. `rollback` makes the previous image boot next; it then starts `pending` too. ESP-IDF refuses an update while the running image is unconfirmed, so starting one confirms it: it is evidently working. Arduino-ESP32 confirms every new image at boot unless the application defines `verifyRollbackLater()`; TesserKIT defines it (returning true) whenever Firmware is linked, so the same rule applies there.
 - **GitHub releases** (`fw.github(repo, asset)`, before `begin()`; implies `downloads()`): the device asks `https://api.github.com/repos/<repo>/releases/latest` itself, so the browser needs no internet, unlike ESP32-sveltekit. The check runs in a task of its own (8 KB of stack) and reads the answer through an ArduinoJson filter as it arrives, keeping only the tag and the assets' names and URLs: WLED's answer is 72 KB. The asset named after the pattern is the image, with `{target}` replaced by the chip (`esp32`, `esp32c3`...) and `{version}` by the tag without its `v`. The status is `available` when the tag is later than `version` in semver order (a leading `v` ignored). A git describe version (`v1.2.0-3-g1a2b3c4`, `-dirty`) counts as later than its tag, so a development build isn't offered the release it started from; a version that isn't semver is offered any other release. `update` installs the asset as `download` would. A URL instead of `owner/repo` names another latest-release endpoint answering as GitHub's does (Gitea, Forgejo, `test/e2e_github.py`'s server). About 10 KB of flash above `downloads()`, linked only when `github()` is called.
 - **Checks:** `check`, and with `autoCheck` (on by default) once the device has been online for a minute, then daily, or an hour after a failure; never during an update. GitHub allows 60 unauthenticated requests an hour per address, far above a fleet's daily checks behind one router. Failures say why: `no release found` (404: no release yet, or a private repository), GitHub's rate limit (403, 429), a release without this chip's image (`v1.2.0 has no name-esp32c3.bin`, `latest` still shown), an unreadable or cut answer. On a classic ESP32, checking WLED's release takes 5 s and briefly takes about 50 KB of heap, mostly TLS. Releases come from CI (§13).
-- **Fleets:** a gateway reaches its Wi-Fi peers' `/sys/firmware/download` like any other path (`/peers/<name>/sys/firmware/download`), so "update all" is one write per peer, without the browser fanning out (spin-seq's Remotes page). NowTP-only peers need NowTP streaming *(later, §14)*.
+- **Fleets:** a gateway reaches its Wi-Fi peers' `/sys/firmware/download` like any other path (`/peers/<name>/sys/firmware/download`), so "update all" is one write per peer, without the browser fanning out (spin-seq's Remotes page). A NowTP-only peer takes an image over NowTP itself (TesserAPI §10.1.1), from a client that speaks NowTP; through a gateway, `/peers/<name>/sys/firmware/image` needs the gateway to forward file transfers to remote nodes *(later, §14)*.
 
 ### 5.5 Backup
 
@@ -555,7 +555,7 @@ The UI is TesserUI's generic renderer, self-hosted by the device (TesserUI §9.4
 - **Theming and text:** `dev.web().theme(...)`, `.text(...)`, `.title(...)` (TesserUI §9.4).
 - **The launcher** (TesserUI §9.7): the same bundle on GitHub Pages, `https://leokeba.github.io/TesserKIT/`, published by CI with the TesserUI the example firmware is built with (§13). It reaches a device without the device serving a page:
   - **USB:** Web Serial to a `LineTransport` on the console. The examples add one (`tesser::UartTransport` on UART0 with ESP-IDF, `tesser::StreamTransport` on `Serial` with Arduino); a serial client is Admin (§5.7), so a device is set up over a cable with no network at all. The launcher skips log lines, but one written in the middle of a reply breaks it: the ESP-IDF example logs warnings only.
-  - **Network:** an address or `<hostname>.local`, from an HTTPS page, so the device must allow the launcher's origin: `dev.cors("https://leokeba.github.io")`, as the examples do. Chrome asks the user for local network access, and polls the device over HTTP (no WebSocket from HTTPS).
+  - **Network:** an address or `<hostname>.local`, from an HTTPS page, so the device must allow the launcher's origin: `dev.cors("https://leokeba.github.io")`, as the examples do. Chrome asks the user for local network access. There is no WebSocket from HTTPS, so the launcher polls values over HTTP and follows events (toasts, §8) through TesserAPI's streamed subscription (`GET …?sub`, two streams per device by default, each holding one of the server's sockets).
   - **Nearby:** TesserUI's bridge, on the user's machine, lists the devices announcing `_tesser._tcp` (§5.2) and serves them live.
   - **Bluetooth:** the Bluetooth service (§5.10): `examples/idf/bluetooth`, `examples/arduino/Bluetooth` (ESP32-C3 and ESP32-S3) and `examples/idf/full`. The device's name is its hostname.
 
@@ -566,7 +566,7 @@ TesserUI renders everything TesserKIT's services declare: files (§5.4, §5.5), 
 TesserKIT devices are TesserAPI nodes, so the multi-node features are TesserAPI's and TesserUI's:
 
 - **UI host:** a TesserKIT device with the NowTp service (§5.11) mounts the nodes nearby under `/peers` and advertises itself. The UI shows a page per node, forwarded over ESP-NOW (TesserUI §9.5).
-- **NowTP-only nodes** run TesserAPI and NowTP without TesserKIT's Wi-Fi services, or with a subset: `System` and `Firmware` work over any transport, except uploads (HTTP only).
+- **NowTP-only nodes** run TesserAPI and NowTP without TesserKIT's Wi-Fi services, or with a subset: `System` and `Firmware` work over any transport, uploads and the core dump's download included (in chunks, TesserAPI §10.1.1).
 - **Fleet operations** are writes through the gateway to each peer, or to all of them with a `*` (`/peers/*/sequencer/play`, TesserAPI's fan-out, §14): update every peer's firmware (§5.4), set a value on all of them, trigger a sequence (§5.13). A view (TesserUI §8) with `each("/peers", ...)` shows a fleet dashboard.
 - **Synchronized actions** (spin-seq's "start together") need a shared clock: NowTP's clock offset (§14) lets a gateway say "start at T" to every peer, instead of re-broadcasting with retries.
 
@@ -689,7 +689,7 @@ TesserKIT/
 
 ## 14. Follow-ups wanted in other layers
 
-**TesserAPI** (phase 7 of its roadmap; each with its section in TesserAPI's DESIGN.md). Done as of 2026-10-11.
+**TesserAPI** (phase 7 of its roadmap; each with its section in TesserAPI's DESIGN.md). Done as of 2026-10-11, or on the date given, except what is marked *(later)*.
 
 | Item | For |
 |---|---|
@@ -699,6 +699,9 @@ TesserKIT/
 | Keyed lists: `.key("name")` | networks, users, timers, helionext's sources |
 | Scalar arrays | calibration tables, spin-seq's 128 encoder offsets |
 | File nodes: streamed upload and download over HTTP | firmware upload, backups, core dumps |
+| File nodes over the message transports (serial, Bluetooth, WebSocket, NowTP), in base64 chunks (TesserAPI f3289b8, 2026-10-13) | the same, from the launcher over USB or Bluetooth, and NowTP-only nodes (§9) |
+| Streamed subscriptions over plain HTTP (TesserAPI 20d403e, 2026-10-12) | toasts (§8) on the launcher over HTTPS |
+| Forwarding file transfers to remote nodes *(later)* | firmware updates of NowTP-only peers through a gateway (§5.4) |
 | Streamed replies on WebSocket and serial | large schemas without paging |
 | `view=hash` | TesserUI's schema cache for directly reached nodes |
 | Automatic re-advertisement when the tree changes | gateways with mounted peers |
@@ -717,9 +720,9 @@ Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presentin
 | Channel following | Network changing networks (§5.2) |
 | Authenticated pairing, persistent peers | trusting peers without trusting MACs (§7) |
 | A shared clock (offset estimated from pings) | synchronized starts (§9) |
-| Streaming of large messages | firmware updates of NowTP-only nodes (§5.4) |
+| Streaming of large messages | no longer needed for files: TesserAPI moves them in chunks that fit a message (§5.4) |
 
-**TesserUI** (done as of 2026-10-10, except the custom elements):
+**TesserUI** (done as of 2026-10-10, or on the date given, except the custom elements and what is marked *(later)*):
 
 | Item | For |
 |---|---|
@@ -733,6 +736,8 @@ Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presentin
 | `x-keyframes`, `x-sky` custom elements (examples, not in the bundle) | §10.1 |
 | File nodes in list rows (download and upload buttons), `?filename=` on uploads, a `folder` icon (TesserUI 612d892, 2026-10-12) | §5.12, §5.5 |
 | Toasts from events on any page, and hidden events as toasts only, through an events-only subscription to `/` (TesserUI 0b096d9, TesserAPI 297615d `changes: false`, 2026-10-12) | §8 |
+| The events subscription over plain HTTP, streamed (TesserUI 2bfebb6, 2026-10-12), for the launcher on HTTPS | §8 |
+| File widgets over serial and Bluetooth, with TesserAPI's `upload` and `download` envelopes *(later)* | §5.4, §5.5, §5.12 from the launcher with no network |
 
 ## 15. Roadmap
 
