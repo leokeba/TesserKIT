@@ -272,6 +272,50 @@ TEST(sequencer_writes_are_checked) {
     CHECK_EQ(at(s.body, "maxSize"), "32");
 }
 
+// A step on every child (TesserAPI's `*`), as a master on its peers: a
+// reply waits for each one's.
+TEST(sequencer_steps_fan_out) {
+    struct Node {
+        bool on = false;
+        int presses = 0;
+        tesser::Pending move;
+    };
+    SeqRig r;
+    Node nodes[2];
+    auto& all = r.dev.api().object("nodes");
+    const char* names[] = {"a", "b"};
+    for (int i = 0; i < 2; i++) {
+        Node& n = nodes[i];
+        auto& o = all.object(names[i]);
+        o.value("on", n.on);
+        o.action("press", [&n] { n.presses++; });
+        o.action("move", [&n](tesser::Call& call) { n.move = call.defer(); });
+    }
+    all.object("c").value("on", r.on);  // no move nor press: skipped by those
+    r.seq.add(r.mk("go", "/nodes/*/move", "null", Wait::Reply, 0, "+1"))
+        .add(r.mk("press", "/nodes/*/press", "null", Wait::None, 0, "+1"))
+        .add(r.mk("bad", "/nodes/*/on", "\"yes\"", Wait::None, 0, "+1"))
+        .add(r.mk("none", "/nodes/*/nope", "null", Wait::None, 0, ""));
+    CHECK(r.dev.begin());
+    rig::Events ev(r, "/sequencer/failed");
+    CHECK_EQ(r.play("go"), Status::Ok);
+    r.run(200);
+    CHECK(nodes[0].move && nodes[1].move);
+    nodes[0].move.reply();
+    r.run(200);
+    CHECK_EQ(nodes[0].presses, 0);  // b is still moving
+    nodes[1].move.reply();
+    r.run(40);
+    CHECK_EQ(nodes[0].presses, 1);
+    CHECK_EQ(nodes[1].presses, 1);
+    std::vector<std::string> got = ev.take();
+    CHECK_EQ(got.size(), size_t(2));
+    if (got.size() == 2) {
+        CHECK_EQ(got[0], "\"bad: invalid_value: 3 of 3 failed: a: expected boolean\"");
+        CHECK_EQ(got[1], "\"none: not_found: no match\"");
+    }
+}
+
 TEST(sequencer_several_by_name) {
     SeqRig r;
     tesserkit::Sequencer lights(r.dev, "lights");

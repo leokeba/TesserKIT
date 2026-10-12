@@ -2,7 +2,7 @@
 
 A device framework for ESP32 firmware with a rich web interface and a small footprint. It provides what every connected device needs besides its own function, network setup, time, firmware updates, backups, files, users, MQTT, Art-Net, Bluetooth, ESP-NOW and system status, as subtrees of a [TesserAPI](https://github.com/leokeba/TesserAPI) tree, drawn by [TesserUI](https://github.com/leokeba/TesserUI)'s generic renderer with no UI code.
 
-> **Status: phase 2, with parts of 4.** Device, System, Network, Time, Firmware, Backup, Timers, Auth, Mqtt, ArtNet, Bluetooth, NowTp, Files and Sequencer work, on the host (165 tests) and on hardware (classic ESP32, ESP-IDF and Arduino, `test/e2e_device.py`). Porting helionext is under way in its own repository. The specification is [docs/DESIGN.md](docs/DESIGN.md).
+> **Status: phase 2, with parts of 4.** Device, System, Network, Time, Firmware, Backup, Timers, Auth, Mqtt, ArtNet, Bluetooth, NowTp, Files and Sequencer work, on the host (166 tests) and on hardware (classic ESP32, ESP-IDF and Arduino, `test/e2e_device.py`). Porting helionext is under way in its own repository. The specification is [docs/DESIGN.md](docs/DESIGN.md).
 
 ```cpp
 #include <TesserKIT.h>

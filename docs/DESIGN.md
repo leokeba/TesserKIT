@@ -491,7 +491,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - **Failures** (a step's error reply, a timeout, an unknown next, a finally that failed) are logged, kept in `status/error` and sent as the `failed` event. A step's error doesn't stop the sequence: on a fleet, one node that doesn't answer shouldn't stop the others.
 - **Checks on write:** `path` must resolve (with Timers' exceptions), `value` and `finally/value` must parse, `name`, `next` and `boot` must have the syntax of a name, an index or (`next` only) an offset. A step's own result isn't stored: it would be a write to the persisted list at every step.
 - **Several:** `Sequencer(dev, "lights")` mounts at `/lights`, so an application has one per subject.
-- **Several nodes:** a step on the master writes to the nodes under `/peers`: `/peers/spinner-2/sequencer/play` `"intro"`, or `/peers/*/sequencer/play` for all of them through TesserAPI's fan-out (§14). The writes leave one after the other, a few milliseconds apart per node; a start at the same instant on every node (NowTP's network time, §9) is *(later)*.
+- **Several nodes:** a step on the master writes to the nodes under `/peers`: `/peers/spinner-2/sequencer/play` `"intro"`, or `/peers/*/sequencer/play` for all of them through TesserAPI's fan-out (§14). With `wait: reply`, the step waits for every node's reply; an offline or silent node is a failure (`timeout: 1 of 3 failed: spinner-2: ...`), and the others go on. Each node answering later takes one of the API's pending slots (`maxPending`, 4 by default): a master raises it to at least its number of nodes (`dev.api().config().maxPending = 8`, as `examples/idf/full` does). The writes leave one after the other, a few milliseconds apart per node; a start at the same instant on every node (NowTP's network time, §9) is *(later)*.
 - **Factory defaults:** `sequencer.add(step)`, `.boot("intro")`, `.finally("/motor/stop", "null")`. From code, under the API lock: `play(step)`, `execute(step)`, `stop()`, `running()`, `current()`, `find(ref)`.
 - This replaces spin-seq's JSON sequencer (§10.2), which had a command language for its motor and its broadcasts.
 
@@ -696,7 +696,7 @@ TesserKIT/
 
 Done 2026-10-12, for Files (TesserAPI 0a44fdf): file nodes in list elements transfer (`/sys/files/entries/<name>/content`), and an upload carries the client's file name (`?filename=`, `FileRequest::filename`).
 
-Asked on 2026-10-12, for the Sequencer (§5.13), not done yet: a `*` path segment in set, matching every child of an object or element of a list, the set applied to each match (remote nodes forwarded in parallel, matches without the rest of the path skipped), and a reply saying what happened to each. It narrows TesserAPI's non-goal about wildcards to this one feature.
+Done 2026-10-12, for the Sequencer (§5.13), in TesserAPI 9c07af2 (its §6.5): a `*` path segment in set, matching every child of an object or element of a list or array, the set applied to each match (remote nodes forwarded in parallel, offline ones failing at once, matches without the rest of the path skipped), and a reply with each match's result, or `"<n> of <total> failed: <name>: <message>"` and each failure.
 
 Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presenting a token on a line, an unauthenticated line or untrusted NowTP peer taking the level of the empty token, `BleTransport` controlled at runtime (`start()`, `stop()`, `setName()`, `peerAddress()`), read-only lists.
 

@@ -124,6 +124,8 @@ extern "C" void app_main() {
         sequencer.add(s);
     }
     sequencer.finally("/led/on", "false");
+    // Writes to every node nearby (/peers/*/...) each wait in a pending slot.
+    dev.api().config().maxPending = 8;
     mqtt.tls().publish("/led", 0).publish("/sys/status", 10000);
 #if defined(MQTT_URI)
     mqtt.broker(MQTT_URI).enable(true);
