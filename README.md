@@ -54,7 +54,7 @@ Without the Auth service, or until it holds an admin account, the device is open
 
 ## Footprint
 
-On a classic ESP32 with ESP-IDF and `-Os`, the five services add 113 KB of flash above TesserAPI and TesserUI, 78 KB without mDNS (`CONFIG_TESSERKIT_MDNS=n`, or `-DTESSERKIT_NO_MDNS`). Firmware downloads from URLs add TLS and an HTTP client, about 130 KB, only with `firmware.downloads()`; GitHub releases 10 KB more, only with `firmware.github()`. ArtNet adds 9 KB; Mqtt about 110 KB (esp-mqtt with its transports), more than Arduino's default 1.25 MB app slot holds next to every other service on ESP32. Bluetooth adds about 200 KB on ESP-IDF; every service and transport together (`examples/idf/full`) is 1.47 MB. Details in [DESIGN §11](docs/DESIGN.md#11-footprint).
+On a classic ESP32 with ESP-IDF and `-Os`, the five services add 113 KB of flash above TesserAPI and TesserUI, 78 KB without mDNS (`CONFIG_TESSERKIT_MDNS=n`, or `-DTESSERKIT_NO_MDNS`). Firmware downloads from URLs add TLS and an HTTP client, about 130 KB, only with `firmware.downloads()`; GitHub releases 10 KB more, only with `firmware.github()`. ArtNet adds 9 KB; Mqtt about 110 KB (esp-mqtt with its transports), more than Arduino's default 1.25 MB app slot holds next to every other service on ESP32. Bluetooth adds about 200 KB on ESP-IDF; every service and transport together (`examples/idf/full`) is 1.58 MB. Details in [DESIGN §11](docs/DESIGN.md#11-footprint).
 
 ## Building
 
