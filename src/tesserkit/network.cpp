@@ -64,6 +64,30 @@ std::string formatMac(const uint8_t* m) {
     return b;
 }
 
+bool linkLocal(uint32_t ip) { return ip >> 16 == 0xA9FE; }  // 169.254/16
+
+// Why a join failed, from ESP-IDF's disconnection reasons (which the fake
+// platform uses too).
+std::string joinFailure(int32_t reason) {
+    switch (reason) {
+        case 201:  // NO_AP_FOUND
+        case 210:  // NO_AP_FOUND_W_COMPATIBLE_SECURITY
+        case 211:  // NO_AP_FOUND_IN_AUTHMODE_THRESHOLD
+        case 212:  // NO_AP_FOUND_IN_RSSI_THRESHOLD
+            return "not found";
+        case 2:    // AUTH_EXPIRE
+        case 14:   // MIC_FAILURE
+        case 15:   // 4WAY_HANDSHAKE_TIMEOUT
+        case 202:  // AUTH_FAIL
+        case 204:  // HANDSHAKE_TIMEOUT
+            return "wrong password?";
+        case 205:  // CONNECTION_FAIL
+            return "refused the connection";
+        default:
+            return "failed (reason " + std::to_string(reason) + ")";
+    }
+}
+
 bool validHostname(const std::string& h) {
     if (h.empty() || h.size() > 32 || h.front() == '-' || h.back() == '-') return false;
     for (char c : h) {
@@ -146,6 +170,11 @@ Network& Network::apMode(ApMode mode) {
     return *this;
 }
 
+Network& Network::stationMode(StationMode mode) {
+    staMode_ = mode;
+    return *this;
+}
+
 Network& Network::apPassword(const char* password) {
     apPassword_ = password ? password : "";
     return *this;
@@ -189,8 +218,10 @@ void Network::describe(tesser::Object& o) {
     if (ethWanted_ && !eth_) tesser::logWarning("tesserkit: no Ethernet on this chip");
     if (eth_) {
         auto& e = o.object("ethernet").label("Ethernet").ui("card");
+        ethEnabledNode_ = &e.value("enabled", ethEnabled_).persist().label("Use Ethernet");
         auto& es = e.object("status").label("Connection");
         ethStatus_ = &es;
+        es.value("state", static_cast<const std::string&>(ethState_));
         es.value("link", static_cast<const bool&>(ethLink_)).label("Cable");
         es.value("connected", static_cast<const bool&>(ethOnline_));
         es.value("ip", static_cast<const std::string&>(ethIp_)).label("Address");
@@ -203,6 +234,7 @@ void Network::describe(tesser::Object& o) {
     auto& w = o.object("wifi").label("Wi-Fi").ui("card");
     auto& st = w.object("status").label("Connection");
     staStatus_ = &st;
+    st.value("state", static_cast<const std::string&>(staState_));
     st.value("connected", static_cast<const bool&>(linkUp_));
     st.value("ssid", static_cast<const std::string&>(linkSsid_)).label("Network");
     st.value("ip", static_cast<const std::string&>(linkIp_)).label("Address");
@@ -218,6 +250,18 @@ void Network::describe(tesser::Object& o) {
     st.value("bssid", static_cast<const std::string&>(linkBssid_)).label("BSSID").ui("advanced");
     // For clients on the access point, which must follow the new address.
     joined_ = &w.event("joined").label("Joined").ui("toast", "ok").ui("hidden");
+    failed_ = &w.event("failed").label("Couldn't join").ui("toast", "warn").ui("hidden");
+    // Fallback only with Ethernet: the station then keeps away while
+    // Ethernet has a DHCP lease.
+    if (eth_) {
+        staModeNode_ = &w.value("mode", staMode_, {"always", "never", "fallback"})
+                            .persist()
+                            .label("Station")
+                            .ui("labels", "Always,Never,As a fallback to Ethernet");
+    } else {
+        if (staMode_ == StationMode::Fallback) staMode_ = StationMode::Always;
+        staModeNode_ = &w.value("mode", staMode_, {"always", "never"}).persist().label("Station").ui("labels", "On,Off");
+    }
 
     networksNode_ = &w.list("networks", networks_)
                          .key("ssid")
@@ -284,18 +328,23 @@ void Network::start() {
                 memcpy(ethMacBytes_, i.mac, sizeof(ethMacBytes_));
                 ethMac_ = formatMac(i.mac);
             }
-            ethStatus_->changed();
+            ethStaticOn_ = ethConfig().staticIp;
+            if (!ethEnabled_) eth_->enabled(false);
             ethWaitUntilMs_ = now + kEthWaitMs;
         } else {
             tesser::logError("tesserkit: Ethernet didn't start");
             eth_ = nullptr;
+            ethState_ = "didn't start";
         }
+        ethStatus_->changed();
     }
     networksGen_ = networksNode_->generation();
     hostnameGen_ = hostnameNode_->generation();
     if (mdnsNode_) mdnsGen_ = mdnsNode_->generation();
     apGen_ = apFingerprint();
     ethGen_ = ethFingerprint();
+    staModeGen_ = staModeNode_->generation();
+    if (ethEnabledNode_) ethEnabledGen_ = ethEnabledNode_->generation();
     applyMdns();
     lostAtMs_ = now;
     join(now);
@@ -333,12 +382,34 @@ StaConfig Network::config(const WifiNetwork& n) const {
     return c;
 }
 
+bool Network::stationKeptAway() const {
+    return staMode_ == StationMode::Never || (staMode_ == StationMode::Fallback && ethOnline_ && ethLease_);
+}
+
+// The station gives Ethernet time for a lease, at start and after a link.
+bool Network::ethWaits(uint32_t nowMs) const {
+    return staMode_ == StationMode::Fallback && eth_ && ethEnabled_ && !ethStaticOn_ &&
+           static_cast<int32_t>(ethWaitUntilMs_ - nowMs) > 0;
+}
+
+// Joins, or leaves, as the mode and Ethernet now say.
+void Network::applyStation(uint32_t nowMs) {
+    if (stationKeptAway()) {
+        if (sta_ == Sta::Connected || sta_ == Sta::Connecting) wifi_->disconnect();
+        if (sta_ == Sta::Connected) lost(nowMs);
+        sta_ = Sta::Idle;
+    } else if (sta_ == Sta::Idle) {
+        backoff_ = 0;
+        join(nowMs);
+    }
+}
+
 void Network::join(uint32_t nowMs) {
-    if (networks_.empty() || ethOnline_) {  // Ethernet first
+    if (networks_.empty() || stationKeptAway()) {
         sta_ = Sta::Idle;
         return;
     }
-    if (eth_ && static_cast<int32_t>(ethWaitUntilMs_ - nowMs) > 0) {
+    if (ethWaits(nowMs)) {
         sta_ = Sta::Waiting;
         retryAtMs_ = ethWaitUntilMs_;
         return;
@@ -416,7 +487,17 @@ void Network::connectNext(uint32_t nowMs) {
             return;
         }
     }
+    // The round failed: told once for each new reason.
+    if (!failure_.empty() && failure_ != failureShown_) {
+        failureShown_ = failure_;
+        failed_->emit("Couldn't join " + failure_);
+    }
     wait(nowMs);
+}
+
+void Network::failed(const std::string& why) {
+    failure_ = "\"" + current_.ssid + "\": " + why;
+    tesser::logWarning("tesserkit: couldn't join %s", failure_.c_str());
 }
 
 void Network::wait(uint32_t nowMs) {
@@ -429,6 +510,8 @@ void Network::connected(uint32_t nowMs) {
     sta_ = Sta::Connected;
     backoff_ = 0;
     connectedAtMs_ = nowMs;
+    failure_.clear();
+    failureShown_.clear();
     StaInfo info;
     linkUp_ = true;
     if (wifi_->staInfo(info)) {
@@ -471,25 +554,26 @@ void Network::ethLink(bool up, uint32_t nowMs) {
     ethDown(nowMs);
 }
 
+// Ethernet has an address (or a new one): from an event, a settings change,
+// or found by polling (link-local).
 void Network::ethGotIp(uint32_t nowMs) {
     EthInfo i;
     if (!eth_->info(i) || !i.ip) return;
+    // Only a lease shows a network beyond the cable, which the station
+    // can leave to Ethernet: not a static address, nor a link-local one.
+    bool lease = !ethStaticOn_ && !linkLocal(i.ip);
     bool was = ethOnline_;
-    if (was && i.ip == ethAddr_) return;
+    if (was && i.ip == ethAddr_ && lease == ethLease_) return;
     ethOnline_ = ethLink_ = true;
+    ethLease_ = lease;
     ethAddr_ = i.ip;
     ethIp_ = formatIpv4(i.ip);
     ethMbps_ = i.mbps;
     ethStatus_->changed();
     tesser::logWarning("tesserkit: Ethernet up as %s", ethIp_.c_str());
-    ethJoined_->emit(ethIp_ + " on Ethernet");
-    if (was) return;
-    connectedAtMs_ = nowMs;  // clients on the access point follow the new address
-    // Ethernet first: one address on the network, and the station's radio
-    // time goes to ESP-NOW and the access point.
-    if (sta_ == Sta::Connected || sta_ == Sta::Connecting) wifi_->disconnect();
-    if (sta_ == Sta::Connected) lost(nowMs);
-    sta_ = Sta::Idle;
+    ethJoined_->emit(ethIp_ + " on Ethernet" + (linkLocal(i.ip) ? " (link-local)" : ""));
+    if (!was) connectedAtMs_ = nowMs;  // clients on the access point follow the new address
+    applyStation(nowMs);
 }
 
 // Ethernet lost its address; the station waits `waitMs` more for a new one.
@@ -499,6 +583,7 @@ void Network::ethDown(uint32_t nowMs, uint32_t waitMs) {
     bool waited = sta_ == Sta::Waiting && static_cast<int32_t>(ethWaitUntilMs_ - nowMs) > 0;
     ethWaitUntilMs_ = nowMs + waitMs;
     ethOnline_ = false;
+    ethLease_ = false;
     ethIp_.clear();
     ethAddr_ = 0;
     ethMbps_ = 0;
@@ -529,8 +614,7 @@ void Network::event(const Event& e) {
         case Event::Type::StaDisconnected:
             if (e.value == Event::kReasonLeft) break;
             if (sta_ == Sta::Connecting) {
-                tesser::logWarning("tesserkit: couldn't join \"%s\" (reason %d)", current_.ssid.c_str(),
-                                   static_cast<int>(e.value));
+                failed(joinFailure(e.value));
                 connectNext(now);
             } else if (sta_ == Sta::Connected) {
                 tesser::logWarning("tesserkit: lost \"%s\" (reason %d)", linkSsid_.c_str(), static_cast<int>(e.value));
@@ -551,6 +635,7 @@ void Network::checkSettings(uint32_t nowMs) {
     if (networksNode_->generation() != networksGen_) {
         networksGen_ = networksNode_->generation();
         backoff_ = 0;
+        failureShown_.clear();  // a failure with the new settings is news
         if (sta_ == Sta::Connected) {
             // Reconnect only if the joined network changed or went away.
             const WifiNetwork* n = find(current_.ssid);
@@ -576,18 +661,18 @@ void Network::checkSettings(uint32_t nowMs) {
         mdnsGen_ = mdnsNode_->generation();
         applyMdns();
     }
+    if (staModeNode_->generation() != staModeGen_) {
+        staModeGen_ = staModeNode_->generation();
+        applyStation(nowMs);
+    }
+    if (eth_ && ethEnabledNode_->generation() != ethEnabledGen_) {
+        ethEnabledGen_ = ethEnabledNode_->generation();
+        eth_->enabled(ethEnabled_);
+        if (!ethEnabled_) ethLink(false, nowMs);  // the link goes with the MAC
+    }
     if (eth_ && ethFingerprint() != ethGen_) {
         ethGen_ = ethFingerprint();
-        eth_->address(ethConfig());
-        // The old address goes with the old settings: a static one is there
-        // at once, a lease when DHCP answers (EthGotIp), which the station
-        // waits for as after a link.
-        EthInfo i;
-        if (ethLink_ && eth_->info(i) && i.ip) {
-            ethGotIp(nowMs);
-        } else {
-            ethDown(nowMs, ethLink_ ? kEthWaitMs : 0);
-        }
+        ethReaddress(nowMs);
     }
     uint32_t fp = apFingerprint();
     if (fp != apGen_) {
@@ -596,6 +681,21 @@ void Network::checkSettings(uint32_t nowMs) {
             wifi_->stopAp();
             apUp_ = false;
         }
+    }
+}
+
+void Network::ethReaddress(uint32_t nowMs) {
+    IpConfig c = ethConfig();
+    ethStaticOn_ = c.staticIp;
+    eth_->address(c);
+    // The old address goes with the old settings: a static one is there at
+    // once, a lease when DHCP answers (EthGotIp), which the station waits for
+    // as after a link.
+    EthInfo i;
+    if (ethLink_ && eth_->info(i) && i.ip) {
+        ethGotIp(nowMs);
+    } else {
+        ethDown(nowMs, ethLink_ ? kEthWaitMs : 0);
     }
 }
 
@@ -655,6 +755,7 @@ void Network::tick(uint32_t nowMs) {
     }
     if (sta_ == Sta::Connecting && nowMs - sinceMs_ > kConnectTimeoutMs) {
         wifi_->disconnect();
+        failed("no answer");
         connectNext(nowMs);
     } else if (sta_ == Sta::Waiting && static_cast<int32_t>(nowMs - retryAtMs_) >= 0) {
         join(nowMs);
@@ -668,9 +769,52 @@ void Network::tick(uint32_t nowMs) {
             scanWaiters_.clear();
         }
     }
+    // An address without an event: link-local, while DHCP keeps asking.
+    if (eth_ && ethLink_ && !ethOnline_ && nowMs - ethPollAtMs_ >= kEthPollMs) {
+        ethPollAtMs_ = nowMs;
+        ethGotIp(nowMs);
+    }
     updateAp(nowMs);
     reportState();
     updateAddress();
+    updateStatus(nowMs);
+}
+
+// Each interface's state, in words: what it does, or why it doesn't.
+void Network::updateStatus(uint32_t nowMs) {
+    std::string s;
+    if (staMode_ == StationMode::Never) {
+        s = "off";
+    } else if (networks_.empty()) {
+        s = "no network saved";
+    } else {
+        switch (sta_) {
+            case Sta::Connected: s = "connected"; break;
+            case Sta::Connecting: s = "joining \"" + current_.ssid + "\""; break;
+            case Sta::Scanning: s = "looking for networks"; break;
+            case Sta::Waiting:
+                s = ethWaits(nowMs)        ? "waiting for Ethernet"
+                    : failure_.empty() ? "waiting to retry"
+                                       : failure_ + "; retrying";
+                break;
+            case Sta::Idle: s = stationKeptAway() ? "not needed: Ethernet has a DHCP address" : "idle"; break;
+        }
+    }
+    if (s != staState_) {
+        staState_ = s;
+        staStatus_->changed();
+    }
+    if (!eth_) return;
+    s = !ethEnabled_   ? "off"
+        : !ethLink_    ? "no cable"
+        : !ethOnline_  ? (ethStaticOn_ ? "applying the static address" : "waiting for DHCP")
+        : ethStaticOn_ ? "connected, static address"
+        : !ethLease_   ? "connected, link-local address (no DHCP server)"
+                       : "connected";
+    if (s != ethState_) {
+        ethState_ = s;
+        ethStatus_->changed();
+    }
 }
 
 void Network::reportState() {

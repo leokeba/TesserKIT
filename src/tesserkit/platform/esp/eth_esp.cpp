@@ -105,7 +105,8 @@ public:
         esp::applyIp(netif_, ip);
         err = esp_eth_start(handle_);
         if (err != ESP_OK) tesser::logError("tesserkit: esp_eth_start: %s", esp_err_to_name(err));
-        return err == ESP_OK;
+        running_ = err == ESP_OK;
+        return running_;
     }
 
     void hostname(const char* name) override {
@@ -115,6 +116,17 @@ public:
 
     void address(const IpConfig& ip) override {
         if (netif_) esp::applyIp(netif_, ip);
+    }
+
+    void enabled(bool on) override {
+        if (!handle_ || on == running_) return;
+        esp_err_t err = on ? esp_eth_start(handle_) : esp_eth_stop(handle_);
+        if (err != ESP_OK) {
+            tesser::logError("tesserkit: Ethernet %s: %s", on ? "start" : "stop", esp_err_to_name(err));
+            return;
+        }
+        running_ = on;
+        if (!on) link_ = false;  // stopping posts no disconnection
     }
 
     bool info(EthInfo& out) override {
@@ -156,6 +168,7 @@ private:
     esp_netif_t* netif_ = nullptr;
     std::string hostname_;
     volatile bool link_ = false;
+    bool running_ = false;
 };
 
 }  // namespace

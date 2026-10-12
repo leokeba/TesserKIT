@@ -186,9 +186,12 @@ public:
     // EthGotIp. False if the hardware didn't answer.
     virtual bool begin(const EthernetBoard& board, const char* hostname, const IpConfig& ip, EventSink sink) = 0;
     virtual void hostname(const char* name) = 0;
-    // DHCP or a static address, from now on: Event::EthGotIp follows if the
-    // link is up.
+    // DHCP or a static address, from now on. With DHCP, an address may
+    // also appear without an event: a link-local one (169.254/16), where the
+    // stack has AutoIP, while DHCP keeps asking.
     virtual void address(const IpConfig& ip) = 0;
+    // Stops the MAC and the PHY (no link), or starts them again.
+    virtual void enabled(bool on) = 0;
     // False before begin().
     virtual bool info(EthInfo& out) = 0;
 };

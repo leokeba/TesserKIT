@@ -180,16 +180,20 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 /sys/network
   hostname *(p)        string ≤ 32, Admin
   ethernet/            with a board (below)
-    status/            link, connected, ip, speed (Mbps), mac
+    enabled *(p)       boolean (default true), Admin: off stops the MAC and the PHY
+    status/            state (in words), link, connected, ip, speed (Mbps), mac
     static/ *(p)       { enabled, ip, mask, gateway, dns } ui.form, ui.collapsed, Admin
     joined             event, ok toast: "192.168.1.60 on Ethernet"
   wifi/
+    mode *(p)          enum, Admin: the station always, never, or as a fallback to Ethernet (with a board,
+                         the default); without a board always (default) or never
     networks *(p)      keyed list (key "ssid"), ≤ 5, Admin, readAccess User:
                          ssid ≤ 32, password (secret) ≤ 64,
                          static/ { enabled, ip, mask, gateway, dns } ui.collapsed
     scan               deferred action, Admin → [{ssid, rssi, channel, secure}]
-    status/            connected, ssid, ip, rssi (watched, dBm), channel, bssid
+    status/            state (in words), connected, ssid, ip, rssi (watched, dBm), channel, bssid
     joined             event, ok toast: "192.168.1.50 on Workshop", the address clients on the AP must follow
+    failed             event, warn toast: "Couldn't join "Workshop": wrong password?", once per new reason
   ap/
     mode *(p)          enum: always, fallback, never (default fallback), Admin
     ssid *(p)          string ≤ 32 (default: the hostname), Admin
@@ -204,13 +208,17 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - At start and after a disconnect, it scans and joins the strongest saved network in range, then the next ones; when none is in range, it tries every saved network in order (hidden networks don't show in scans). An attempt that gets no answer is abandoned after 10 s. A round that fails is retried with backoff (1, 2, 5, 10, 30 s); a scan finds networks that came back.
 - A write to `networks` reconnects if the current network changed or was removed.
 - `static.enabled` replaces DHCP for that network.
+- **Says why:** `status/state` tells what the station does or why it doesn't: "off", "no network saved", "waiting for Ethernet", "not needed: Ethernet has a DHCP address", "looking for networks", "joining "Home"", "connected", or the last failure, `"Home": not found; retrying` (from ESP-IDF's reasons: not found, wrong password?, refused the connection, no answer). A round of attempts that fails for a reason not told yet emits `failed`; joining, or a write to `networks`, makes the next failure news again. Passwords can't be read back, so this is how a wrong one shows.
 - `scan` is deferred (TesserAPI §4.2): the reply comes when the scan completes, within TesserAPI's `deferTimeoutMs`. The radio can't scan while it joins, so a scan requested during an attempt waits for it to end (at most 10 s), and one requested during the join's own scan shares it.
 - `net.txPower(dBm)` caps the transmit power, for boards whose supply browns out at the default 20 dBm.
 
 **Ethernet:** `net.ethernet(board)` declares the board's wiring: the PHY, its address on the MDIO bus, the MDC and MDIO pins, the pin powering the PHY or its oscillator (driven high before the MAC starts, whose reset needs the clock), and the RMII clock (in on GPIO 0, or out on 0, 16 or 17). Presets in `tesserkit::boards`, from WLED's table: `gledopto()` (Gledopto's controllers with Ethernet: LAN8720 at 1, MDC 23, MDIO 33, power 5, clock in), `wt32Eth01()`, `olimexEsp32Poe()`, `esp32EthernetKit()`. Without the call, the driver isn't linked; with it, Ethernet adds about 40 KB (§11). The ESP32's internal MAC only, so the classic ESP32 (and the ESP32-P4, untried); elsewhere the subtree is absent and Network runs as without it.
-- **Ethernet first:** while Ethernet has an address, the station keeps away (it disconnects if it was joined): one address on the network, and the radio's time for the access point and ESP-NOW. Without a cable, or when the link goes, the station joins as usual, at once. At start, and when the link comes up, the station waits 5 s for Ethernet's address before joining (time for the link and DHCP); a link without an address after that lets the station join, and leave again when the address comes.
+- **The station's mode** (`wifi/mode`): `fallback`, the default with a board, keeps the station away while Ethernet has a DHCP lease (it disconnects if it was joined): one address on the network, and the radio's time for the access point and ESP-NOW. Only a lease counts: a static or link-local address can be a cable to a single computer, which says nothing of the network beyond, so the station joins beside it. Without a cable, or when the link or the lease goes, the station joins as usual, at once. At start, and when the link comes up, it waits 5 s for a lease (time for the link and DHCP; not with a static address); a link without a lease after that lets it join, and leave again when the lease comes. `always`: the station joins whatever Ethernet does (a show network on the cable, and a phone over Wi-Fi). `never`: no station; the access point and ESP-NOW still have the radio.
+- **`enabled`** off stops the MAC and the PHY: no link, and the station doesn't wait for one.
+- **Link-local:** with no DHCP server on the cable (a cable straight to a computer), lwIP's AutoIP takes an address in 169.254/16 after two unanswered DHCP requests, while DHCP keeps asking; a lease that comes later replaces it (a router that boots after the device). The computer takes one in the same range, and finds the device at `<hostname>.local`. Network finds the address by polling (AutoIP posts no event) once a second while the link has none. It needs `CONFIG_LWIP_AUTOIP=y` in the application's sdkconfig (`examples/idf/full` sets it); Arduino-ESP32's prebuilt lwIP has no AutoIP, so there a cable without DHCP needs a static address.
+- **`status/state`** in words: "off", "no cable", "waiting for DHCP", "applying the static address", "connected", "connected, static address", "connected, link-local address (no DHCP server)", "didn't start".
 - **The access point** treats Ethernet's address as the station's: `fallback` brings it up 15 s after the device went offline, and down 30 s after Ethernet's address came. **Recovery** waits those 15 s too on a board with Ethernet, so a device on a cable with no saved Wi-Fi network doesn't open an access point at each boot.
-- `static` replaces DHCP, applied at once: the old address goes with the old settings. A static address is there at once; back on DHCP, Ethernet has no address until a lease comes, which the station waits 5 s for as after a link. `joined` is announced on each new address.
+- `static` replaces DHCP, applied at once: the old address goes with the old settings. A static address is there at once; back on DHCP, Ethernet has no address until a lease (or a link-local address) comes, which the station waits 5 s for as after a link. `joined` is announced on each new address, "(link-local)" after a link-local one.
 - **PHY drivers:** ESP-IDF 5.x has drivers for LAN87xx, IP101, RTL8201, DP83848 and KSZ80xx; 6.0 moved them to the esp-eth-drivers components and keeps the generic IEEE 802.3 driver (from 5.4), which TesserKIT uses for every PHY there.
 - **State and address:** the device is `online` over either interface, and `provisioning` only with no saved network and no link. `dev.address()` is Ethernet's address, else the station's, else the access point's, and `dev.addressMac()` the MAC of that interface (the station's on Wi-Fi): Art-Net's poll replies give both.
 
@@ -222,6 +230,8 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 **mDNS:** `<hostname>.local`, with `_http._tcp` and TXT records `api=/api`, `ws=/ws`, `version=<version>`, `tesser=1`, and `_tesser._tcp` with `api` and `ws`, what TesserAPI's `HttpServer::advertise()` announces and TesserUI's bridge lists for the launcher (§8), on ESP-IDF's `mdns` component (about 34 KB of flash). On by default, since it is how a provisioned device is found; `-DTESSERKIT_NO_MDNS` leaves it out, with the `mdns` setting.
 
 **Channels and NowTP:** a station follows its router's channel, and ESP-NOW must share it (TesserAPI §14). NowTP follows by itself: a node whose station or access point fixes its channel is an anchor, and the nodes nearby follow it when it moves (§5.11). Network reports channel changes to `dev.onChannel(fn)` as well. Without a router, the AP's `channel` is the field's ESP-NOW channel. Network reports its state (provisioning, connecting) from its start, so services that wait for the network see it at once.
+
+**Two interfaces at once** (`always`, or a static or link-local address on the cable): `dev.address()` gives Ethernet's address, mDNS answers on each interface with its own, the default route is Ethernet's (esp_netif's priorities), and two addresses in one subnet confuse routing: give the cable its own subnet, or leave the station to `fallback`.
 
 **Not in the first release:** Ethernet modules on SPI (W5500, *(later)*, same tree), WPA2-Enterprise, IPv6 configuration.
 

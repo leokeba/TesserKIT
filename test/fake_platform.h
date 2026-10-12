@@ -114,7 +114,9 @@ struct Ethernet : tesserkit::Ethernet {
     std::string hostnameSet;
     tesserkit::IpConfig ip;
     int addressCalls = 0;
-    bool dhcp = true;  // a DHCP server on the cable
+    bool dhcp = true;     // a DHCP server on the cable
+    bool autoip = false;  // the stack takes a link-local address without DHCP (no event)
+    bool on = true;       // enabled()
     tesserkit::EthInfo state;
 
     bool begin(const tesserkit::EthernetBoard& b, const char* hostname, const tesserkit::IpConfig& c,
@@ -130,6 +132,7 @@ struct Ethernet : tesserkit::Ethernet {
     }
     void hostname(const char* name) override { hostnameSet = name; }
     void address(const tesserkit::IpConfig& c) override;
+    void enabled(bool o) override;
     bool info(tesserkit::EthInfo& out) override {
         out = state;
         return static_cast<bool>(sink);

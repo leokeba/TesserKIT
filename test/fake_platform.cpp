@@ -106,9 +106,19 @@ static void lease(Ethernet& e) {
     } else if (e.dhcp) {
         e.state.ip = 0xC0A8013C;  // 192.168.1.60
     } else {
+        if (e.autoip) e.state.ip = 0xA9FE0A0B;  // 169.254.10.11, without an event
         return;
     }
     e.post(Event::Type::EthGotIp);
+}
+
+void Ethernet::enabled(bool o) {
+    on = o;
+    if (!o && state.link) {
+        state.link = false;
+        state.ip = 0;
+        state.mbps = 0;
+    }
 }
 
 void Ethernet::address(const tesserkit::IpConfig& c) {
@@ -119,6 +129,7 @@ void Ethernet::address(const tesserkit::IpConfig& c) {
 }
 
 void Ethernet::plug() {
+    if (!on) return;
     state.link = true;
     state.mbps = 100;
     state.fullDuplex = true;

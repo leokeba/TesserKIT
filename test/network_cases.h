@@ -387,8 +387,10 @@ TEST(network_ethernet_board_and_tree) {
     CHECK_EQ(r.fake.ethernet.board.power, 5);
     CHECK_EQ(r.fake.ethernet.hostnameSet, "test-device-a67c");
     CHECK(!r.fake.ethernet.ip.staticIp);
+    r.step();
     CHECK_EQ(r.value("/sys/network/ethernet/status"),
-             "{\"link\":false,\"connected\":false,\"ip\":\"\",\"speed\":0,\"mac\":\"e0:e1:e2:e3:e4:e5\"}");
+             "{\"state\":\"no cable\",\"link\":false,\"connected\":false,\"ip\":\"\",\"speed\":0,"
+             "\"mac\":\"e0:e1:e2:e3:e4:e5\"}");
     CHECK_EQ(at(r.schema("/sys/network/ethernet/joined").body, "ui/toast"), "\"ok\"");
     // Before Wi-Fi, which it is preferred to.
     std::string net = r.schema("/sys/network").body;
@@ -581,25 +583,23 @@ TEST(network_ethernet_static_turned_off_releases_the_address) {
              Status::Ok);
     r.run(10000);
     CHECK(r.net.ethernetConnected());
-    CHECK(!r.net.connected());  // Ethernet first
+    CHECK(r.net.connected());  // a static address isn't a network beyond the cable
+    CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"connected, static address\"");
+    CHECK_EQ(r.dev.address(), 0xC0A80332u);
 
-    // DHCP again, which nothing answers: the address goes at once, and the
-    // station joins once it has waited for a lease.
+    // DHCP again, which nothing answers: the address goes at once.
     CHECK_EQ(r.set("/sys/network/ethernet/static/enabled", "false").status, Status::Ok);
     r.settle();
     CHECK(!r.net.ethernetConnected());
     CHECK_EQ(r.value("/sys/network/ethernet/status/ip"), "\"\"");
-    CHECK(!r.net.connected());
-    r.run(tesserkit::Network::kEthWaitMs);
-    r.settle();
+    CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"waiting for DHCP\"");
     CHECK(r.net.connected());
     CHECK_EQ(r.dev.address(), 0xC0A80132u);
 
-    // Static again: back on the cable at once, the station leaves.
+    // Static again: back on the cable at once.
     CHECK_EQ(r.set("/sys/network/ethernet/static/enabled", "true").status, Status::Ok);
     r.settle();
     CHECK(r.net.ethernetConnected());
-    CHECK(!r.net.connected());
     CHECK_EQ(r.dev.address(), 0xC0A80332u);
 }
 
@@ -611,6 +611,184 @@ TEST(network_ethernet_that_doesnt_start) {
     CHECK(r.dev.begin());
     r.settle();
     CHECK(r.net.connected());  // no wait for a cable that can't come
+}
+
+TEST(network_station_modes_with_ethernet) {
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    rig::Reply m = r.schema("/sys/network/wifi/mode");
+    CHECK_EQ(at(m.body, "ui/labels"), "\"Always,Never,As a fallback to Ethernet\"");
+    CHECK_EQ(r.value("/sys/network/wifi/mode"), "\"fallback\"");
+    r.fake.ethernet.plug();
+    r.run(6000);
+    CHECK(r.net.ethernetConnected());
+    CHECK(!r.net.connected());
+    CHECK_EQ(r.value("/sys/network/wifi/status/state"), "\"not needed: Ethernet has a DHCP address\"");
+
+    // Both: the station joins beside the lease.
+    CHECK_EQ(r.set("/sys/network/wifi/mode", "\"always\"").status, Status::Ok);
+    r.settle();
+    CHECK(r.net.connected());
+    CHECK(r.net.ethernetConnected());
+    CHECK_EQ(r.dev.address(), 0xC0A8013Cu);  // Ethernet's
+    r.fake.ethernet.unplug();
+    r.fake.ethernet.plug();
+    r.settle();
+    CHECK(r.net.connected());  // a new lease doesn't push it away either
+
+    // Off: the station leaves, and stays away without Ethernet.
+    CHECK_EQ(r.set("/sys/network/wifi/mode", "\"never\"").status, Status::Ok);
+    r.settle();
+    CHECK(!r.net.connected());
+    CHECK(!r.fake.wifi.linked);
+    CHECK_EQ(r.value("/sys/network/wifi/status/state"), "\"off\"");
+    r.fake.ethernet.unplug();
+    r.run(60000);
+    CHECK(!r.net.connected());
+    CHECK_EQ(r.dev.state(), State::Connecting);
+
+    // Back to the fallback: joined at once, Ethernet being down.
+    CHECK_EQ(r.set("/sys/network/wifi/mode", "\"fallback\"").status, Status::Ok);
+    r.settle();
+    CHECK(r.net.connected());
+}
+
+TEST(network_station_mode_without_ethernet) {
+    NetRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.value("/sys/network/wifi/mode"), "\"always\"");
+    CHECK_EQ(at(r.schema("/sys/network/wifi/mode").body, "ui/labels"), "\"On,Off\"");
+    CHECK_EQ(r.set("/sys/network/wifi/mode", "\"fallback\"").status, Status::InvalidValue);
+    r.settle();
+    CHECK(r.net.connected());
+    CHECK_EQ(r.set("/sys/network/wifi/mode", "\"never\"").status, Status::Ok);
+    r.settle();
+    CHECK(!r.net.connected());
+    r.run(tesserkit::Network::kApFallbackMs + 100);
+    CHECK(r.fake.wifi.apUp);  // its own network, offline
+}
+
+TEST(network_ethernet_switched_off) {
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    r.run(6000);
+    CHECK(r.net.ethernetConnected());
+    CHECK(!r.net.connected());
+    CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"connected\"");
+
+    CHECK_EQ(r.set("/sys/network/ethernet/enabled", "false").status, Status::Ok);
+    r.settle();
+    CHECK(!r.fake.ethernet.on);
+    CHECK(!r.net.ethernetConnected());
+    CHECK(r.net.connected());  // at once: no cable to wait for
+    CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"off\"");
+    CHECK_EQ(r.value("/sys/network/ethernet/status/link"), "false");
+    CHECK_EQ(r.request(r.anon, rig::Op::Set, "/sys/network/ethernet/enabled", "true").status, Status::Unauthorized);
+
+    // Off from the start after a restart, and the station doesn't wait for it.
+    r.run(2500);
+    EthRig again;
+    again.air("Home", "password1");
+    again.storage.records = r.storage.records;
+    CHECK(again.dev.begin());
+    CHECK(!again.fake.ethernet.on);
+    again.settle();
+    CHECK(again.net.connected());
+
+    // On again: the lease takes over.
+    CHECK_EQ(again.set("/sys/network/ethernet/enabled", "true").status, Status::Ok);
+    again.settle();
+    again.fake.ethernet.plug();
+    again.settle();
+    CHECK(again.net.ethernetConnected());
+    CHECK(!again.net.connected());
+}
+
+TEST(network_ethernet_link_local_without_dhcp) {
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    r.fake.ethernet.dhcp = false;
+    r.fake.ethernet.autoip = true;
+    CHECK(r.dev.begin());
+    rig::Events ev(r, "/sys/network/ethernet/joined");
+    r.fake.ethernet.plug();  // the address comes without an event
+    r.run(tesserkit::Network::kEthPollMs + 100);
+    CHECK(r.net.ethernetConnected());
+    CHECK_EQ(r.value("/sys/network/ethernet/status/ip"), "\"169.254.10.11\"");
+    CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"connected, link-local address (no DHCP server)\"");
+    std::vector<std::string> got = ev.take();
+    CHECK_EQ(got.size(), size_t(1));
+    if (!got.empty()) CHECK_EQ(got[0], "\"169.254.10.11 on Ethernet (link-local)\"");
+    CHECK_EQ(r.dev.state(), State::Online);
+    // A link-local address isn't a network beyond the cable: the station joins.
+    r.run(tesserkit::Network::kEthWaitMs);
+    r.settle();
+    CHECK(r.net.connected());
+
+    // A DHCP server comes up late: its lease replaces the address, and the
+    // station leaves it to Ethernet.
+    r.fake.ethernet.dhcp = true;
+    r.fake.ethernet.address(r.fake.ethernet.ip);
+    r.settle();
+    CHECK_EQ(r.value("/sys/network/ethernet/status/ip"), "\"192.168.1.60\"");
+    CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"connected\"");
+    CHECK(!r.net.connected());
+}
+
+TEST(network_station_says_why) {
+    NetRig r;
+    CHECK(r.dev.begin());
+    r.step();
+    CHECK_EQ(r.value("/sys/network/wifi/status/state"), "\"no network saved\"");
+    rig::Events ev(r, "/sys/network/wifi/failed");
+    CHECK_EQ(at(r.schema("/sys/network/wifi/failed").body, "ui/toast"), "\"warn\"");
+
+    r.air("Home", "right-password");
+    CHECK_EQ(r.set("/sys/network/wifi/networks", "[{\"ssid\":\"Home\",\"password\":\"wrong-password\"}]").status,
+             Status::Ok);
+    r.settle();
+    CHECK_EQ(r.value("/sys/network/wifi/status/state"), "\"\\\"Home\\\": wrong password?; retrying\"");
+    r.run(10000);  // more rounds, the same failure: told once
+    std::vector<std::string> got = ev.take();
+    CHECK_EQ(got.size(), size_t(1));
+    if (!got.empty()) CHECK_EQ(got[0], "\"Couldn't join \\\"Home\\\": wrong password?\"");
+
+    // Another failure is news.
+    r.fake.wifi.air.clear();
+    r.run(35000);
+    CHECK_EQ(r.value("/sys/network/wifi/status/state"), "\"\\\"Home\\\": not found; retrying\"");
+    got = ev.take();
+    CHECK_EQ(got.size(), size_t(1));
+    if (!got.empty()) CHECK_EQ(got[0], "\"Couldn't join \\\"Home\\\": not found\"");
+
+    // Fixed: joined, and a later failure is told again.
+    r.air("Home", "right-password");
+    CHECK_EQ(r.set("/sys/network/wifi/networks/Home/password", "\"right-password\"").status, Status::Ok);
+    r.settle();
+    CHECK(r.net.connected());
+    CHECK_EQ(r.value("/sys/network/wifi/status/state"), "\"connected\"");
+}
+
+TEST(network_station_waits_for_ethernet_in_words) {
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    r.step();
+    CHECK_EQ(r.value("/sys/network/wifi/status/state"), "\"waiting for Ethernet\"");
+    CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"no cable\"");
+    r.fake.ethernet.dhcp = false;
+    r.fake.ethernet.plug();
+    r.settle();
+    CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"waiting for DHCP\"");
 }
 
 }  // namespace network_cases

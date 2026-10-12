@@ -21,6 +21,9 @@ struct WifiNetwork {
 void describe(tesser::Object& o, WifiNetwork& n);
 
 enum class ApMode : uint8_t { Always, Fallback, Never };
+// When the station joins a network: always, never, or while Ethernet has no
+// DHCP lease (Fallback, the default with a board; Always without).
+enum class StationMode : uint8_t { Always, Never, Fallback };
 
 // Ethernet wiring of known boards, for Network::ethernet() (as WLED lists
 // them).
@@ -51,12 +54,13 @@ public:
     // doesn't set them.
     Network& defaultNetwork(const char* ssid, const char* password);
     Network& apMode(ApMode mode);
+    Network& stationMode(StationMode mode);
     Network& apPassword(const char* password);
     Network& apChannel(uint8_t channel);
     // Caps the radio's transmit power (weak supplies brown out at 20 dBm).
     Network& txPower(int8_t dBm);
     // The board's Ethernet (boards::gledopto(), ...): /sys/network/ethernet.
-    // Preferred while it has an address, Wi-Fi's station is the fallback.
+    // The station keeps away while it has a DHCP lease (StationMode::Fallback).
     Network& ethernet(const EthernetBoard& board);
 
     void describe(tesser::Object& o) override;
@@ -76,6 +80,9 @@ public:
     // The station waits this long for Ethernet at start and after its link
     // comes up (time for DHCP), before joining a network.
     static constexpr uint32_t kEthWaitMs = 5000;
+    // How often an address that came without an event is looked for
+    // (link-local, from AutoIP).
+    static constexpr uint32_t kEthPollMs = 1000;
 
 protected:
     void start() override;
@@ -98,6 +105,12 @@ private:
     void ethLink(bool up, uint32_t nowMs);
     void ethGotIp(uint32_t nowMs);
     void ethDown(uint32_t nowMs, uint32_t waitMs = 0);
+    void ethReaddress(uint32_t nowMs);
+    bool stationKeptAway() const;
+    bool ethWaits(uint32_t nowMs) const;
+    void applyStation(uint32_t nowMs);
+    void failed(const std::string& why);
+    void updateStatus(uint32_t nowMs);
     void updateAddress();
     void applyMdns();
     StaConfig config(const WifiNetwork& n) const;
@@ -120,7 +133,9 @@ private:
     bool apHidden_ = false;
     bool mdns_ = true;
     int8_t txPower_ = 0;
+    StationMode staMode_ = StationMode::Fallback;  // Always without Ethernet
     bool ethWanted_ = false;
+    bool ethEnabled_ = true;
     EthernetBoard ethBoard_;
     StaticIp ethStatic_;
 
@@ -132,11 +147,15 @@ private:
     tesser::Node* staStatus_ = nullptr;
     tesser::Node* apStatus_ = nullptr;
     tesser::EventNode* joined_ = nullptr;
+    tesser::EventNode* failed_ = nullptr;
+    tesser::Node* staModeNode_ = nullptr;
+    tesser::Node* ethEnabledNode_ = nullptr;
     std::vector<tesser::Node*> ethIpNodes_;
     tesser::Node* ethStatus_ = nullptr;
     tesser::EventNode* ethJoined_ = nullptr;
     uint16_t networksGen_ = 0, hostnameGen_ = 0, mdnsGen_ = 0;
     uint32_t apGen_ = 0, ethGen_ = 0;
+    uint16_t staModeGen_ = 0, ethEnabledGen_ = 0;
 
     // Station.
     Sta sta_ = Sta::Idle;
@@ -153,6 +172,9 @@ private:
     std::vector<tesser::Pending> scanWaiters_;
     uint32_t connectedAtMs_ = 0;
     uint32_t lostAtMs_ = 0;
+    std::string failure_;      // why the last attempt failed: "\"Home\": not found"
+    std::string failureShown_; // the last one toasted
+    std::string staState_;     // wifi/status/state
 
     // Station status.
     bool linkUp_ = false;
@@ -162,6 +184,10 @@ private:
     // Ethernet.
     bool ethLink_ = false;
     bool ethOnline_ = false;  // with an address
+    bool ethLease_ = false;   // from DHCP (not static, not link-local)
+    bool ethStaticOn_ = false;  // a static address is applied
+    uint32_t ethPollAtMs_ = 0;
+    std::string ethState_;      // ethernet/status/state
     uint32_t ethWaitUntilMs_ = 0;  // the station waits for Ethernet until then
     std::string ethIp_, ethMac_;
     uint16_t ethMbps_ = 0;
