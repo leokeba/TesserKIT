@@ -143,6 +143,9 @@ public:
     // The IPv4 address the device is reached at, a.b.c.d as (a << 24) | ...:
     // Ethernet's, the station's, else the access point's; 0 if none (Network).
     uint32_t address() const { return address_; }
+    // The MAC of the interface address() is on (the station's on Wi-Fi):
+    // six bytes, the station's until Network sets it.
+    const uint8_t* addressMac() const;
 
     // Used by services.
     // Queues a platform event for the device's task. Thread-safe.
@@ -153,7 +156,7 @@ public:
     void updating(bool on);
     void timeSynced();
     void channel(uint8_t ch);
-    void address(uint32_t ip) { address_ = ip; }
+    void address(uint32_t ip, const uint8_t* mac);
     // The state value (/sys/status/state), marked changed with the state.
     State& stateVar() { return state_; }
     void stateNode(tesser::Node* node) { stateNode_ = node; }
@@ -183,6 +186,8 @@ private:
     bool timeSynced_ = false;
     uint8_t channel_ = 0;
     uint32_t address_ = 0;
+    uint8_t addressMac_[6] = {};
+    bool addressMacSet_ = false;
     uint8_t extraHandlers_ = 4;
     uint16_t httpPort_ = 80;
     const char* cors_ = nullptr;

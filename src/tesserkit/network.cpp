@@ -280,7 +280,10 @@ void Network::start() {
     if (eth_) {
         if (eth_->begin(ethBoard_, dev.hostname().c_str(), ethConfig(), [&dev](Event e) { dev.post(std::move(e)); })) {
             EthInfo i;
-            if (eth_->info(i)) ethMac_ = formatMac(i.mac);
+            if (eth_->info(i)) {
+                memcpy(ethMacBytes_, i.mac, sizeof(ethMacBytes_));
+                ethMac_ = formatMac(i.mac);
+            }
             ethStatus_->changed();
             ethWaitUntilMs_ = now + kEthWaitMs;
         } else {
@@ -464,6 +467,7 @@ void Network::ethLink(bool up, uint32_t nowMs) {
         ethWaitUntilMs_ = nowMs + kEthWaitMs;  // the station waits for DHCP
         return;
     }
+    if (ethOnline_) tesser::logWarning("tesserkit: Ethernet down");
     ethDown(nowMs);
 }
 
@@ -488,20 +492,18 @@ void Network::ethGotIp(uint32_t nowMs) {
     sta_ = Sta::Idle;
 }
 
-void Network::ethDown(uint32_t nowMs) {
+// Ethernet lost its address; the station waits `waitMs` more for a new one.
+void Network::ethDown(uint32_t nowMs, uint32_t waitMs) {
     bool was = ethOnline_;
     // The station waits for this cable: it needn't any more.
     bool waited = sta_ == Sta::Waiting && static_cast<int32_t>(ethWaitUntilMs_ - nowMs) > 0;
-    ethWaitUntilMs_ = nowMs;
+    ethWaitUntilMs_ = nowMs + waitMs;
     ethOnline_ = false;
     ethIp_.clear();
     ethAddr_ = 0;
     ethMbps_ = 0;
     ethStatus_->changed();
-    if (was) {
-        tesser::logWarning("tesserkit: Ethernet down");
-        lostAtMs_ = nowMs;
-    }
+    if (was) lostAtMs_ = nowMs;
     if (was ? sta_ == Sta::Idle || sta_ == Sta::Waiting : waited) {
         backoff_ = 0;
         join(nowMs);
@@ -576,7 +578,16 @@ void Network::checkSettings(uint32_t nowMs) {
     }
     if (eth_ && ethFingerprint() != ethGen_) {
         ethGen_ = ethFingerprint();
-        eth_->address(ethConfig());  // EthGotIp follows with the new address
+        eth_->address(ethConfig());
+        // The old address goes with the old settings: a static one is there
+        // at once, a lease when DHCP answers (EthGotIp), which the station
+        // waits for as after a link.
+        EthInfo i;
+        if (ethLink_ && eth_->info(i) && i.ip) {
+            ethGotIp(nowMs);
+        } else {
+            ethDown(nowMs, ethLink_ ? kEthWaitMs : 0);
+        }
     }
     uint32_t fp = apFingerprint();
     if (fp != apGen_) {
@@ -668,6 +679,12 @@ void Network::reportState() {
                                                        : State::Connecting);
 }
 
-void Network::updateAddress() { dev_.address(ethOnline_ ? ethAddr_ : connected() ? staAddr_ : apAddr_); }
+void Network::updateAddress() {
+    if (ethOnline_) {
+        dev_.address(ethAddr_, ethMacBytes_);
+    } else {
+        dev_.address(connected() ? staAddr_ : apAddr_, dev_.info().mac);
+    }
+}
 
 }  // namespace tesserkit

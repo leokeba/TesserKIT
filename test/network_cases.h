@@ -425,6 +425,7 @@ TEST(network_ethernet_is_preferred) {
     CHECK_EQ(r.fake.wifi.connects, 0);  // the station waited for the cable, then kept away
     CHECK_EQ(r.dev.state(), State::Online);
     CHECK_EQ(r.dev.address(), 0xC0A8013Cu);
+    CHECK(memcmp(r.dev.addressMac(), r.fake.ethernet.state.mac, 6) == 0);
     CHECK(!r.fake.wifi.apUp);
     std::string st = r.value("/sys/network/ethernet/status");
     CHECK_EQ(at(st, "link"), "true");
@@ -442,6 +443,7 @@ TEST(network_ethernet_is_preferred) {
     CHECK(r.net.connected());
     CHECK_EQ(r.dev.state(), State::Online);
     CHECK_EQ(r.dev.address(), 0xC0A80132u);
+    CHECK(memcmp(r.dev.addressMac(), r.dev.info().mac, 6) == 0);
     CHECK_EQ(r.value("/sys/network/ethernet/status/ip"), "\"\"");
 
     // Plugged again: the station leaves.
@@ -563,6 +565,42 @@ TEST(network_ethernet_static_address) {
     CHECK(again.fake.ethernet.ip.staticIp);
     CHECK_EQ(again.fake.ethernet.ip.ip, 0x0A000007u);
     CHECK_EQ(again.fake.ethernet.addressCalls, 0);  // given to begin()
+}
+
+TEST(network_ethernet_static_turned_off_releases_the_address) {
+    // A cable straight to a computer: no DHCP, a static address.
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    r.fake.ethernet.dhcp = false;
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    CHECK_EQ(r.set("/sys/network/ethernet/static",
+                   "{\"enabled\":true,\"ip\":\"192.168.3.50\",\"gateway\":\"192.168.3.1\"}")
+                 .status,
+             Status::Ok);
+    r.run(10000);
+    CHECK(r.net.ethernetConnected());
+    CHECK(!r.net.connected());  // Ethernet first
+
+    // DHCP again, which nothing answers: the address goes at once, and the
+    // station joins once it has waited for a lease.
+    CHECK_EQ(r.set("/sys/network/ethernet/static/enabled", "false").status, Status::Ok);
+    r.settle();
+    CHECK(!r.net.ethernetConnected());
+    CHECK_EQ(r.value("/sys/network/ethernet/status/ip"), "\"\"");
+    CHECK(!r.net.connected());
+    r.run(tesserkit::Network::kEthWaitMs);
+    r.settle();
+    CHECK(r.net.connected());
+    CHECK_EQ(r.dev.address(), 0xC0A80132u);
+
+    // Static again: back on the cable at once, the station leaves.
+    CHECK_EQ(r.set("/sys/network/ethernet/static/enabled", "true").status, Status::Ok);
+    r.settle();
+    CHECK(r.net.ethernetConnected());
+    CHECK(!r.net.connected());
+    CHECK_EQ(r.dev.address(), 0xC0A80332u);
 }
 
 TEST(network_ethernet_that_doesnt_start) {

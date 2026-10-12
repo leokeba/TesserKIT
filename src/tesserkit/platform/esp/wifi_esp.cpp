@@ -194,6 +194,12 @@ void netifInit() {
 
 void applyIp(esp_netif_t* netif, const IpConfig& c) {
     if (!c.staticIp) {
+        esp_netif_dhcp_status_t dhcp;
+        if (esp_netif_dhcpc_get_status(netif, &dhcp) == ESP_OK && dhcp != ESP_NETIF_DHCP_STARTED) {
+            // A static address stays until DHCP replaces it, if it ever does.
+            esp_netif_ip_info_t none = {};
+            esp_netif_set_ip_info(netif, &none);
+        }
         esp_netif_dhcpc_start(netif);  // already started is fine
         return;
     }

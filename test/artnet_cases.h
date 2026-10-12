@@ -144,7 +144,8 @@ TEST(artnet_answers_polls) {
     r.dev.version("2.5.1");
     r.artnet.universe(0x1234 & 0x7FFF);
     CHECK(r.dev.begin());
-    r.dev.address(0xC0A80142);  // 192.168.1.66, as Network sets it
+    const uint8_t ethMac[6] = {0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5};
+    r.dev.address(0xC0A80142, ethMac);  // 192.168.1.66 on Ethernet, as Network sets it
     r.send(poll());
     CHECK_EQ(r.fake.udp.sent.size(), size_t(1));
     const fake::Datagram& d = r.fake.udp.sent[0];
@@ -161,6 +162,7 @@ TEST(artnet_answers_polls) {
     CHECK_EQ(std::string(reinterpret_cast<const char*>(b + 26)), "Test Device");
     CHECK_EQ(std::string(reinterpret_cast<const char*>(b + 44)), r.dev.hostname());
     CHECK(b[173] == 1 && b[174] == 0x80);
+    CHECK(memcmp(b + 201, ethMac, 6) == 0);  // the MAC of the interface whose address it gives
     CHECK(b[212] & 0x08);  // 15-bit port-addresses
 }
 

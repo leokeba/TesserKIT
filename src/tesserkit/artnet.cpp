@@ -251,7 +251,7 @@ void ArtNet::pollReply(uint32_t ip) {
     r[182] = good ? 0x80 : 0;  // GoodOutputA[0]: data being output
     r[190] = static_cast<uint8_t>(universe_ & 0x0F);  // SwOut[0]
     r[200] = 0x00;  // Style: a node
-    memcpy(r + 201, dev_.info().mac, 6);
+    memcpy(r + 201, dev_.addressMac(), 6);  // the interface's, whose address the reply gives
     r[211] = 1;     // BindIndex
     r[212] = 0x08;  // Status2: 15-bit port-addresses
     // Unicast to the controller, on the Art-Net port (Art-Net 4).

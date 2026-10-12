@@ -97,7 +97,7 @@ private:
     void reportState();
     void ethLink(bool up, uint32_t nowMs);
     void ethGotIp(uint32_t nowMs);
-    void ethDown(uint32_t nowMs);
+    void ethDown(uint32_t nowMs, uint32_t waitMs = 0);
     void updateAddress();
     void applyMdns();
     StaConfig config(const WifiNetwork& n) const;
@@ -168,6 +168,7 @@ private:
 
     // Addresses, for Device::address().
     uint32_t staAddr_ = 0, ethAddr_ = 0, apAddr_ = 0;
+    uint8_t ethMacBytes_[6] = {};
 
     // Access point.
     bool apUp_ = false;

@@ -1,5 +1,7 @@
 #include "tesserkit/device.h"
 
+#include <string.h>
+
 #include <ctype.h>
 #include <stdio.h>
 
@@ -246,6 +248,14 @@ void Device::channel(uint8_t ch) {
     channel_ = ch;
     for (auto& fn : onChannel_) fn(ch);
 }
+
+void Device::address(uint32_t ip, const uint8_t* mac) {
+    address_ = ip;
+    memcpy(addressMac_, mac, sizeof(addressMac_));
+    addressMacSet_ = true;
+}
+
+const uint8_t* Device::addressMac() const { return addressMacSet_ ? addressMac_ : info().mac; }
 
 uint32_t Device::onlineMs() const { return online_ ? lastNowMs_ - onlineSinceMs_ : 0; }
 
