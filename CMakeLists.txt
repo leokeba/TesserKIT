@@ -39,17 +39,18 @@ if(ESP_PLATFORM)
                             "(https://github.com/leokeba/TesserUI): add them to EXTRA_COMPONENT_DIRS or as "
                             "component manager dependencies.")
     endif()
-    # The temperature sensor driver left "driver" in ESP-IDF 5.3.
+    # The temperature sensor and GPIO drivers left "driver" in ESP-IDF 5.3.
     if(IDF_VERSION_MAJOR GREATER 5 OR (IDF_VERSION_MAJOR EQUAL 5 AND IDF_VERSION_MINOR GREATER_EQUAL 3))
-        set(TESSERKIT_TSENS_REQ esp_driver_tsens)
+        set(TESSERKIT_DRIVER_REQS esp_driver_tsens esp_driver_gpio)
     else()
-        set(TESSERKIT_TSENS_REQ driver)
+        set(TESSERKIT_DRIVER_REQS driver)
     endif()
     idf_component_register(
         SRCS ${TESSERKIT_CORE_SRCS}
              src/tesserkit/platform/esp/device_esp.cpp
              src/tesserkit/platform/esp/core_esp.cpp
              src/tesserkit/platform/esp/wifi_esp.cpp
+             src/tesserkit/platform/esp/eth_esp.cpp
              src/tesserkit/platform/esp/mdns_esp.cpp
              src/tesserkit/platform/esp/dns_server.cpp
              src/tesserkit/platform/esp/clock_esp.cpp
@@ -64,7 +65,7 @@ if(ESP_PLATFORM)
         INCLUDE_DIRS "src"
         REQUIRES esp_http_server esp_wifi esp_netif nvs_flash
         PRIV_REQUIRES esp_event esp_timer app_update esp_http_client mbedtls lwip mdns mqtt espcoredump joltwallet__littlefs
-                      esp_partition spi_flash efuse esp_app_format ${TESSERKIT_TSENS_REQ})
+                      esp_partition spi_flash efuse esp_app_format esp_eth ${TESSERKIT_DRIVER_REQS})
     if(NOT CONFIG_TESSERKIT_MDNS)
         target_compile_definitions(${COMPONENT_LIB} PRIVATE TESSERKIT_NO_MDNS=1)
     endif()

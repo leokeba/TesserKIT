@@ -23,6 +23,7 @@ int main(int argc, char** argv) {
     tesserkit::NowTp nowtp(r.dev);
     files.root(r.fake.fs.dir.c_str());
     firmware.github("leokeba/TesserKIT", "tesserkit-minimal-{target}.bin");
+    network.ethernet(tesserkit::boards::gledopto());
     if (!r.dev.begin()) return 1;
     rig::Reply s = r.schema("/");
     if (s.status != rig::Status::Ok) return 1;

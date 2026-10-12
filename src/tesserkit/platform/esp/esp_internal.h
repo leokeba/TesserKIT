@@ -7,6 +7,8 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "esp_netif.h"
+#include "tesserkit/platform.h"
 
 namespace tesserkit {
 namespace esp {
@@ -23,6 +25,13 @@ esp_err_t nvsInit();
 // Answers every DNS query with `ip` while started (dns_server.cpp).
 bool dnsStart(uint32_t ip);
 void dnsStop();
+
+// DHCP, or the static address in `ip`, on an interface (wifi_esp.cpp).
+void applyIp(esp_netif_t* netif, const IpConfig& ip);
+
+// Initializes esp_netif and the default event loop, which applications
+// (and Arduino) may have done already (wifi_esp.cpp).
+void netifInit();
 
 // a.b.c.d as (a << 24) | ... to and from lwIP's network byte order.
 inline uint32_t toNetwork(uint32_t ip) { return __builtin_bswap32(ip); }

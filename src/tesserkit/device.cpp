@@ -269,6 +269,7 @@ bool Device::startTask() {
 tesser::Storage* Device::defaultStorage() { return nullptr; }
 Core* espCore() { return nullptr; }
 Wifi* espWifi() { return nullptr; }
+Ethernet* espEthernet() { return nullptr; }
 Mdns* espMdns() { return nullptr; }
 Clock* espClock() { return nullptr; }
 Ota* espOta() { return nullptr; }

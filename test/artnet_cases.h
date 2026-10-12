@@ -143,9 +143,8 @@ TEST(artnet_answers_polls) {
     ArtNetRig r;
     r.dev.version("2.5.1");
     r.artnet.universe(0x1234 & 0x7FFF);
-    r.fake.wifi.linked = true;
-    r.fake.wifi.link.ip = 0xC0A80142;  // 192.168.1.66
     CHECK(r.dev.begin());
+    r.dev.address(0xC0A80142);  // 192.168.1.66, as Network sets it
     r.send(poll());
     CHECK_EQ(r.fake.udp.sent.size(), size_t(1));
     const fake::Datagram& d = r.fake.udp.sent[0];

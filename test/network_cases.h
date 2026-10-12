@@ -371,4 +371,208 @@ TEST(network_joining_is_an_event) {
     CHECK_EQ(ev.take().size(), size_t(1));
 }
 
+// Ethernet (a board declared with Network::ethernet()).
+
+struct EthRig : NetRig {
+    EthRig() { net.ethernet(tesserkit::boards::gledopto()); }
+};
+
+TEST(network_ethernet_board_and_tree) {
+    EthRig r;
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.fake.ethernet.begins, 1);
+    CHECK(r.fake.ethernet.board.phy == tesserkit::EthernetBoard::Phy::Lan8720);
+    CHECK_EQ(r.fake.ethernet.board.address, 1);
+    CHECK_EQ(r.fake.ethernet.board.mdio, 33);
+    CHECK_EQ(r.fake.ethernet.board.power, 5);
+    CHECK_EQ(r.fake.ethernet.hostnameSet, "test-device-a67c");
+    CHECK(!r.fake.ethernet.ip.staticIp);
+    CHECK_EQ(r.value("/sys/network/ethernet/status"),
+             "{\"link\":false,\"connected\":false,\"ip\":\"\",\"speed\":0,\"mac\":\"e0:e1:e2:e3:e4:e5\"}");
+    CHECK_EQ(at(r.schema("/sys/network/ethernet/joined").body, "ui/toast"), "\"ok\"");
+    // Before Wi-Fi, which it is preferred to.
+    std::string net = r.schema("/sys/network").body;
+    CHECK(net.find("\"ethernet\":{") < net.find("\"wifi\":{"));
+    r.set("/sys/network/hostname", "\"stage-left\"");
+    r.settle();
+    CHECK_EQ(r.fake.ethernet.hostnameSet, "stage-left");
+}
+
+TEST(network_without_ethernet_has_no_tree) {
+    NetRig r;  // no board declared
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.get("/sys/network/ethernet").status, Status::NotFound);
+    CHECK_EQ(r.fake.ethernet.begins, 0);
+
+    NetRig chip;  // declared, on a chip without the MAC
+    chip.dev.platform().ethernet = nullptr;
+    chip.net.ethernet(tesserkit::boards::gledopto());
+    CHECK(chip.dev.begin());
+    CHECK_EQ(chip.get("/sys/network/ethernet").status, Status::NotFound);
+    chip.settle();
+    CHECK(chip.fake.wifi.apUp);  // recovery as without Ethernet
+}
+
+TEST(network_ethernet_is_preferred) {
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    rig::Events ev(r, "/sys/network/ethernet/joined");
+    r.fake.ethernet.plug();
+    r.run(10000);
+    CHECK(r.net.ethernetConnected());
+    CHECK_EQ(r.fake.wifi.connects, 0);  // the station waited for the cable, then kept away
+    CHECK_EQ(r.dev.state(), State::Online);
+    CHECK_EQ(r.dev.address(), 0xC0A8013Cu);
+    CHECK(!r.fake.wifi.apUp);
+    std::string st = r.value("/sys/network/ethernet/status");
+    CHECK_EQ(at(st, "link"), "true");
+    CHECK_EQ(at(st, "connected"), "true");
+    CHECK_EQ(at(st, "ip"), "\"192.168.1.60\"");
+    CHECK_EQ(at(st, "speed"), "100");
+    std::vector<std::string> got = ev.take();
+    CHECK_EQ(got.size(), size_t(1));
+    if (!got.empty()) CHECK_EQ(got[0], "\"192.168.1.60 on Ethernet\"");
+
+    // Unplugged: Wi-Fi takes over at once.
+    r.fake.ethernet.unplug();
+    r.settle();
+    CHECK(!r.net.ethernetConnected());
+    CHECK(r.net.connected());
+    CHECK_EQ(r.dev.state(), State::Online);
+    CHECK_EQ(r.dev.address(), 0xC0A80132u);
+    CHECK_EQ(r.value("/sys/network/ethernet/status/ip"), "\"\"");
+
+    // Plugged again: the station leaves.
+    r.fake.ethernet.plug();
+    r.settle();
+    CHECK(r.net.ethernetConnected());
+    CHECK(!r.net.connected());
+    CHECK(!r.fake.wifi.linked);
+    CHECK_EQ(r.value("/sys/network/wifi/status/connected"), "false");
+    CHECK_EQ(r.dev.address(), 0xC0A8013Cu);
+    r.run(60000);
+    CHECK(!r.fake.wifi.linked);
+    CHECK_EQ(r.fake.wifi.connects, 1);
+}
+
+TEST(network_ethernet_without_cable_waits_then_wifi) {
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    r.run(tesserkit::Network::kEthWaitMs - 200);
+    CHECK_EQ(r.fake.wifi.scans, 0);
+    CHECK_EQ(r.dev.state(), State::Connecting);
+    r.run(400);
+    r.settle();
+    CHECK(r.net.connected());
+    CHECK_EQ(r.dev.state(), State::Online);
+}
+
+TEST(network_ethernet_link_without_dhcp_lets_wifi_in) {
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    r.fake.ethernet.dhcp = false;
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    r.run(tesserkit::Network::kEthWaitMs + 500);
+    CHECK(r.net.connected());
+    CHECK(!r.net.ethernetConnected());
+    CHECK_EQ(r.value("/sys/network/ethernet/status/link"), "true");
+    // The lease comes late: Ethernet takes over.
+    r.fake.ethernet.dhcp = true;
+    r.fake.ethernet.address(r.fake.ethernet.ip);
+    r.settle();
+    CHECK(r.net.ethernetConnected());
+    CHECK(!r.net.connected());
+}
+
+TEST(network_ethernet_unplugged_before_its_address) {
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    r.fake.ethernet.dhcp = false;
+    CHECK(r.dev.begin());
+    r.run(3000);
+    r.fake.ethernet.plug();  // the station's wait starts again
+    r.run(1000);
+    CHECK_EQ(r.fake.wifi.scans, 0);
+    r.fake.ethernet.unplug();  // nothing to wait for
+    r.settle();
+    CHECK(r.net.connected());
+}
+
+TEST(network_ethernet_recovery_access_point) {
+    EthRig r;  // no Wi-Fi network saved, no cable
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK(!r.fake.wifi.apUp);  // the cable gets the fallback's time first
+    CHECK_EQ(r.dev.state(), State::Provisioning);
+    CHECK_EQ(r.dev.address(), 0u);
+    r.run(tesserkit::Network::kApFallbackMs);
+    CHECK(r.fake.wifi.apUp);
+    CHECK(r.fake.wifi.captive);
+    CHECK_EQ(r.dev.address(), 0xC0A80401u);
+    CHECK_EQ(r.fake.wifi.scans, 0);
+
+    r.fake.ethernet.plug();
+    r.settle();
+    CHECK_EQ(r.dev.state(), State::Online);
+    CHECK(!r.fake.wifi.captive);
+    CHECK(r.fake.wifi.apUp);  // for clients to follow the new address
+    r.run(tesserkit::Network::kApLingerMs);
+    CHECK(!r.fake.wifi.apUp);
+
+    // Unplugged: offline, and the access point back after the fallback's time.
+    r.fake.ethernet.unplug();
+    r.settle();
+    CHECK_EQ(r.dev.state(), State::Provisioning);
+    r.run(tesserkit::Network::kApFallbackMs);
+    CHECK(r.fake.wifi.apUp);
+}
+
+TEST(network_ethernet_static_address) {
+    EthRig r;
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    r.settle();
+    CHECK_EQ(r.value("/sys/network/ethernet/status/ip"), "\"192.168.1.60\"");
+    CHECK_EQ(r.set("/sys/network/ethernet/static/gateway", "\"10.0.0\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/network/ethernet/static", "{\"enabled\":true,\"ip\":\"10.0.0.7\",\"gateway\":\"10.0.0.1\"}")
+                 .status,
+             Status::Ok);
+    r.settle();
+    CHECK(r.fake.ethernet.ip.staticIp);
+    CHECK_EQ(r.fake.ethernet.ip.ip, 0x0A000007u);
+    CHECK_EQ(r.fake.ethernet.ip.mask, 0xFFFFFF00u);
+    CHECK_EQ(r.fake.ethernet.ip.dns, 0x0A000001u);
+    CHECK_EQ(r.value("/sys/network/ethernet/status/ip"), "\"10.0.0.7\"");
+    CHECK_EQ(r.dev.address(), 0x0A000007u);
+    CHECK_EQ(at(r.schema("/sys/network/ethernet/static").body, "ui/form"), "true");
+    CHECK_EQ(r.request(r.anon, rig::Op::Set, "/sys/network/ethernet/static/enabled", "false").status,
+             Status::Unauthorized);
+
+    // Persisted, and applied from the start.
+    r.run(2500);
+    EthRig again;
+    again.storage.records = r.storage.records;
+    CHECK(again.dev.begin());
+    CHECK(again.fake.ethernet.ip.staticIp);
+    CHECK_EQ(again.fake.ethernet.ip.ip, 0x0A000007u);
+    CHECK_EQ(again.fake.ethernet.addressCalls, 0);  // given to begin()
+}
+
+TEST(network_ethernet_that_doesnt_start) {
+    EthRig r;
+    r.fake.ethernet.starts = false;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK(r.net.connected());  // no wait for a cable that can't come
+}
+
 }  // namespace network_cases

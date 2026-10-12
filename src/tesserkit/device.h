@@ -140,6 +140,9 @@ public:
     bool factoryReset();
     // Milliseconds the device has been online (0 if it isn't).
     uint32_t onlineMs() const;
+    // The IPv4 address the device is reached at, a.b.c.d as (a << 24) | ...:
+    // Ethernet's, the station's, else the access point's; 0 if none (Network).
+    uint32_t address() const { return address_; }
 
     // Used by services.
     // Queues a platform event for the device's task. Thread-safe.
@@ -150,6 +153,7 @@ public:
     void updating(bool on);
     void timeSynced();
     void channel(uint8_t ch);
+    void address(uint32_t ip) { address_ = ip; }
     // The state value (/sys/status/state), marked changed with the state.
     State& stateVar() { return state_; }
     void stateNode(tesser::Node* node) { stateNode_ = node; }
@@ -178,6 +182,7 @@ private:
     bool updating_ = false;
     bool timeSynced_ = false;
     uint8_t channel_ = 0;
+    uint32_t address_ = 0;
     uint8_t extraHandlers_ = 4;
     uint16_t httpPort_ = 80;
     const char* cors_ = nullptr;

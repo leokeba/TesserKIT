@@ -28,7 +28,7 @@ TesserKIT is the device framework built on [TesserAPI](https://github.com/leokeb
 | Frameworks | ESP-IDF ≥ 5.1 and Arduino-ESP32 ≥ 3.0, like TesserAPI. |
 | Chips | Classic ESP32 without PSRAM, 4 MB flash (reference); ESP32-C3; ESP32-S3. |
 | Partitions | Every first-release service fits a 1.25 MB app slot, so Arduino's default 4 MB table (two OTA slots, no `min_spiffs`) works; with Mqtt an Arduino sketch needs a larger slot. TesserKIT ships a table without a filesystem for more headroom, and one with a LittleFS partition for Files (§11). |
-| Dependencies | TesserAPI, TesserUI (C++ part: `WebUi`), ArduinoJson 7. Optional: NowTP. ESP-IDF components only (`esp_wifi`, `esp_netif`, `mdns`, `esp_https_ota`, `mqtt`, `esp_http_client`, `nvs_flash`, `app_update`; `joltwallet/littlefs` for Files, which Arduino-ESP32 ships): the same code on Arduino and ESP-IDF. |
+| Dependencies | TesserAPI, TesserUI (C++ part: `WebUi`), ArduinoJson 7. Optional: NowTP. ESP-IDF components only (`esp_wifi`, `esp_netif`, `esp_eth`, `mdns`, `esp_https_ota`, `mqtt`, `esp_http_client`, `nvs_flash`, `app_update`; `joltwallet/littlefs` for Files, which Arduino-ESP32 ships): the same code on Arduino and ESP-IDF. |
 | Platform code | Only in `src/tesserkit/platform/`. Services see a narrow interface (§3.3) with an ESP implementation and a host fake. |
 | Threading | One task of TesserKIT's own (§4.2), plus the transports' tasks. Everything a service does to the tree runs under the API lock. |
 
@@ -95,7 +95,7 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
 
 ### 3.3 Platform layer
 
-Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads and release checks), `Coredump`, `Udp` (Art-Net), `MqttClient`, `Ble` (Bluetooth LE), `NowTpRadio` (ESP-NOW) and `Filesystem` (LittleFS: mounting, usage, formatting; the files themselves through stdio and `dirent`, the same on the host):
+Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Ethernet` (the internal MAC and its PHY), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads and release checks), `Coredump`, `Udp` (Art-Net), `MqttClient`, `Ble` (Bluetooth LE), `NowTpRadio` (ESP-NOW) and `Filesystem` (LittleFS: mounting, usage, formatting; the files themselves through stdio and `dirent`, the same on the host):
 
 - `src/tesserkit/platform/esp/` implements them on ESP-IDF APIs, which Arduino-ESP32 3.x also ships, so one implementation serves both.
 - `test/fake_platform.*` implements them in memory for host tests: a Wi-Fi radio whose scans and connections the test scripts, a clock the test advances, an OTA partition that's a byte vector.
@@ -178,6 +178,10 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 ```
 /sys/network
   hostname *(p)        string ≤ 32, Admin
+  ethernet/            with a board (below)
+    status/            link, connected, ip, speed (Mbps), mac
+    static/ *(p)       { enabled, ip, mask, gateway, dns } ui.form, ui.collapsed, Admin
+    joined             event, ok toast: "192.168.1.60 on Ethernet"
   wifi/
     networks *(p)      keyed list (key "ssid"), ≤ 5, Admin, readAccess User:
                          ssid ≤ 32, password (secret) ≤ 64,
@@ -202,6 +206,13 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - `scan` is deferred (TesserAPI §4.2): the reply comes when the scan completes, within TesserAPI's `deferTimeoutMs`. The radio can't scan while it joins, so a scan requested during an attempt waits for it to end (at most 10 s), and one requested during the join's own scan shares it.
 - `net.txPower(dBm)` caps the transmit power, for boards whose supply browns out at the default 20 dBm.
 
+**Ethernet:** `net.ethernet(board)` declares the board's wiring: the PHY, its address on the MDIO bus, the MDC and MDIO pins, the pin powering the PHY or its oscillator (driven high before the MAC starts, whose reset needs the clock), and the RMII clock (in on GPIO 0, or out on 0, 16 or 17). Presets in `tesserkit::boards`, from WLED's table: `gledopto()` (Gledopto's controllers with Ethernet: LAN8720 at 1, MDC 23, MDIO 33, power 5, clock in), `wt32Eth01()`, `olimexEsp32Poe()`, `esp32EthernetKit()`. Without the call, the driver isn't linked; with it, Ethernet adds about 40 KB (§11). The ESP32's internal MAC only, so the classic ESP32 (and the ESP32-P4, untried); elsewhere the subtree is absent and Network runs as without it.
+- **Ethernet first:** while Ethernet has an address, the station keeps away (it disconnects if it was joined): one address on the network, and the radio's time for the access point and ESP-NOW. Without a cable, or when the link goes, the station joins as usual, at once. At start, and when the link comes up, the station waits 5 s for Ethernet's address before joining (time for the link and DHCP); a link without an address after that lets the station join, and leave again when the address comes.
+- **The access point** treats Ethernet's address as the station's: `fallback` brings it up 15 s after the device went offline, and down 30 s after Ethernet's address came. **Recovery** waits those 15 s too on a board with Ethernet, so a device on a cable with no saved Wi-Fi network doesn't open an access point at each boot.
+- `static` replaces DHCP, applied at once. `joined` is announced on each new address.
+- **PHY drivers:** ESP-IDF 5.x has drivers for LAN87xx, IP101, RTL8201, DP83848 and KSZ80xx; 6.0 moved them to the esp-eth-drivers components and keeps the generic IEEE 802.3 driver (from 5.4), which TesserKIT uses for every PHY there.
+- **State and address:** the device is `online` over either interface, and `provisioning` only with no saved network and no link. `dev.address()` is Ethernet's address, else the station's, else the access point's (Art-Net's poll replies give it).
+
 **Access point:**
 - `fallback`: up when no saved network is joined within 15 s of trying, and down 30 s after the station connects (time for a phone on the AP to follow the device's new address). `always`: always up (AP+STA). `never`: never, except in recovery (below).
 - **Recovery:** with no saved network, the AP comes up whatever the mode, so a fresh device is always reachable.
@@ -211,7 +222,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 
 **Channels and NowTP:** a station follows its router's channel, and ESP-NOW must share it (TesserAPI §14). NowTP follows by itself: a node whose station or access point fixes its channel is an anchor, and the nodes nearby follow it when it moves (§5.11). Network reports channel changes to `dev.onChannel(fn)` as well. Without a router, the AP's `channel` is the field's ESP-NOW channel. Network reports its state (provisioning, connecting) from its start, so services that wait for the network see it at once.
 
-**Not in the first release:** Ethernet (W5500 and RMII, *(later)*, same tree under `/sys/network/ethernet`), WPA2-Enterprise, IPv6 configuration.
+**Not in the first release:** Ethernet modules on SPI (W5500, *(later)*, same tree), WPA2-Enterprise, IPv6 configuration.
 
 ### 5.3 Time
 
@@ -457,7 +468,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 |---|---|
 | Battery | `soc` (%), `charging`, `voltage`; fed by the application (`battery.update(...)`) or an ADC pin with a divider. |
 | Sleep | `sleep` action (deep sleep), wake-up pin and level *(p)*, `dev.onSleep(fn)` for the application to park its hardware. |
-| Ethernet | §5.2. |
+| Ethernet on SPI | W5500 and similar modules, for chips without the internal MAC (§5.2). |
 | Log | §5.1. |
 
 ## 6. Persistence
@@ -587,6 +598,7 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 | Mqtt (the same, `-DWITH_MQTT=1`): TesserKIT's bridge 14.5 KB, esp-mqtt 12.7 KB, TCP transports, esp-tls and the TLS crypto they link, stdio | 110 KB |
 | Mqtt with `CONFIG_MQTT_TRANSPORT_SSL=n` and `CONFIG_MQTT_TRANSPORT_WEBSOCKET=n` (mqtt:// only) | 102 KB |
 | Files with the stored backups (2026-10-12, `examples/idf/full` with and without `Files`): LittleFS, the VFS directory calls, the service | 40.9 KB |
+| Ethernet (2026-10-12, `examples/idf/full` with and without `-DETHERNET_BOARD=gledopto`): `esp_eth`'s MAC and generic PHY drivers, its netif glue, the GPIO driver | 40.5 KB |
 
 - **Where it goes** (with mDNS): TesserKIT's own code 42 KB (Network 15 KB, most of it the `std::function`s behind bound values and the keyed list), ESP-IDF's `mdns` 34 KB, libc's time zone support 17 KB (`tzset()` parses with `vfscanf`), lwIP's DHCP server, DNS client and sockets 7.6 KB, the access point in the Wi-Fi driver 6 KB, OTA 2.6 KB.
 - **Against the budget:** 60 KB is exceeded. Features stay, as options where they are large (mDNS, downloads); the rest is smaller only at the cost of clarity, and is left as it is until a measured application needs the space.
@@ -606,7 +618,7 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 
 ## 12. Testing
 
-1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), time and DST, timers (catch-up, no double runs), firmware upload checks, release checks (versions, GitHub's answers and failures, scheduling), backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge (topics, commands with User access, sessions, intervals), Art-Net (scaling, gates, changes only, ArtPollReply's bytes), Bluetooth (the name following the hostname, switching off and on, the client shown), NowTp (waiting for the network, the nodes listed and read-only, pairing, the factory reset forgetting the key), HTTPS refused without the memory for it, Files (names and paths refused, uploads replaced whole and cut short, directories, space, formatting, the application's own writes) and the stored backups (names, `keep`, `before-restore`, the factory reset). The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
+1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), Ethernet (preferred to the station, the station's wait for it, recovery on a cable, a static address), time and DST, timers (catch-up, no double runs), firmware upload checks, release checks (versions, GitHub's answers and failures, scheduling), backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge (topics, commands with User access, sessions, intervals), Art-Net (scaling, gates, changes only, ArtPollReply's bytes), Bluetooth (the name following the hostname, switching off and on, the client shown), NowTp (waiting for the network, the nodes listed and read-only, pairing, the factory reset forgetting the key), HTTPS refused without the memory for it, Files (names and paths refused, uploads replaced whole and cut short, directories, space, formatting, the application's own writes) and the stored backups (names, `keep`, `before-restore`, the factory reset). The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
 2. **Golden schemas:** each service's schema with its hints, checked in as `fixtures/*.json`. TesserUI renders them in its golden-model tests, so a hint change shows as a diff in both repositories.
 3. **On target:** `examples/idf/minimal` (and `examples/arduino/Minimal`, with `--app /lamp`), driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, sign-in with tokens over HTTP and WebSocket, a timer running, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. Releases: `test/e2e_github.py` serves a release endpoint and a newer image from the test machine, and watches the device find it, install it and come back up to date; `--check-only` checks the device's own feed (GitHub's API). A real GitHub download (2026-10-11, DEVKIT-V3: v0.1.2's asset through its ~950-character signed CDN redirect, 1.5 MB in 25 s, installed and booted): the mock server's short URLs had hidden that the HTTP client's request buffer was too small for it. Bluetooth: `examples/idf/bluetooth`, driven from a Mac with `bleak` (Nordic UART): an open device is Admin, a locked one public, sign-in with a line token gives Admin, a bad token public, and a reconnection starts public again. `examples/idf/full` (2026-10-11, DEVKIT-V3 beside DEVKIT-R1 running TesserAPI's test firmware): every service up, R1 found over NowTP and mounted under `/peers`, the envelopes on the serial line among the logs, a GitHub release check over HTTPS beside Bluetooth and NowTP, and with an MQTT session too (when it ran out of memory, which the guard of §11 now refuses). Files: `test/e2e_files.py` on `examples/idf/full` (2026-10-12, DEVKIT-V3, 39 checks): directories, a 100 KB upload and download compared byte for byte, a name with a space and accents (`filename*=UTF-8''`), refused names and sizes, replace, rename and delete, and stored backups saved, downloaded, restored and deleted. Two transfers on one path can't overlap over HTTP there: ESP-IDF's server handles one request at a time, so the second waits for the first (TesserAPI's host tests cover `busy`). *(later)* a test firmware with every service and serial scripts.
 4. **CI:** each push to main runs the host tests, then releases the example and publishes the launcher (§13). *(later)* ESP-IDF builds (5.1, 5.4, 5.5, latest × ESP32, ESP32-C3, ESP32-S3), Arduino-ESP32 3.x builds of the examples, the footprint budgets.
@@ -685,9 +697,9 @@ Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presentin
 | 2 *(done)* | Timers, Auth | spin-seq's timers and a locked-down device. |
 | 3 | helionext on TesserKIT, in tiny-heliostat (§10.1) | Every helionext page usable, with custom elements only for the keyframes and the sky. |
 | 4 | spin-seq on TesserKIT, NowTP channel following and pairing, shared clock | A master and three remotes run a synchronized sequence; fleet update through the master. |
-| 5 | Battery, Sleep, Ethernet, Log, Home Assistant discovery | *(later)* |
+| 5 | Battery, Sleep, Ethernet (RMII *(done)*), Log, Home Assistant discovery | *(later)* |
 
-Mqtt and ArtNet were built ahead of the roadmap (2026-10-11), ArtNet for tiny-heliostat, and so were GitHub releases with the workflow that publishes them, and the Bluetooth and NowTp services with `examples/idf/full` (2026-10-11): phase 4's NowTP part, short of the synchronized sequence.
+Mqtt and ArtNet were built ahead of the roadmap (2026-10-11), ArtNet for tiny-heliostat, and so were GitHub releases with the workflow that publishes them, and the Bluetooth and NowTp services with `examples/idf/full` (2026-10-11): phase 4's NowTP part, short of the synchronized sequence. Ethernet on the internal MAC came on 2026-10-12, for a Gledopto LED controller.
 
 ## 16. Decisions
 

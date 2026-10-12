@@ -28,10 +28,7 @@ public:
         // Applications (and Arduino) may have done some of this already.
         esp_err_t err = esp::nvsInit();  // the driver keeps its calibration there
         if (err != ESP_OK) tesser::logError("tesserkit: NVS: %s", esp_err_to_name(err));
-        err = esp_netif_init();
-        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) tesser::logError("tesserkit: esp_netif_init: %s", esp_err_to_name(err));
-        err = esp_event_loop_create_default();
-        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) tesser::logError("tesserkit: event loop: %s", esp_err_to_name(err));
+        esp::netifInit();
         sta_ = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
         if (!sta_) sta_ = esp_netif_create_default_wifi_sta();
         ap_ = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
@@ -101,20 +98,7 @@ public:
         config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
         config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
         config.sta.threshold.authmode = WIFI_AUTH_OPEN;  // accept whatever the network uses
-        if (c.staticIp) {
-            esp_netif_dhcpc_stop(sta_);
-            esp_netif_ip_info_t ip = {};
-            ip.ip.addr = esp::toNetwork(c.ip);
-            ip.netmask.addr = esp::toNetwork(c.mask);
-            ip.gw.addr = esp::toNetwork(c.gateway);
-            esp_netif_set_ip_info(sta_, &ip);
-            esp_netif_dns_info_t dns = {};
-            dns.ip.type = ESP_IPADDR_TYPE_V4;
-            dns.ip.u_addr.ip4.addr = esp::toNetwork(c.dns);
-            esp_netif_set_dns_info(sta_, ESP_NETIF_DNS_MAIN, &dns);
-        } else {
-            esp_netif_dhcpc_start(sta_);  // already started is fine
-        }
+        esp::applyIp(sta_, c);
         if (esp_wifi_set_config(WIFI_IF_STA, &config) != ESP_OK) return false;
         return esp_wifi_connect() == ESP_OK;
     }
@@ -198,6 +182,34 @@ private:
 };
 
 }  // namespace
+
+namespace esp {
+
+void netifInit() {
+    esp_err_t err = esp_netif_init();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) tesser::logError("tesserkit: esp_netif_init: %s", esp_err_to_name(err));
+    err = esp_event_loop_create_default();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) tesser::logError("tesserkit: event loop: %s", esp_err_to_name(err));
+}
+
+void applyIp(esp_netif_t* netif, const IpConfig& c) {
+    if (!c.staticIp) {
+        esp_netif_dhcpc_start(netif);  // already started is fine
+        return;
+    }
+    esp_netif_dhcpc_stop(netif);
+    esp_netif_ip_info_t ip = {};
+    ip.ip.addr = toNetwork(c.ip);
+    ip.netmask.addr = toNetwork(c.mask);
+    ip.gw.addr = toNetwork(c.gateway);
+    esp_netif_set_ip_info(netif, &ip);
+    esp_netif_dns_info_t dns = {};
+    dns.ip.type = ESP_IPADDR_TYPE_V4;
+    dns.ip.u_addr.ip4.addr = toNetwork(c.dns);
+    esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns);
+}
+
+}  // namespace esp
 
 Wifi* espWifi() {
     static EspWifi wifi;

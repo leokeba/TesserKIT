@@ -22,12 +22,27 @@ void describe(tesser::Object& o, WifiNetwork& n);
 
 enum class ApMode : uint8_t { Always, Fallback, Never };
 
+// Ethernet wiring of known boards, for Network::ethernet() (as WLED lists
+// them).
+namespace boards {
+// Gledopto's controllers with Ethernet: LAN8720 at 1, its oscillator powered
+// by GPIO 5.
+EthernetBoard gledopto();
+// WT32-ETH01: LAN8720 at 1, its oscillator powered by GPIO 16.
+EthernetBoard wt32Eth01();
+// Olimex ESP32-POE and ESP32-POE-ISO: LAN8720 at 0, powered by GPIO 12,
+// clocked by the ESP32 on GPIO 17.
+EthernetBoard olimexEsp32Poe();
+// Espressif's ESP32-Ethernet-Kit: IP101 at 1, powered by GPIO 5.
+EthernetBoard esp32EthernetKit();
+}  // namespace boards
+
 // "a.b.c.d" as (a << 24) | (b << 16) | (c << 8) | d; false if it isn't one.
 bool parseIpv4(const std::string& text, uint32_t& out);
 std::string formatIpv4(uint32_t ip);
 
-// /sys/network: the Wi-Fi station, the access point and its captive portal,
-// mDNS (docs/DESIGN.md section 5.2).
+// /sys/network: the Wi-Fi station, Ethernet, the access point and its
+// captive portal, mDNS (docs/DESIGN.md section 5.2).
 class Network : public Service {
 public:
     explicit Network(Device& dev) : Service(dev, "network") {}
@@ -40,10 +55,17 @@ public:
     Network& apChannel(uint8_t channel);
     // Caps the radio's transmit power (weak supplies brown out at 20 dBm).
     Network& txPower(int8_t dBm);
+    // The board's Ethernet (boards::gledopto(), ...): /sys/network/ethernet.
+    // Preferred while it has an address, Wi-Fi's station is the fallback.
+    Network& ethernet(const EthernetBoard& board);
 
     void describe(tesser::Object& o) override;
 
+    // The station joined a network.
     bool connected() const { return sta_ == Sta::Connected; }
+    bool ethernetConnected() const { return ethOnline_; }
+    // Reachable on a network: over Wi-Fi or Ethernet.
+    bool online() const { return connected() || ethOnline_; }
     bool apActive() const { return apUp_; }
 
     // Station timing (docs/DESIGN.md section 5.2).
@@ -51,6 +73,9 @@ public:
     static constexpr uint32_t kScanTimeoutMs = 15000;
     static constexpr uint32_t kApFallbackMs = 15000;  // not joined: the AP comes up
     static constexpr uint32_t kApLingerMs = 30000;    // joined: the AP goes down
+    // The station waits this long for Ethernet at start and after its link
+    // comes up (time for DHCP), before joining a network.
+    static constexpr uint32_t kEthWaitMs = 5000;
 
 protected:
     void start() override;
@@ -70,13 +95,20 @@ private:
     void checkSettings(uint32_t nowMs);
     void updateAp(uint32_t nowMs);
     void reportState();
+    void ethLink(bool up, uint32_t nowMs);
+    void ethGotIp(uint32_t nowMs);
+    void ethDown(uint32_t nowMs);
+    void updateAddress();
     void applyMdns();
     StaConfig config(const WifiNetwork& n) const;
     const WifiNetwork* find(const std::string& ssid) const;
     uint32_t apFingerprint() const;
+    uint32_t ethFingerprint() const;
+    IpConfig ethConfig() const;
     std::string apSsid() const { return apSsid_.empty() ? dev_.hostname() : apSsid_; }
 
     Wifi* wifi_ = nullptr;
+    Ethernet* eth_ = nullptr;  // with a board, on a chip that has the MAC
     Mdns* mdnsService_ = nullptr;
 
     // Settings (persisted).
@@ -88,6 +120,9 @@ private:
     bool apHidden_ = false;
     bool mdns_ = true;
     int8_t txPower_ = 0;
+    bool ethWanted_ = false;
+    EthernetBoard ethBoard_;
+    StaticIp ethStatic_;
 
     // Nodes whose writes the service follows, by generation.
     tesser::Node* networksNode_ = nullptr;
@@ -97,8 +132,11 @@ private:
     tesser::Node* staStatus_ = nullptr;
     tesser::Node* apStatus_ = nullptr;
     tesser::EventNode* joined_ = nullptr;
+    std::vector<tesser::Node*> ethIpNodes_;
+    tesser::Node* ethStatus_ = nullptr;
+    tesser::EventNode* ethJoined_ = nullptr;
     uint16_t networksGen_ = 0, hostnameGen_ = 0, mdnsGen_ = 0;
-    uint32_t apGen_ = 0;
+    uint32_t apGen_ = 0, ethGen_ = 0;
 
     // Station.
     Sta sta_ = Sta::Idle;
@@ -120,6 +158,16 @@ private:
     bool linkUp_ = false;
     std::string linkSsid_, linkIp_, linkBssid_;
     uint8_t linkChannel_ = 0;
+
+    // Ethernet.
+    bool ethLink_ = false;
+    bool ethOnline_ = false;  // with an address
+    uint32_t ethWaitUntilMs_ = 0;  // the station waits for Ethernet until then
+    std::string ethIp_, ethMac_;
+    uint16_t ethMbps_ = 0;
+
+    // Addresses, for Device::address().
+    uint32_t staAddr_ = 0, ethAddr_ = 0, apAddr_ = 0;
 
     // Access point.
     bool apUp_ = false;

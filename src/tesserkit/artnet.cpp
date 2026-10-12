@@ -224,11 +224,7 @@ void ArtNet::failed(const std::string& error) {
 }
 
 void ArtNet::pollReply(uint32_t ip) {
-    uint32_t me = 0;
-    if (Wifi* w = dev_.platform().wifi) {
-        StaInfo sta;
-        me = w->staInfo(sta) ? sta.ip : w->apIp();
-    }
+    uint32_t me = dev_.address();
     uint8_t r[kPollReplySize] = {};
     memcpy(r, kId, sizeof(kId));
     r[8] = kOpPollReply & 0xFF;

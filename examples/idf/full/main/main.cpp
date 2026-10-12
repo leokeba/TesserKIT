@@ -69,7 +69,7 @@ Led led;
 
 tesserkit::Device dev("TesserKIT");
 tesserkit::System sys(dev);           // /sys/status, restart, factory reset, core dump
-tesserkit::Network net(dev);          // Wi-Fi, access point, captive portal, mDNS
+tesserkit::Network net(dev);          // Wi-Fi, Ethernet, access point, captive portal, mDNS
 tesserkit::Time timekeeper(dev);      // SNTP, time zone
 tesserkit::Firmware firmware(dev);    // upload, URL, GitHub releases, rollback
 tesserkit::Files files(dev);          // LittleFS: stored backups, the application's files
@@ -93,6 +93,9 @@ extern "C" void app_main() {
 #endif
 #if defined(WIFI_TX_POWER)
     net.txPower(WIFI_TX_POWER);
+#endif
+#if defined(ETHERNET_BOARD)
+    net.ethernet(tesserkit::boards::ETHERNET_BOARD());  // preferred while it has an address
 #endif
     net.apMode(tesserkit::ApMode::Fallback);  // its own network while no other is joined
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3").defaultServer("pool.ntp.org");

@@ -105,6 +105,45 @@ struct Wifi : tesserkit::Wifi {
     }
 };
 
+// A cable the test plugs in, and a DHCP server that answers it (or not).
+struct Ethernet : tesserkit::Ethernet {
+    EventSink sink;
+    bool starts = true;
+    int begins = 0;
+    tesserkit::EthernetBoard board;
+    std::string hostnameSet;
+    tesserkit::IpConfig ip;
+    int addressCalls = 0;
+    bool dhcp = true;  // a DHCP server on the cable
+    tesserkit::EthInfo state;
+
+    bool begin(const tesserkit::EthernetBoard& b, const char* hostname, const tesserkit::IpConfig& c,
+               EventSink s) override {
+        begins++;
+        if (!starts) return false;
+        board = b;
+        hostnameSet = hostname;
+        ip = c;
+        sink = std::move(s);
+        for (int i = 0; i < 6; i++) state.mac[i] = static_cast<uint8_t>(0xe0 + i);
+        return true;
+    }
+    void hostname(const char* name) override { hostnameSet = name; }
+    void address(const tesserkit::IpConfig& c) override;
+    bool info(tesserkit::EthInfo& out) override {
+        out = state;
+        return static_cast<bool>(sink);
+    }
+    void plug();
+    void unplug();
+    void post(Event::Type type, int32_t value = 0) {
+        Event e;
+        e.type = type;
+        e.value = value;
+        sink(e);
+    }
+};
+
 struct Mdns : tesserkit::Mdns {
     bool on = false;
     std::string host, version;
@@ -373,6 +412,7 @@ struct Filesystem : tesserkit::Filesystem {
 struct Platform {
     Core core;
     Wifi wifi;
+    Ethernet ethernet;
     Mdns mdns;
     Clock clock;
     Ota ota;
@@ -387,6 +427,7 @@ struct Platform {
         tesserkit::Platform& p = dev.platform();
         p.core = &core;
         p.wifi = &wifi;
+        p.ethernet = &ethernet;
         p.mdns = &mdns;
         p.clock = &clock;
         p.ota = &ota;

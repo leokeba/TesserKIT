@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <iterator>
 #include <utility>
 
 namespace tesserkit {
@@ -24,8 +25,43 @@ Check checkIp(const std::string& text) {
 }
 
 // An IPv4 field of a static configuration: empty, or a.b.c.d.
-void ipField(tesser::Object& o, const char* name, const char* label, std::string& field) {
-    o.value(name, field).validate(checkIp).label(label).ui("visibleWhen", "enabled=true");
+tesser::Node& ipField(tesser::Object& o, const char* name, const char* label, std::string& field) {
+    return o.value(name, field).validate(checkIp).label(label).ui("visibleWhen", "enabled=true");
+}
+
+// A static address's settings, collapsed: DHCP unless enabled. Its values'
+// nodes go to `nodes` when given.
+tesser::Object& describeStatic(tesser::Object& parent, StaticIp& ip, std::vector<tesser::Node*>* nodes = nullptr) {
+    auto& s = parent.object("static").label("Static IP").ui("collapsed");
+    tesser::Node* n[] = {
+        &s.value("enabled", ip.enabled).label("Use a static address"),
+        &ipField(s, "ip", "Address", ip.ip),
+        &ipField(s, "mask", "Netmask", ip.mask),
+        &ipField(s, "gateway", "Gateway", ip.gateway),
+        &ipField(s, "dns", "DNS server", ip.dns),
+    };
+    if (nodes) nodes->assign(std::begin(n), std::end(n));
+    return s;
+}
+
+// The setup a static address's settings make: DHCP unless they are enabled
+// and complete. A missing DNS server is the gateway.
+IpConfig ipConfig(const StaticIp& s, const char* what) {
+    IpConfig c;
+    if (!s.enabled) return c;
+    c.staticIp = parseIpv4(s.ip, c.ip) && parseIpv4(s.mask, c.mask) && parseIpv4(s.gateway, c.gateway);
+    if (!c.staticIp) {
+        tesser::logWarning("tesserkit: incomplete static address for %s, using DHCP", what);
+        return IpConfig();
+    }
+    if (!parseIpv4(s.dns, c.dns)) c.dns = c.gateway;
+    return c;
+}
+
+std::string formatMac(const uint8_t* m) {
+    char b[18];
+    snprintf(b, sizeof(b), "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+    return b;
 }
 
 bool validHostname(const std::string& h) {
@@ -68,13 +104,34 @@ std::string formatIpv4(uint32_t ip) {
 void describe(tesser::Object& o, WifiNetwork& n) {
     o.value("ssid", n.ssid).label("Network");
     o.value("password", n.password).secret();
-    auto& s = o.object("static").label("Static IP").ui("collapsed");
-    s.value("enabled", n.ip.enabled).label("Use a static address");
-    ipField(s, "ip", "Address", n.ip.ip);
-    ipField(s, "mask", "Netmask", n.ip.mask);
-    ipField(s, "gateway", "Gateway", n.ip.gateway);
-    ipField(s, "dns", "DNS server", n.ip.dns);
+    describeStatic(o, n.ip);
 }
+
+namespace boards {
+
+namespace {
+EthernetBoard board(EthernetBoard::Phy phy, int8_t address, int8_t mdc, int8_t mdio, int8_t power,
+                    EthernetBoard::Clock clock, int8_t clockGpio) {
+    EthernetBoard b;
+    b.phy = phy;
+    b.address = address;
+    b.mdc = mdc;
+    b.mdio = mdio;
+    b.power = power;
+    b.clock = clock;
+    b.clockGpio = clockGpio;
+    return b;
+}
+}  // namespace
+
+using Phy = EthernetBoard::Phy;
+using Clock = EthernetBoard::Clock;
+EthernetBoard gledopto() { return board(Phy::Lan8720, 1, 23, 33, 5, Clock::In, 0); }
+EthernetBoard wt32Eth01() { return board(Phy::Lan8720, 1, 23, 18, 16, Clock::In, 0); }
+EthernetBoard olimexEsp32Poe() { return board(Phy::Lan8720, 0, 23, 18, 12, Clock::Out, 17); }
+EthernetBoard esp32EthernetKit() { return board(Phy::Ip101, 1, 23, 18, 5, Clock::In, 0); }
+
+}  // namespace boards
 
 Network& Network::defaultNetwork(const char* ssid, const char* password) {
     WifiNetwork n;
@@ -104,6 +161,16 @@ Network& Network::txPower(int8_t dBm) {
     return *this;
 }
 
+Network& Network::ethernet(const EthernetBoard& board) {
+    ethWanted_ = true;
+    ethBoard_ = board;
+    // Here rather than in describe(): applications without Ethernet don't
+    // link its driver.
+    Platform& p = dev_.platform();
+    if (!p.ethernet) p.ethernet = espEthernet();
+    return *this;
+}
+
 void Network::describe(tesser::Object& o) {
     Device& dev = dev_;
     o.label("Network").ui("icon", "wifi").writeAccess(Access::Admin);
@@ -116,6 +183,22 @@ void Network::describe(tesser::Object& o) {
                          })
                          .persist()
                          .ui("advanced");
+
+    // First: preferred while it has an address.
+    eth_ = ethWanted_ ? dev.platform().ethernet : nullptr;
+    if (ethWanted_ && !eth_) tesser::logWarning("tesserkit: no Ethernet on this chip");
+    if (eth_) {
+        auto& e = o.object("ethernet").label("Ethernet").ui("card");
+        auto& es = e.object("status").label("Connection");
+        ethStatus_ = &es;
+        es.value("link", static_cast<const bool&>(ethLink_)).label("Cable");
+        es.value("connected", static_cast<const bool&>(ethOnline_));
+        es.value("ip", static_cast<const std::string&>(ethIp_)).label("Address");
+        es.value("speed", static_cast<const uint16_t&>(ethMbps_)).unit("Mbps");
+        es.value("mac", static_cast<const std::string&>(ethMac_)).label("MAC").ui("advanced");
+        ethJoined_ = &e.event("joined").label("Joined").ui("toast", "ok").ui("hidden");
+        describeStatic(e, ethStatic_, &ethIpNodes_).ui("form").persist();
+    }
 
     auto& w = o.object("wifi").label("Wi-Fi").ui("card");
     auto& st = w.object("status").label("Connection");
@@ -193,12 +276,24 @@ void Network::start() {
     Device& dev = dev_;
     wifi_->begin(dev.hostname().c_str(), [&dev](Event e) { dev.post(std::move(e)); });
     if (txPower_) wifi_->txPower(txPower_);
+    uint32_t now = static_cast<uint32_t>(dev.core().uptimeMs());
+    if (eth_) {
+        if (eth_->begin(ethBoard_, dev.hostname().c_str(), ethConfig(), [&dev](Event e) { dev.post(std::move(e)); })) {
+            EthInfo i;
+            if (eth_->info(i)) ethMac_ = formatMac(i.mac);
+            ethStatus_->changed();
+            ethWaitUntilMs_ = now + kEthWaitMs;
+        } else {
+            tesser::logError("tesserkit: Ethernet didn't start");
+            eth_ = nullptr;
+        }
+    }
     networksGen_ = networksNode_->generation();
     hostnameGen_ = hostnameNode_->generation();
     if (mdnsNode_) mdnsGen_ = mdnsNode_->generation();
     apGen_ = apFingerprint();
+    ethGen_ = ethFingerprint();
     applyMdns();
-    uint32_t now = static_cast<uint32_t>(dev.core().uptimeMs());
     lostAtMs_ = now;
     join(now);
     updateAp(now);
@@ -212,6 +307,14 @@ uint32_t Network::apFingerprint() const {
     return sum;
 }
 
+uint32_t Network::ethFingerprint() const {
+    uint32_t sum = 0;
+    for (const tesser::Node* n : ethIpNodes_) sum += n->generation();
+    return sum;
+}
+
+IpConfig Network::ethConfig() const { return ipConfig(ethStatic_, "Ethernet"); }
+
 const WifiNetwork* Network::find(const std::string& ssid) const {
     for (const WifiNetwork& n : networks_) {
         if (ssid == n.ssid) return &n;
@@ -221,22 +324,20 @@ const WifiNetwork* Network::find(const std::string& ssid) const {
 
 StaConfig Network::config(const WifiNetwork& n) const {
     StaConfig c;
+    static_cast<IpConfig&>(c) = ipConfig(n.ip, (std::string("\"") + n.ssid + "\"").c_str());
     c.ssid = n.ssid;
     c.password = n.password;
-    if (n.ip.enabled) {
-        c.staticIp = parseIpv4(n.ip.ip, c.ip) && parseIpv4(n.ip.mask, c.mask) && parseIpv4(n.ip.gateway, c.gateway);
-        if (!c.staticIp) {
-            tesser::logWarning("tesserkit: incomplete static address for \"%s\", using DHCP", n.ssid);
-        } else if (!parseIpv4(n.ip.dns, c.dns)) {
-            c.dns = c.gateway;
-        }
-    }
     return c;
 }
 
 void Network::join(uint32_t nowMs) {
-    if (networks_.empty()) {
+    if (networks_.empty() || ethOnline_) {  // Ethernet first
         sta_ = Sta::Idle;
+        return;
+    }
+    if (eth_ && static_cast<int32_t>(ethWaitUntilMs_ - nowMs) > 0) {
+        sta_ = Sta::Waiting;
+        retryAtMs_ = ethWaitUntilMs_;
         return;
     }
     sta_ = Sta::Scanning;
@@ -330,11 +431,9 @@ void Network::connected(uint32_t nowMs) {
     if (wifi_->staInfo(info)) {
         linkSsid_ = info.ssid;
         linkIp_ = formatIpv4(info.ip);
+        staAddr_ = info.ip;
         linkChannel_ = info.channel;
-        char b[18];
-        snprintf(b, sizeof(b), "%02x:%02x:%02x:%02x:%02x:%02x", info.bssid[0], info.bssid[1], info.bssid[2],
-                 info.bssid[3], info.bssid[4], info.bssid[5]);
-        linkBssid_ = b;
+        linkBssid_ = formatMac(info.bssid);
     } else {
         linkSsid_ = current_.ssid;
     }
@@ -350,14 +449,75 @@ void Network::lost(uint32_t nowMs) {
     linkIp_.clear();
     linkBssid_.clear();
     linkChannel_ = 0;
+    staAddr_ = 0;
     staStatus_->changed();
     lostAtMs_ = nowMs;
+}
+
+void Network::ethLink(bool up, uint32_t nowMs) {
+    if (up == ethLink_) return;
+    ethLink_ = up;
+    if (up) {
+        EthInfo i;
+        if (eth_->info(i)) ethMbps_ = i.mbps;
+        ethStatus_->changed();
+        ethWaitUntilMs_ = nowMs + kEthWaitMs;  // the station waits for DHCP
+        return;
+    }
+    ethDown(nowMs);
+}
+
+void Network::ethGotIp(uint32_t nowMs) {
+    EthInfo i;
+    if (!eth_->info(i) || !i.ip) return;
+    bool was = ethOnline_;
+    if (was && i.ip == ethAddr_) return;
+    ethOnline_ = ethLink_ = true;
+    ethAddr_ = i.ip;
+    ethIp_ = formatIpv4(i.ip);
+    ethMbps_ = i.mbps;
+    ethStatus_->changed();
+    tesser::logWarning("tesserkit: Ethernet up as %s", ethIp_.c_str());
+    ethJoined_->emit(ethIp_ + " on Ethernet");
+    if (was) return;
+    connectedAtMs_ = nowMs;  // clients on the access point follow the new address
+    // Ethernet first: one address on the network, and the station's radio
+    // time goes to ESP-NOW and the access point.
+    if (sta_ == Sta::Connected || sta_ == Sta::Connecting) wifi_->disconnect();
+    if (sta_ == Sta::Connected) lost(nowMs);
+    sta_ = Sta::Idle;
+}
+
+void Network::ethDown(uint32_t nowMs) {
+    bool was = ethOnline_;
+    // The station waits for this cable: it needn't any more.
+    bool waited = sta_ == Sta::Waiting && static_cast<int32_t>(ethWaitUntilMs_ - nowMs) > 0;
+    ethWaitUntilMs_ = nowMs;
+    ethOnline_ = false;
+    ethIp_.clear();
+    ethAddr_ = 0;
+    ethMbps_ = 0;
+    ethStatus_->changed();
+    if (was) {
+        tesser::logWarning("tesserkit: Ethernet down");
+        lostAtMs_ = nowMs;
+    }
+    if (was ? sta_ == Sta::Idle || sta_ == Sta::Waiting : waited) {
+        backoff_ = 0;
+        join(nowMs);
+    }
 }
 
 void Network::event(const Event& e) {
     if (!wifi_) return;
     uint32_t now = static_cast<uint32_t>(dev_.core().uptimeMs());
     switch (e.type) {
+        case Event::Type::EthLink:
+            if (eth_) ethLink(e.value != 0, now);
+            break;
+        case Event::Type::EthGotIp:
+            if (eth_) ethGotIp(now);
+            break;
         case Event::Type::ScanDone:
             if (scanning_) scanDone(wifi_->scanResults(), now);
             break;
@@ -407,11 +567,16 @@ void Network::checkSettings(uint32_t nowMs) {
     if (hostnameNode_->generation() != hostnameGen_) {
         hostnameGen_ = hostnameNode_->generation();
         wifi_->hostname(dev_.hostname().c_str());
+        if (eth_) eth_->hostname(dev_.hostname().c_str());
         applyMdns();
     }
     if (mdnsNode_ && mdnsNode_->generation() != mdnsGen_) {
         mdnsGen_ = mdnsNode_->generation();
         applyMdns();
+    }
+    if (eth_ && ethFingerprint() != ethGen_) {
+        ethGen_ = ethFingerprint();
+        eth_->address(ethConfig());  // EthGotIp follows with the new address
     }
     uint32_t fp = apFingerprint();
     if (fp != apGen_) {
@@ -428,12 +593,15 @@ void Network::applyMdns() {
 }
 
 void Network::updateAp(uint32_t nowMs) {
+    // Recovery: a device without a network is always reachable; one with
+    // Ethernet gives its cable the fallback's time first.
+    bool recovery = networks_.empty();
     bool want;
-    if (networks_.empty() || apMode_ == ApMode::Always) {
-        want = true;  // recovery: a device without a network is always reachable
-    } else if (apMode_ == ApMode::Never) {
+    if (apMode_ == ApMode::Always || (recovery && !eth_)) {
+        want = true;
+    } else if (apMode_ == ApMode::Never && !recovery) {
         want = false;
-    } else if (sta_ == Sta::Connected) {
+    } else if (online()) {
         want = apUp_ && nowMs - connectedAtMs_ < kApLingerMs;
     } else {
         want = apUp_ || nowMs - lostAtMs_ >= kApFallbackMs;
@@ -446,7 +614,8 @@ void Network::updateAp(uint32_t nowMs) {
         c.hidden = apHidden_;
         if (wifi_->startAp(c)) {
             apUp_ = true;
-            apIp_ = formatIpv4(wifi_->apIp());
+            apAddr_ = wifi_->apIp();
+            apIp_ = formatIpv4(apAddr_);
             apClients_ = 0;
             apStatus_->changed();
             tesser::logWarning("tesserkit: access point \"%s\" at %s", c.ssid.c_str(), apIp_.c_str());
@@ -454,11 +623,12 @@ void Network::updateAp(uint32_t nowMs) {
     } else if (!want && apUp_) {
         wifi_->stopAp();
         apUp_ = false;
+        apAddr_ = 0;
         apIp_.clear();
         apClients_ = 0;
         apStatus_->changed();
     }
-    bool captive = apUp_ && sta_ != Sta::Connected;
+    bool captive = apUp_ && !online();
     if (captive != captive_) {
         captive_ = captive;
         wifi_->captivePortal(captive);
@@ -489,12 +659,15 @@ void Network::tick(uint32_t nowMs) {
     }
     updateAp(nowMs);
     reportState();
+    updateAddress();
 }
 
 void Network::reportState() {
-    dev_.networkState(sta_ == Sta::Connected ? State::Online
-                      : networks_.empty()    ? State::Provisioning
-                                             : State::Connecting);
+    dev_.networkState(online()                          ? State::Online
+                      : networks_.empty() && !ethLink_ ? State::Provisioning
+                                                       : State::Connecting);
 }
+
+void Network::updateAddress() { dev_.address(ethOnline_ ? ethAddr_ : connected() ? staAddr_ : apAddr_); }
 
 }  // namespace tesserkit

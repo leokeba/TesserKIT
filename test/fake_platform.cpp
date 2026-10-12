@@ -98,6 +98,41 @@ void Wifi::drop() {
     post(Event::Type::StaDisconnected, 200);  // beacon timeout
 }
 
+// The lease, or the static address, once the link is up.
+static void lease(Ethernet& e) {
+    if (!e.state.link) return;
+    if (e.ip.staticIp) {
+        e.state.ip = e.ip.ip;
+    } else if (e.dhcp) {
+        e.state.ip = 0xC0A8013C;  // 192.168.1.60
+    } else {
+        return;
+    }
+    e.post(Event::Type::EthGotIp);
+}
+
+void Ethernet::address(const tesserkit::IpConfig& c) {
+    addressCalls++;
+    ip = c;
+    state.ip = 0;
+    lease(*this);
+}
+
+void Ethernet::plug() {
+    state.link = true;
+    state.mbps = 100;
+    state.fullDuplex = true;
+    post(Event::Type::EthLink, 1);
+    lease(*this);
+}
+
+void Ethernet::unplug() {
+    state.link = false;
+    state.ip = 0;
+    state.mbps = 0;
+    post(Event::Type::EthLink, 0);
+}
+
 void Clock::timezone(const char* posix) {
     tz = posix;
     setenv("TZ", posix, 1);

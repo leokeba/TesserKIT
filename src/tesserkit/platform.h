@@ -40,6 +40,8 @@ struct Event {
         NowTpPeers,       // nodes were found or lost
         NowTpChannel,     // value: the channel ESP-NOW moved to
         NowTpPairing,     // value: 0 if the pairing succeeded; text: the other node, or why not
+        EthLink,          // value: 1 when the cable's link came up, 0 when it went down
+        EthGotIp,         // Ethernet has an address
     };
     Type type;
     int32_t value = 0;
@@ -96,10 +98,19 @@ struct ScanResult {
     bool secure = false;
 };
 
-struct StaConfig {
-    std::string ssid, password;
+// An interface's IPv4 setup: DHCP, or a static address.
+struct IpConfig {
     bool staticIp = false;
     uint32_t ip = 0, mask = 0, gateway = 0, dns = 0;  // a.b.c.d as (a << 24) | ...
+
+    bool operator==(const IpConfig& o) const {
+        return staticIp == o.staticIp && ip == o.ip && mask == o.mask && gateway == o.gateway && dns == o.dns;
+    }
+    bool operator!=(const IpConfig& o) const { return !(*this == o); }
+};
+
+struct StaConfig : IpConfig {
+    std::string ssid, password;
 };
 
 struct StaInfo {
@@ -116,7 +127,7 @@ struct ApConfig {
     bool hidden = false;
 };
 
-// Wi-Fi, IP and mDNS: Network's.
+// Wi-Fi and IP: Network's.
 class Wifi {
 public:
     virtual ~Wifi() = default;
@@ -138,6 +149,48 @@ public:
     // A DNS server answering every name with the access point's address, and
     // the HTTP server's 404 handler redirecting to the interface.
     virtual void captivePortal(bool on) = 0;
+};
+
+// How a board wires its Ethernet PHY to the ESP32's internal MAC (RMII):
+// fixed by the hardware. Presets for known boards are in network.h.
+struct EthernetBoard {
+    // PHYs the driver knows by name; any other works as Generic (the
+    // registers IEEE 802.3 standardizes).
+    enum class Phy : uint8_t { Generic, Lan8720, Ip101, Rtl8201, Dp83848, Ksz8081 };
+    // The 50 MHz RMII clock: from an oscillator on the board into GPIO 0, or
+    // out of the ESP32 on GPIO 0, 16 or 17 (unstable with Wi-Fi on, the
+    // ESP32's errata say).
+    enum class Clock : uint8_t { In, Out };
+
+    Phy phy = Phy::Generic;
+    int8_t address = -1;  // on the MDIO bus; -1 finds it
+    int8_t mdc = 23, mdio = 18;
+    int8_t power = -1;  // a GPIO powering the PHY or its oscillator, -1 if none
+    Clock clock = Clock::In;
+    int8_t clockGpio = 0;
+};
+
+struct EthInfo {
+    bool link = false;
+    uint32_t ip = 0;     // 0 until it has one
+    uint16_t mbps = 0;   // 10 or 100 with a link
+    bool fullDuplex = false;
+    uint8_t mac[6] = {};
+};
+
+// Ethernet: Network's, when the application declares a board.
+class Ethernet {
+public:
+    virtual ~Ethernet() = default;
+    // Starts the MAC and the PHY; events go to `sink` from then on: EthLink,
+    // EthGotIp. False if the hardware didn't answer.
+    virtual bool begin(const EthernetBoard& board, const char* hostname, const IpConfig& ip, EventSink sink) = 0;
+    virtual void hostname(const char* name) = 0;
+    // DHCP or a static address, from now on: Event::EthGotIp follows if the
+    // link is up.
+    virtual void address(const IpConfig& ip) = 0;
+    // False before begin().
+    virtual bool info(EthInfo& out) = 0;
 };
 
 // mDNS: Network's, unless built with TESSERKIT_NO_MDNS.
@@ -350,6 +403,7 @@ public:
 struct Platform {
     Core* core = nullptr;
     Wifi* wifi = nullptr;
+    Ethernet* ethernet = nullptr;
     Mdns* mdns = nullptr;
     Clock* clock = nullptr;
     Ota* ota = nullptr;
@@ -365,6 +419,7 @@ struct Platform {
 // The ESP implementations (null on the host).
 Core* espCore();
 Wifi* espWifi();
+Ethernet* espEthernet();  // null on chips without an internal Ethernet MAC
 Mdns* espMdns();
 Clock* espClock();
 Ota* espOta();

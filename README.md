@@ -2,7 +2,7 @@
 
 A device framework for ESP32 firmware with a rich web interface and a small footprint. It provides what every connected device needs besides its own function, network setup, time, firmware updates, backups, files, users, MQTT, Art-Net, Bluetooth, ESP-NOW and system status, as subtrees of a [TesserAPI](https://github.com/leokeba/TesserAPI) tree, drawn by [TesserUI](https://github.com/leokeba/TesserUI)'s generic renderer with no UI code.
 
-> **Status: phase 2, with parts of 4.** Device, System, Network, Time, Firmware, Backup, Timers, Auth, Mqtt, ArtNet, Bluetooth, NowTp and Files work, on the host (138 tests) and on hardware (classic ESP32, ESP-IDF and Arduino, `test/e2e_device.py`). Porting helionext is under way in its own repository. The specification is [docs/DESIGN.md](docs/DESIGN.md).
+> **Status: phase 2, with parts of 4.** Device, System, Network, Time, Firmware, Backup, Timers, Auth, Mqtt, ArtNet, Bluetooth, NowTp and Files work, on the host (153 tests) and on hardware (classic ESP32, ESP-IDF and Arduino, `test/e2e_device.py`). Porting helionext is under way in its own repository. The specification is [docs/DESIGN.md](docs/DESIGN.md).
 
 ```cpp
 #include <TesserKIT.h>
@@ -37,7 +37,7 @@ It aims at most of [ESP32-sveltekit](https://github.com/theelims/ESP32-sveltekit
 | Service | Path | What it does |
 |---|---|---|
 | `System` | `/sys/status`, `/sys/restart`, ... | Chip, heap (charted), uptime, reset reason; restart, factory reset, core dump download |
-| `Network` | `/sys/network` | Saved networks (a keyed list, passwords never readable), scan, station state machine with backoff, access point (always, when offline, never), captive portal, mDNS |
+| `Network` | `/sys/network` | Saved networks (a keyed list, passwords never readable), scan, station state machine with backoff, access point (always, when offline, never), captive portal, mDNS; Ethernet on boards that have it (`net.ethernet(tesserkit::boards::gledopto())`), preferred to Wi-Fi while it has an address |
 | `Time` | `/sys/time` | SNTP, POSIX time zone (the interface picks it from IANA names), set from the browser's clock, external sources (GPS, RTC) |
 | `Firmware` | `/sys/firmware` | Upload with progress, checked for the chip before anything is written; download from a URL and updates from GitHub releases, checked daily on the device (opt-in); confirmation after a minute online, rollback |
 | `Backup` | `/sys/backup` | The persisted state as JSON, secrets included (Admin only), restored leniently across firmware versions; with Files, backups stored on the device (by date, the oldest pruned), restored in a click, and the settings a restore replaced kept as `before-restore` |
@@ -59,6 +59,7 @@ On a classic ESP32 with ESP-IDF and `-Os`, the five services add 113 KB of flash
 
 - **ESP-IDF:** `examples/idf/minimal` (it finds TesserAPI and TesserUI next to this repository, or through `TESSERAPI_PATH` and `TESSERUI_PATH`). Its `sdkconfig.defaults` selects `partitions/tesserkit_4mb.csv`, rollback and core dumps.
 - **Arduino / PlatformIO:** `examples/arduino/Minimal`, with TesserAPI, TesserUI and ArduinoJson 7.
+- **Ethernet:** `examples/idf/full` built with `-DETHERNET_BOARD=gledopto` (or another preset of `tesserkit::boards`) uses the board's cable, and Wi-Fi when it is unplugged. The ESP32's internal MAC with an RMII PHY; about 40 KB of flash, only when declared.
 - **Bluetooth:** `examples/idf/bluetooth` and `examples/arduino/Bluetooth` (ESP32-C3, ESP32-S3) add the Bluetooth service beside Wi-Fi: the launcher reaches the device from a phone with no network in common.
 - **Everything:** `examples/idf/full` has every service and transport, with the factory defaults each one takes, and a dashboard; it needs NowTP next to TesserKIT (or `NOWTP_PATH`). Two boards running it show each other. On a classic ESP32 without PSRAM it is at the edge of the RAM: HTTPS waits while an MQTT session runs (DESIGN §11).
 - **Host tests:** `cmake -S . -B build && cmake --build build -j && ctest --test-dir build`.
