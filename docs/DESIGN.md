@@ -693,6 +693,7 @@ TesserKIT devices are TesserAPI nodes, so the multi-node features are TesserAPI'
 
 - **UI host:** a TesserKIT device with the NowTp service (§5.11) or UdpApi (§5.18) mounts the nodes nearby under `/peers` and advertises itself. The UI shows a page per node, forwarded over ESP-NOW or UDP (TesserUI §9.5); a device both reach is one node with two routes, in the order Peers sets (§5.19).
 - **NowTP-only nodes** run TesserAPI and NowTP without TesserKIT's Wi-Fi services, or with a subset: `System` and `Firmware` work over any transport, uploads and the core dump's download included (in chunks, TesserAPI §10.1.1), and through a gateway (§5.4).
+- **Memory on a gateway without PSRAM:** a classic ESP32 running `examples/idf/full` has about 27–31 KB free, its largest block 22–24 KB. The device's peers' trees and replies pass through that, so a request too large for it is answered `busy` ("not enough memory for the response") rather than crashing the gateway (TesserAPI §15), and TesserUI tries again later. Measured on DEVKIT-V3 as the gateway to DEVKIT-R1 (2026-10-13), from the Mac: two streamed subscriptions to R1's whole tree held open, then 40 whole-tree reads (4.8 KB) and 40 full schema reads (30 KB) through V3, three times: every tree read answered, every schema read and both subscriptions `busy`, no restart on either board; V3's lowest free heap since boot 2.9 KB, R1's 12 KB. Before the TesserAPI and NowTP fixes of that day, the same load aborted V3 or R1 within a minute (`new` failing with no exceptions: a failed allocation aborts on ESP-IDF, `new (std::nothrow)` included).
 - **Fleet operations** are writes through the gateway to each peer, or to all of them with a `*` (`/peers/*/sequencer/play`, TesserAPI's fan-out, §14): update every peer's firmware (§5.4), set a value on all of them, trigger a sequence (§5.13). A view (TesserUI §8) with `each("/peers", ...)` shows a fleet dashboard.
 - **Synchronized actions** (spin-seq's "start together") need a shared clock: NowTP's clock offset (§14) lets a gateway say "start at T" to every peer, instead of re-broadcasting with retries.
 
@@ -846,6 +847,7 @@ TesserKIT/
 | UDP with its receive task but no worker (`Tasks::Receive`), and hooks that `begin()` and `end()` leave in place (TesserAPI 6336093, 2026-10-13) | transports in the device's task (§4.2) |
 | UDP routes per interface, route orders naming them (`udp/ethernet`), UDP kept to chosen interfaces (TesserAPI 1cf73f9, 2026-10-13) | Peers' order (§5.19), UdpApi's `interfaces` (§5.18) |
 | A node's own device id at the root of its schema and in its mDNS record (TesserAPI b852626, 2026-10-13) | TesserUI's tabs: one per device, however it is reached |
+| No abort on a short or fragmented heap: replies, relayed bodies, copies and parses of large messages answer `busy` (or are dropped like a lost datagram) unless the largest block holds them and an 8 KB floor stays free; gateways relay a remote's body raw, ask a remote only for what their subscribers need, and admit a remote subscription only above twice the floor; NowTP's reassembled buffers are handed over, not copied (TesserAPI dba7c1f, 1afb23c, 49dd339, 66afc3d, 8d88c9f, 5842ba2, 9519967, 2026-10-13) | gateways without PSRAM (§9) |
 
 Done 2026-10-12, for Files (TesserAPI 0a44fdf): file nodes in list elements transfer (`/sys/files/entries/<name>/content`), and an upload carries the client's file name (`?filename=`, `FileRequest::filename`).
 
@@ -853,7 +855,7 @@ Done 2026-10-12, for the Sequencer (§5.13), in TesserAPI 9c07af2 (its §6.5): a
 
 Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presenting a token on a line, an unauthenticated line or untrusted NowTP peer taking the level of the empty token, `BleTransport` controlled at runtime (`start()`, `stop()`, `setName()`, `peerAddress()`), read-only lists.
 
-**NowTP** (done in NowTP d39e0d4, 2026-10-11; NowTp uses the first three):
+**NowTP** (done in NowTP d39e0d4, 2026-10-11; NowTp uses the first three; message buffers and acknowledgements from malloc, so a short heap drops rather than aborts, and reassembled buffers handed to the receiver, bb20ac0, 8320a40, adb543b, 2026-10-13):
 
 | Item | For |
 |---|---|
