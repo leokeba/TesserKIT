@@ -15,7 +15,9 @@
 # The version is the last tag's (vX.Y.Z) with the patch raised, or what
 # `version-command` prints when that is higher, so a minor or major release is
 # a commit raising that version. A rerun on a released commit keeps its
-# version. Each target gives <name>-<target>.bin, the image devices install,
+# version. A run whose commit is no longer the branch's head by the time the
+# images are built releases nothing: the newer run releases its own commit.
+# Each target gives <name>-<target>.bin, the image devices install,
 # and <name>-<target>-factory.bin, the whole flash for a new board (0x0).
 # Several firmwares go in one release with `projects` instead of `project`,
 # `name` and `build-args`:
@@ -204,6 +206,16 @@ jobs:
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$TAG" dist/*.bin --clobber --repo "$GITHUB_REPOSITORY"
           else
+            # A push during the build moved the branch on: the newer run
+            # releases. The tag couldn't be made anyway if that push changed a
+            # workflow file, since the token may not create a ref whose
+            # workflows differ from the branch's (403 "Resource not
+            # accessible by integration").
+            head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)
+            if [ "$head" != "$GITHUB_SHA" ]; then
+              echo "::notice::$GITHUB_REF_NAME moved on to ${head:0:7}: its own run releases, not $TAG for ${GITHUB_SHA:0:7}"
+              exit 0
+            fi
             gh release create "$TAG" dist/*.bin --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
               --title "$TAG" --generate-notes
           fi
