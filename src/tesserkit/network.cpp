@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <algorithm>
 #include <iterator>
 #include <utility>
 
@@ -62,6 +63,22 @@ std::string formatMac(const uint8_t* m) {
     char b[18];
     snprintf(b, sizeof(b), "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
     return b;
+}
+
+// "3a:07:16:43:fd:24", any case.
+bool parseMac(const char* s, uint8_t* out) {
+    for (int i = 0; i < 6; i++) {
+        int v = 0;
+        for (int j = 0; j < 2; j++) {
+            char c = *s++;
+            int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+            if (d < 0) return false;
+            v = v * 16 + d;
+        }
+        out[i] = static_cast<uint8_t>(v);
+        if (i < 5 && *s++ != ':') return false;
+    }
+    return *s == 0;
 }
 
 bool linkLocal(uint32_t ip) { return ip >> 16 == 0xA9FE; }  // 169.254/16
@@ -128,6 +145,18 @@ std::string formatIpv4(uint32_t ip) {
 void describe(tesser::Object& o, WifiNetwork& n) {
     o.value("ssid", n.ssid).label("Network");
     o.value("password", n.password).secret();
+    o.value("bssid", n.bssid)
+        .label("Access point")
+        .doc("Joins only this one (its BSSID, from a scan) when several share the network's name; any of them "
+             "when it isn't heard")
+        .validate([](const std::string& v) {
+            uint8_t b[6];
+            return v.empty() || parseMac(v.c_str(), b)
+                       ? Check::ok()
+                       : Check::fail(Status::InvalidValue, "a BSSID: 3a:07:16:43:fd:24, or empty for any");
+        })
+        .ui("placeholder", "any")
+        .ui("advanced");
     describeStatic(o, n.ip);
 }
 
@@ -392,6 +421,17 @@ StaConfig Network::config(const WifiNetwork& n) const {
     static_cast<IpConfig&>(c) = ipConfig(n.ip, (std::string("\"") + n.ssid + "\"").c_str());
     c.ssid = n.ssid;
     c.password = n.password;
+    // Its access point only, when the last scan heard it (or heard nothing:
+    // a hidden network); otherwise any, rather than not joining at all.
+    uint8_t b[6];
+    if (n.bssid[0] && parseMac(n.bssid, b)) {
+        bool heard = heard_.empty();
+        for (const auto& h : heard_) heard = heard || memcmp(h.data(), b, sizeof(b)) == 0;
+        if (heard) {
+            c.bssidSet = true;
+            memcpy(c.bssid, b, sizeof(b));
+        }
+    }
     return c;
 }
 
@@ -445,10 +485,35 @@ bool Network::startScan(bool forJoin, uint32_t nowMs) {
 
 void Network::scanDone(const std::vector<ScanResult>& results, uint32_t nowMs) {
     scanning_ = false;
+    heard_.clear();
+    for (const ScanResult& r : results) {
+        std::array<uint8_t, 6> b;
+        memcpy(b.data(), r.bssid, b.size());
+        heard_.push_back(b);
+    }
+    // One entry per network, strongest first, with its access points.
+    std::vector<std::vector<const ScanResult*>> groups;
+    for (const ScanResult& r : results) {
+        bool found = false;
+        for (auto& g : groups) {
+            if (g[0]->ssid != r.ssid) continue;
+            size_t at = 0;
+            while (at < g.size() && g[at]->rssi >= r.rssi) at++;
+            g.insert(g.begin() + static_cast<std::ptrdiff_t>(at), &r);
+            found = true;
+            break;
+        }
+        if (!found) groups.push_back({&r});
+    }
+    std::stable_sort(groups.begin(), groups.end(),
+                     [](const std::vector<const ScanResult*>& a, const std::vector<const ScanResult*>& b) {
+                         return a[0]->rssi > b[0]->rssi;
+                     });
     for (tesser::Pending& p : scanWaiters_) {
-        p.replyWith([&results](tesser::JsonWriter& w) {
+        p.replyWith([&groups](tesser::JsonWriter& w) {
             w.beginArray();
-            for (const ScanResult& r : results) {
+            for (const auto& g : groups) {
+                const ScanResult& r = *g[0];
                 w.beginObject();
                 w.key("ssid");
                 w.string(r.ssid);
@@ -458,6 +523,19 @@ void Network::scanDone(const std::vector<ScanResult>& results, uint32_t nowMs) {
                 w.uinteger(r.channel);
                 w.key("secure");
                 w.boolean(r.secure);
+                w.key("accessPoints");
+                w.beginArray();
+                for (const ScanResult* a : g) {
+                    w.beginObject();
+                    w.key("bssid");
+                    w.string(formatMac(a->bssid));
+                    w.key("rssi");
+                    w.integer(a->rssi);
+                    w.key("channel");
+                    w.uinteger(a->channel);
+                    w.endObject();
+                }
+                w.endArray();
                 w.endObject();
             }
             w.endArray();
@@ -472,9 +550,13 @@ void Network::scanDone(const std::vector<ScanResult>& results, uint32_t nowMs) {
     candidates_.clear();
     std::vector<int> rssi;  // of each candidate, kept sorted strongest first (a few at most)
     for (const WifiNetwork& n : networks_) {
+        // Its access point's signal when it has one (and it was heard).
+        StaConfig c = config(n);
         int best = -1000;
         for (const ScanResult& r : results) {
-            if (r.ssid == n.ssid && r.rssi > best) best = r.rssi;
+            if (r.ssid != n.ssid || r.rssi <= best) continue;
+            if (c.bssidSet && memcmp(r.bssid, c.bssid, sizeof(c.bssid)) != 0) continue;
+            best = r.rssi;
         }
         if (best == -1000) continue;
         size_t at = 0;
@@ -660,11 +742,16 @@ void Network::checkSettings(uint32_t nowMs) {
             // Reconnect only if the joined network changed or went away.
             const WifiNetwork* n = find(current_.ssid);
             StaConfig c = n ? config(*n) : StaConfig();
+            // An access point set: only if it isn't the one joined.
+            StaInfo joined;
+            bool otherAp = c.bssidSet && (!wifi_->staInfo(joined) || memcmp(joined.bssid, c.bssid, sizeof(c.bssid)) != 0);
             if (!n || c.password != current_.password || c.staticIp != current_.staticIp || c.ip != current_.ip ||
-                c.mask != current_.mask || c.gateway != current_.gateway || c.dns != current_.dns) {
+                c.mask != current_.mask || c.gateway != current_.gateway || c.dns != current_.dns || otherAp) {
                 wifi_->disconnect();
                 lost(nowMs);
                 join(nowMs);
+            } else {
+                current_ = c;  // the access point it is on, from now on
             }
         } else {
             if (sta_ == Sta::Connecting) wifi_->disconnect();

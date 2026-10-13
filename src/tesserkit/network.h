@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,7 @@ struct StaticIp {
 struct WifiNetwork {
     char ssid[33] = "";
     char password[65] = "";
+    char bssid[18] = "";  // "3a:07:16:43:fd:24": only this access point of the network; empty: any
     StaticIp ip;
 };
 void describe(tesser::Object& o, WifiNetwork& n);
@@ -175,6 +177,7 @@ private:
     std::vector<std::string> candidates_;
     size_t candidate_ = 0;
     StaConfig current_;  // the network being joined or joined
+    std::vector<std::array<uint8_t, 6>> heard_;  // the access points the last scan heard
     bool scanning_ = false;
     bool scanForJoin_ = false;
     bool scanWanted_ = false;

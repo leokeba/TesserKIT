@@ -50,6 +50,7 @@ struct Core : tesserkit::Core {
 // A network on the air.
 struct Air {
     std::string ssid, password;
+    uint8_t bssid[6] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15};
     int8_t rssi = -60;
     uint8_t channel = 6;
     bool hidden = false;

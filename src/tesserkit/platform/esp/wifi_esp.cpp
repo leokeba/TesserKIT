@@ -77,18 +77,9 @@ public:
             const wifi_ap_record_t& r = records[i];
             std::string ssid(reinterpret_cast<const char*>(r.ssid), strnlen(reinterpret_cast<const char*>(r.ssid), 32));
             if (ssid.empty()) continue;
-            bool seen = false;
-            for (ScanResult& s : out) {  // one entry per name, its strongest access point
-                if (s.ssid != ssid) continue;
-                seen = true;
-                if (r.rssi > s.rssi) {
-                    s.rssi = r.rssi;
-                    s.channel = r.primary;
-                }
-            }
-            if (seen) continue;
             ScanResult s;
             s.ssid = ssid;
+            memcpy(s.bssid, r.bssid, sizeof(s.bssid));
             s.rssi = r.rssi;
             s.channel = r.primary;
             s.secure = r.authmode != WIFI_AUTH_OPEN;
@@ -105,6 +96,10 @@ public:
         config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
         config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
         config.sta.threshold.authmode = WIFI_AUTH_OPEN;  // accept whatever the network uses
+        if (c.bssidSet) {
+            config.sta.bssid_set = true;
+            memcpy(config.sta.bssid, c.bssid, sizeof(config.sta.bssid));
+        }
         esp::applyIp(sta_, c);
         if (esp_wifi_set_config(WIFI_IF_STA, &config) != ESP_OK) return false;
         return esp_wifi_connect() == ESP_OK;

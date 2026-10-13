@@ -276,9 +276,68 @@ TEST(network_scan) {
     CHECK(r.dev.begin());
     rig::Reply s = r.request(r.admin, rig::Op::Set, "/sys/network/wifi/scan", {}, tesser::Query(), 200);
     CHECK_EQ(s.status, Status::Ok);
-    CHECK_EQ(s.body, "[{\"ssid\":\"Home\",\"rssi\":-55,\"channel\":3,\"secure\":true},"
-                     "{\"ssid\":\"Cafe\",\"rssi\":-75,\"channel\":11,\"secure\":false}]");
+    CHECK_EQ(s.body,
+             "[{\"ssid\":\"Home\",\"rssi\":-55,\"channel\":3,\"secure\":true,"
+             "\"accessPoints\":[{\"bssid\":\"10:11:12:13:14:15\",\"rssi\":-55,\"channel\":3}]},"
+             "{\"ssid\":\"Cafe\",\"rssi\":-75,\"channel\":11,\"secure\":false,"
+             "\"accessPoints\":[{\"bssid\":\"10:11:12:13:14:15\",\"rssi\":-75,\"channel\":11}]}]");
     CHECK_EQ(r.request(r.anon, rig::Op::Set, "/sys/network/wifi/scan").status, Status::Unauthorized);
+}
+
+// Two access points of one network: a router and its repeater.
+struct MeshRig : NetRig {
+    MeshRig() {
+        air("Home", "password1", -50, 6);  // the repeater, nearer
+        fake.wifi.air.back().bssid[5] = 0x40;
+        air("Home", "password1", -70, 6);  // the router
+        fake.wifi.air.back().bssid[5] = 0x24;
+        net.defaultNetwork("Home", "password1");
+    }
+};
+
+TEST(network_scan_lists_access_points) {
+    MeshRig r;
+    r.air("Cafe", "", -60, 11);
+    CHECK(r.dev.begin());
+    rig::Reply s = r.request(r.admin, rig::Op::Set, "/sys/network/wifi/scan", {}, tesser::Query(), 200);
+    CHECK_EQ(s.status, Status::Ok);
+    // One entry per network, strongest first, its access points strongest first.
+    CHECK_EQ(at(s.body, "0/ssid"), "\"Home\"");
+    CHECK_EQ(at(s.body, "0/rssi"), "-50");
+    CHECK_EQ(at(s.body, "0/accessPoints/0/bssid"), "\"10:11:12:13:14:40\"");
+    CHECK_EQ(at(s.body, "0/accessPoints/1/bssid"), "\"10:11:12:13:14:24\"");
+    CHECK_EQ(at(s.body, "0/accessPoints/1/rssi"), "-70");
+    CHECK_EQ(at(s.body, "1/ssid"), "\"Cafe\"");
+}
+
+TEST(network_joins_the_access_point_set) {
+    MeshRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK(r.net.connected());
+    CHECK_EQ(r.value("/sys/network/wifi/status/bssid"), "\"10:11:12:13:14:40\"");  // the strongest
+    CHECK(!r.fake.wifi.last.bssidSet);
+    // Set to the one it is on: no reconnection (the reply would be lost).
+    int connects = r.fake.wifi.connects;
+    CHECK_EQ(r.set("/sys/network/wifi/networks/Home/bssid", "\"10:11:12:13:14:40\"").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.wifi.connects, connects);
+    // Set to the router's: it reconnects there.
+    CHECK_EQ(r.set("/sys/network/wifi/networks/Home/bssid", "\"10:11:12:13:14:24\"").status, Status::Ok);
+    r.settle();
+    CHECK(r.net.connected());
+    CHECK(r.fake.wifi.last.bssidSet);
+    CHECK_EQ(r.value("/sys/network/wifi/status/bssid"), "\"10:11:12:13:14:24\"");
+    // Checked, and readable by a user like the rest of the list.
+    CHECK_EQ(r.set("/sys/network/wifi/networks/Home/bssid", "\"10:11:12\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/network/wifi/networks/Home/bssid", "\"10-11-12-13-14-24\"").status, Status::InvalidValue);
+    // The router goes away: any access point of the network rather than none.
+    r.fake.wifi.air.pop_back();
+    r.fake.wifi.drop();
+    r.run(40000);
+    CHECK(r.net.connected());
+    CHECK(!r.fake.wifi.last.bssidSet);
+    CHECK_EQ(r.value("/sys/network/wifi/status/bssid"), "\"10:11:12:13:14:40\"");
 }
 
 TEST(network_scan_waits_for_a_connection_attempt) {

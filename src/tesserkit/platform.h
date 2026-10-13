@@ -97,8 +97,10 @@ public:
     virtual bool spawn(const char* name, uint32_t stackBytes, std::function<void()> fn) = 0;
 };
 
+// One access point a scan heard.
 struct ScanResult {
     std::string ssid;
+    uint8_t bssid[6] = {};
     int8_t rssi = 0;
     uint8_t channel = 0;
     bool secure = false;
@@ -117,6 +119,9 @@ struct IpConfig {
 
 struct StaConfig : IpConfig {
     std::string ssid, password;
+    // Only this access point of the network (several can share its name).
+    bool bssidSet = false;
+    uint8_t bssid[6] = {};
 };
 
 struct StaInfo {
@@ -146,7 +151,8 @@ public:
     virtual void hostname(const char* name) = 0;
     virtual void txPower(int8_t dBm) = 0;
     virtual void powerSave(PowerSave mode) = 0;
-    // Asynchronous: Event::ScanDone, then scanResults().
+    // Asynchronous: Event::ScanDone, then scanResults(): one per access
+    // point heard, hidden networks left out.
     virtual bool scan() = 0;
     virtual std::vector<ScanResult> scanResults() = 0;
     // Asynchronous: Event::StaAssociated then Event::StaGotIp, or

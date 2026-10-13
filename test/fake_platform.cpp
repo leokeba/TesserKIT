@@ -54,6 +54,7 @@ std::vector<tesserkit::ScanResult> Wifi::scanResults() {
         if (a.hidden) continue;
         tesserkit::ScanResult r;
         r.ssid = a.ssid;
+        memcpy(r.bssid, a.bssid, sizeof(r.bssid));
         r.rssi = a.rssi;
         r.channel = a.channel;
         r.secure = !a.password.empty();
@@ -67,8 +68,15 @@ bool Wifi::connect(const tesserkit::StaConfig& c) {
     last = c;
     if (linked) disconnect();
     if (connectSilent) return true;
+    // The strongest access point of the network, or the one asked for.
+    const Air* best = nullptr;
     for (const Air& a : air) {
         if (a.ssid != c.ssid) continue;
+        if (c.bssidSet && memcmp(a.bssid, c.bssid, sizeof(a.bssid)) != 0) continue;
+        if (!best || a.rssi > best->rssi) best = &a;
+    }
+    if (best) {
+        const Air& a = *best;
         if (a.password != c.password) {
             post(Event::Type::StaDisconnected, 15);  // 4-way handshake timeout
             return true;
@@ -78,7 +86,7 @@ bool Wifi::connect(const tesserkit::StaConfig& c) {
         link.ip = c.staticIp ? c.ip : 0xC0A80132;  // 192.168.1.50
         link.rssi = a.rssi;
         link.channel = a.channel;
-        for (int i = 0; i < 6; i++) link.bssid[i] = static_cast<uint8_t>(0x10 + i);
+        memcpy(link.bssid, a.bssid, sizeof(link.bssid));
         post(Event::Type::StaAssociated);
         if (!dhcpSilent) giveAddress();
         return true;
