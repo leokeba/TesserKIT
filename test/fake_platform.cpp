@@ -275,8 +275,9 @@ std::unique_ptr<tesserkit::UdpSocket> Udp::open(uint16_t port) {
     return std::unique_ptr<tesserkit::UdpSocket>(new UdpSocket(*this, port));
 }
 
-bool UdpApi::begin(tesser::Api& api, uint16_t p, const std::string& n) {
+bool UdpApi::begin(tesser::Api& api, uint16_t p, const std::string& n, size_t calls) {
     begins++;
+    maxCalls = calls;
     if (!opens) return false;
     port = p;
     name = n;
@@ -287,7 +288,12 @@ bool UdpApi::begin(tesser::Api& api, uint16_t p, const std::string& n) {
                 out.push_back(Datagram{to, std::vector<uint8_t>(d, d + len)});
                 return true;
             },
-            [this] { return clock ? static_cast<uint32_t>(*clock) : 0; }));
+            [this] { return clock ? static_cast<uint32_t>(*clock) : 0; }, tesser::UdpLink::Options(),
+            [calls] {
+                tesser::DatagramEndpoint::Options o = tesser::UdpLink::endpointOptions();
+                o.maxCalls = calls;
+                return o;
+            }()));
     }
     l->setName(n);
     const uint8_t mac[6] = {0xc8, 0xf0, 0x9e, 0xf4, 0xa6, 0x7c};

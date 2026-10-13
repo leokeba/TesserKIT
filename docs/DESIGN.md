@@ -460,7 +460,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - **At runtime:** `enabled`, `channel` and `longRange` apply at once; `mountPeers` and `pairingCode` at the next boot (the restart warning). A factory reset also forgets the installation key, which NowTP keeps in NVS of its own (namespace `nowtp`).
 - **Platform:** `NowTpRadio` (§3.3), built when the build has NowTP (TesserAPI's `TESSER_HAVE_NOWTP`, or `<NowTP.h>` on Arduino). Mounted nodes keep pointing at the transport, so stopping NowTP stops the radio and the transport's task but keeps the transport.
 - **Memory:** about 25 KB of heap while running (NowTP's event buffer and task, the transport's task, ESP-NOW).
-- **Factory defaults:** `nowtp.mountPeers(false).channel(6).longRange(true).txPower(15).pairingCode("...")`.
+- **Factory defaults:** `nowtp.mountPeers(false).channel(6).longRange(true).txPower(15).pairingCode("...")`; `nowtp.maxCalls(n)` as UdpApi's (§5.19).
 - Replaces §9's `dev.peers()`: the service is how a TesserKIT device joins a NowTP field.
 
 ### 5.12 Files
@@ -594,7 +594,31 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - **Access:** datagrams prove nothing about their sender. A node is at `peerAccess`, or at its token's level if it sends one (an `auth` envelope); while the device is open (no admin account, §5.7) every node is Admin, as every other client is. `send` itself is Admin.
 - **Runtime:** `enabled` and `port` apply at once (the transport says goodbye, closes its socket and opens the new one), `peerAccess` too; `mountPeers` at the next restart.
 - **Platform:** `UdpApiTransport` (§3.3), which owns TesserAPI's transport (two tasks: receiving, 4 KB of stack, and handling, 6 KB); the protocol is TesserAPI's platform-independent `UdpLink`, which the host tests run over an in-memory network.
-- **Factory defaults:** `udp.port(8484).peerAccess(tesser::Access::User).mountPeers(true)`; `udp.enable(false)` leaves it off until enabled.
+- **Factory defaults:** `udp.port(8484).peerAccess(tesser::Access::User).mountPeers(true)`; `udp.enable(false)` leaves it off until enabled; `udp.maxCalls(n)`, the calls in flight to other nodes (default 8, §5.19).
+
+### 5.19 Peers
+
+```
+/sys/peers              label "Nodes", ui.icon "target", write Admin
+  order *(p)            string: the transports tried for each node, in order ("udp, nowtp"); empty: the order found
+  nodes *(p)            keyed list (key "id"), ≤ 16, advanced: settings per device
+                          id       the device's station MAC, 12 hex digits (colons allowed), as /peers shows it
+                          name     its node's name when declared by address (empty: node-<last 6 digits>)
+                          order    its own order; empty: the default
+                          address  "192.168.1.97" or "…:8484": reached over UDP without being discovered
+  status                read-only keyed list (key "id"): id, name, online, route (the transport in use),
+                          routes (every transport that reaches it, in the order tried), rtt (ms), heard (s ago; -1 never)
+  lost                  event, warn toast: "lamp-f37c", when a node goes offline on every route
+  reached               event, info toast: "lamp-f37c over nowtp", when a node is back or goes another way
+```
+
+- **Routes:** UdpApi (§5.18) and NowTp (§5.11) mount their nodes under the same `/peers`, and a device both reach is one node there with a route per transport (TesserAPI §14.3, 02c3bf4): requests take the first online route in the order, the next one when a node is lost on it (UDP: a message unacknowledged for 3 s, a goodbye, a restart; NowTP: discovery losing it), and come back to the preferred one as soon as it is heard again. `order` is TesserAPI's default route order, a node's `order` its own; both apply at once, to nodes already mounted and to devices that appear later.
+- **By device:** settings and status are keyed by the device's id, the station MAC that both transports know it by (`"id"` in `/peers`' schema), so a setting follows a device whatever its name, and can be written before the device is seen. The name is beside it.
+- **Declared devices:** an `address` mounts the device over UDP at that address (a node on another subnet, whose advertisements don't arrive), under `name`; TesserAPI probes it every 5 s while it is offline. A device already found gets a UDP route at that address instead (when it has none). Nodes are never removed: removing a setting takes effect at the next restart.
+- **Status** is refreshed every second, and at once when a node is mounted, gets a route, or changes state or route (TesserAPI's `RemoteNode::onStateChange()`, which the service owns). `rtt` is the smoothed round trip of the calls on the route in use.
+- **A device gone** (`peers.onDeviceLost(fn(mac))`): a node driven by a master undoes what the master did when the master is gone from every transport, not when it fails over from one to the other (TesserAPI §14.4). UdpApi and NowTp hand their endpoints' `onPeerLost()` to the service when the endpoint is created; the function runs in the device's task, under the API lock. Who writes is `api.currentClient()->device` during the write.
+- **Streaming to nodes:** `RemoteNode::byDevice(peers.nodes(), mac)` finds a device's node (`peers.nodes()` is `api.object("peers")`), and `node->stream(path, json)` writes to it in order without waiting (TesserAPI §14.3). A set in flight takes one of the endpoint's calls: `udp.maxCalls(n)` and `nowtp.maxCalls(n)` (default 8, fixed when the transport starts) should be at least the number of nodes streamed to at once.
+- **Factory defaults:** `peers.order("udp, nowtp")`.
 
 ### 5.17 Later
 
@@ -635,10 +659,10 @@ They apply only when the stored state doesn't set the value, so a user's change 
 
 The UI is TesserUI's generic renderer, self-hosted by the device (TesserUI §9.4): `/` and `/ui.js`, about 41 KB of flash. Nothing is TesserKIT-specific in the bundle:
 
-- **Menu:** `/sys` has `ui.page`, so TesserUI's menu (TesserUI §6.3) shows it as one entry with a sub-entry, and a page, per service. Each service names its icon (`ui.icon`): Status `info`, Network `wifi`, Time `clock`, Firmware `download`, Backup `refresh`, Timers `play`, Users `lock`, MQTT `link`, Art-Net `bulb`, Log `menu`, Battery `battery`, Sleep `moon`, UDP `bolt`.
+- **Menu:** `/sys` has `ui.page`, so TesserUI's menu (TesserUI §6.3) shows it as one entry with a sub-entry, and a page, per service. Each service names its icon (`ui.icon`): Status `info`, Network `wifi`, Time `clock`, Firmware `download`, Backup `refresh`, Timers `play`, Users `lock`, MQTT `link`, Art-Net `bulb`, Log `menu`, Battery `battery`, Sleep `moon`, UDP `bolt`, Nodes `target`.
 - **Services' pages** are their trees with hints: labels, units, `confirm` on destructive actions, `style danger`, `advanced` on rarely used settings, `form` where several fields must change together (the access point), `visibleWhen` for conditional fields (static IP), `chart` on heap and RSSI.
 - **The application's pages** are its tree, plus TesserUI views (§8 there) for dashboards and custom elements (§9.8 there) for what generic widgets can't draw.
-- **Notifications:** what happens in the background, after any reply, is an event with `ui.toast` (TesserUI §7.8) and `ui.hidden`: a toast, not an events log on the service's page. Network's `joined`, Firmware's `updateFailed` and `newRelease`, `timerFailed`, Mqtt's `lost`, ArtNet's `refused`, the Sequencer's `failed` and Battery's `lowBattery`. TesserUI shows them on any page, as "<parent's label> › <label>: <payload>" ("Wi-Fi › Joined: 192.168.1.50 on Workshop"), so their labels don't repeat their parent's. A moment a reply or a widget already shows isn't one: a failed upload, a manual release check, a pairing (its state is on the page), a restore. Clients only hear events while subscribed, so what a device does at boot (a rollback, a crash) stays a value (`resetReason`, `coredumpPresent`).
+- **Notifications:** what happens in the background, after any reply, is an event with `ui.toast` (TesserUI §7.8) and `ui.hidden`: a toast, not an events log on the service's page. Network's `joined`, Firmware's `updateFailed` and `newRelease`, `timerFailed`, Mqtt's `lost`, ArtNet's `refused`, the Sequencer's `failed`, Battery's `lowBattery`, and Peers' `lost` and `reached`. TesserUI shows them on any page, as "<parent's label> › <label>: <payload>" ("Wi-Fi › Joined: 192.168.1.50 on Workshop"), so their labels don't repeat their parent's. A moment a reply or a widget already shows isn't one: a failed upload, a manual release check, a pairing (its state is on the page), a restore. Clients only hear events while subscribed, so what a device does at boot (a rollback, a crash) stays a value (`resetReason`, `coredumpPresent`).
 - **Login:** when a request answers `unauthorized`, TesserUI's sign-in dialog calls `/sys/auth/login` with a name and password (TesserUI §7.4). Without the Auth service it never needs to: everyone is Admin.
 - **Theming and text:** `dev.web().theme(...)`, `.text(...)`, `.title(...)` (TesserUI §9.4).
 - **The launcher** (TesserUI §9.7): the same bundle on GitHub Pages, `https://leokeba.github.io/TesserKIT/`, published by CI with the TesserUI the example firmware is built with (§13). It reaches a device without the device serving a page:
@@ -654,7 +678,7 @@ TesserUI renders everything TesserKIT's services declare: files (§5.4, §5.5), 
 
 TesserKIT devices are TesserAPI nodes, so the multi-node features are TesserAPI's and TesserUI's:
 
-- **UI host:** a TesserKIT device with the NowTp service (§5.11) mounts the nodes nearby under `/peers` and advertises itself. The UI shows a page per node, forwarded over ESP-NOW (TesserUI §9.5).
+- **UI host:** a TesserKIT device with the NowTp service (§5.11) or UdpApi (§5.18) mounts the nodes nearby under `/peers` and advertises itself. The UI shows a page per node, forwarded over ESP-NOW or UDP (TesserUI §9.5); a device both reach is one node with two routes, in the order Peers sets (§5.19).
 - **NowTP-only nodes** run TesserAPI and NowTP without TesserKIT's Wi-Fi services, or with a subset: `System` and `Firmware` work over any transport, uploads and the core dump's download included (in chunks, TesserAPI §10.1.1), and through a gateway (§5.4).
 - **Fleet operations** are writes through the gateway to each peer, or to all of them with a `*` (`/peers/*/sequencer/play`, TesserAPI's fan-out, §14): update every peer's firmware (§5.4), set a value on all of them, trigger a sequence (§5.13). A view (TesserUI §8) with `each("/peers", ...)` shows a fleet dashboard.
 - **Synchronized actions** (spin-seq's "start together") need a shared clock: NowTP's clock offset (§14) lets a gateway say "start at T" to every peer, instead of re-broadcasting with retries.
@@ -803,6 +827,7 @@ TesserKIT/
 | Automatic re-advertisement when the tree changes | gateways with mounted peers |
 | `Storage::erase()`, `Api::restore()` | factory reset, backups |
 | A UDP transport: the envelopes in datagrams on the LAN, discovery, broadcast sets, a least level for peers with tokens in `auth` envelopes, a device mounted once whatever the transport (TesserAPI ffa9d3d, 2026-10-13) | UdpApi (§5.18) |
+| Routes: one remote node per device with a route per transport, a route order (default and per node), failover, declared devices, state hooks, ordered streamed sets, peers lost across transports (TesserAPI 02c3bf4, by tesserapi-3d, 2026-10-13, for ballet-photophonique) | Peers (§5.19) |
 
 Done 2026-10-12, for Files (TesserAPI 0a44fdf): file nodes in list elements transfer (`/sys/files/entries/<name>/content`), and an upload carries the client's file name (`?filename=`, `FileRequest::filename`).
 

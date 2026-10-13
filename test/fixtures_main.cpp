@@ -26,6 +26,7 @@ int main(int argc, char** argv) {
     tesserkit::Battery battery(r.dev);
     tesserkit::Sleep sleep(r.dev);
     tesserkit::UdpApi udp(r.dev);
+    tesserkit::Peers peers(r.dev);
     files.root(r.fake.fs.dir.c_str());
     firmware.github("leokeba/TesserKIT", "tesserkit-minimal-{target}.bin");
     network.ethernet(tesserkit::boards::gledopto());

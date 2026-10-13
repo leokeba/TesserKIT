@@ -1,5 +1,7 @@
 #include "tesserkit/nowtp.h"
 
+#include "tesserkit/peers.h"
+
 namespace tesserkit {
 
 using tesser::Access;
@@ -15,6 +17,11 @@ constexpr uint32_t kSettleMs = 20000;  // at the latest: the access point is up 
 
 NowTp& NowTp::enable(bool on) {
     enabled_ = on;
+    return *this;
+}
+
+NowTp& NowTp::maxCalls(size_t n) {
+    maxCalls_ = n;
     return *this;
 }
 
@@ -167,9 +174,12 @@ void NowTp::begin() {
     c.longRange = longRange_;
     c.txPower = txPower_;
     c.pairingCode = pairingCode_;
+    c.maxCalls = maxCalls_;
     Device& dev = dev_;
+    bool had = radio_->endpoint() != nullptr;
     started_ = radio_->begin(dev.api(), peersObject_, c, [&dev](Event e) { dev.post(std::move(e)); });
     if (!started_) tesser::logError("tesserkit: NowTP didn't start");
+    if (!had && radio_->endpoint()) Peers::watch(dev, *radio_->endpoint());
     refresh();
 }
 

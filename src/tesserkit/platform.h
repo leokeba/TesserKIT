@@ -20,6 +20,7 @@
 
 namespace tesser {
 class Api;
+class DatagramEndpoint;
 class Object;
 class UdpLink;
 }  // namespace tesser
@@ -44,6 +45,8 @@ struct Event {
         NowTpPairing,     // value: 0 if the pairing succeeded; text: the other node, or why not
         EthLink,          // value: 1 when the cable's link came up, 0 when it went down
         EthGotIp,         // Ethernet has an address
+        PeersChanged,     // a node under /peers was mounted, got a route, or changed state or route
+        DeviceLost,       // text: the MAC of a device an endpoint lost (Peers::watch())
     };
     Type type;
     int32_t value = 0;
@@ -364,6 +367,7 @@ struct NowTpConfig {
     bool longRange = false;
     int8_t txPower = 0;    // dBm, 0: the driver's
     std::string pairingCode;
+    size_t maxCalls = 8;   // calls in flight to other nodes (one per node streamed to)
 };
 
 struct NowTpPeer {
@@ -407,6 +411,8 @@ public:
     // Forgets the installation key, here and in storage, started or not:
     // unsecured again.
     virtual bool forgetKey() = 0;
+    // TesserAPI's endpoint: null before the first begin(), then kept.
+    virtual tesser::DatagramEndpoint* endpoint() = 0;
 };
 
 // TesserAPI's API over UDP (its UdpTransport): UdpApi's. The protocol is
@@ -418,7 +424,9 @@ public:
     // Opens the socket on `port` and starts the link, advertising as
     // `name`; the transport is created on the first call. False if it
     // couldn't.
-    virtual bool begin(tesser::Api& api, uint16_t port, const std::string& name) = 0;
+    // `maxCalls`: calls in flight to other nodes, fixed when the transport
+    // is created.
+    virtual bool begin(tesser::Api& api, uint16_t port, const std::string& name, size_t maxCalls) = 0;
     // Says goodbye, closes the socket and forgets the peers; begin() again
     // to restart. Safe from a request that came over UDP.
     virtual void end() = 0;

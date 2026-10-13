@@ -45,7 +45,9 @@ public:
         // The transport outlives a stop: nodes mounted under `peers` keep
         // pointing at its endpoint.
         if (!transport_) {
-            transport_.reset(new tesser::NowTpTransport(&api, radio_));
+            tesser::DatagramEndpoint::Options o;
+            o.maxCalls = config.maxCalls;
+            transport_.reset(new tesser::NowTpTransport(&api, radio_, tesser::NowTpTransport::kDefaultPort, o));
             // Nodes holding the installation key: with a key, NowTP drops
             // every message not authenticated with it.
             transport_->endpoint().trust([this](const tesser::PeerAddress&) { return radio_.secured(); });
@@ -68,6 +70,8 @@ public:
         transport_->advertise();
         return true;
     }
+
+    tesser::DatagramEndpoint* endpoint() override { return transport_ ? &transport_->endpoint() : nullptr; }
 
     void end() override {
         if (transport_) transport_->end();

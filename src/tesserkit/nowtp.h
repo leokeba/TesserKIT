@@ -27,6 +27,9 @@ public:
     NowTp& longRange(bool on);
     NowTp& txPower(int8_t dBm);
     NowTp& pairingCode(const char* code);
+    // Calls in flight to other nodes (default 8): at least the number of
+    // nodes a master streams to at once (RemoteNode::stream()).
+    NowTp& maxCalls(size_t n);
 
     void describe(tesser::Object& o) override;
 
@@ -58,6 +61,7 @@ private:
     uint8_t channel_ = 1;
     bool longRange_ = false;
     int8_t txPower_ = 0;
+    size_t maxCalls_ = 8;
     std::string pairingCode_;
 
     NowTpRadio* radio_ = nullptr;

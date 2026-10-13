@@ -12,8 +12,12 @@ namespace {
 
 class EspUdpApi : public UdpApiTransport {
 public:
-    bool begin(tesser::Api& api, uint16_t port, const std::string& name) override {
-        if (!transport_) transport_.reset(new tesser::UdpTransport(&api));
+    bool begin(tesser::Api& api, uint16_t port, const std::string& name, size_t maxCalls) override {
+        if (!transport_) {
+            tesser::DatagramEndpoint::Options o = tesser::UdpLink::endpointOptions();
+            o.maxCalls = maxCalls;
+            transport_.reset(new tesser::UdpTransport(&api, tesser::UdpLink::Options(), o));
+        }
         transport_->setName(name);
         return transport_->begin(port);
     }

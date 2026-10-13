@@ -89,6 +89,7 @@ tesserkit::Bluetooth bluetooth(dev);  // the launcher from a phone
 #endif
 tesserkit::NowTp nowtp(dev);          // the nodes nearby over ESP-NOW (after Network: Wi-Fi first)
 tesserkit::UdpApi udp(dev);           // the nodes on the LAN over UDP, and writes to all at once
+tesserkit::Peers peers(dev);          // how the nodes are reached: UDP, NowTP, in which order
 tesserkit::Sequencer sequencer(dev);  // /sequencer: steps played in turn
 tesserkit::Log logs(dev);             // the firmware's log, as events and a file
 tesserkit::Sleep sleeper(dev);        // deep sleep, woken by a timer or the BOOT button

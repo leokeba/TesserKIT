@@ -35,6 +35,10 @@ public:
     UdpApi& peerAccess(tesser::Access level);
     // Mount the nodes found under /peers (default true).
     UdpApi& mountPeers(bool on);
+    // Calls in flight to other nodes (default 8, fixed at the first start):
+    // at least the number of nodes a master streams to at once
+    // (RemoteNode::stream()).
+    UdpApi& maxCalls(size_t n);
 
     void describe(tesser::Object& o) override;
 
@@ -61,6 +65,7 @@ private:
     uint16_t port_ = kDefaultPort;
     Level peerAccess_ = Level::User;
     bool mountPeers_ = true;
+    size_t maxCalls_ = 8;
 
     UdpApiTransport* transport_ = nullptr;
     tesser::Object* peersObject_ = nullptr;

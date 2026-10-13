@@ -20,7 +20,8 @@ set(TESSERKIT_CORE_SRCS
     src/tesserkit/log.cpp
     src/tesserkit/battery.cpp
     src/tesserkit/sleep.cpp
-    src/tesserkit/udp_api.cpp)
+    src/tesserkit/udp_api.cpp
+    src/tesserkit/peers.cpp)
 
 if(ESP_PLATFORM)
     # TesserAPI and TesserUI are hard dependencies. Their component names

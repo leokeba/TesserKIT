@@ -2,6 +2,7 @@
 
 #include "tesser/call.h"
 #include "tesser/udp_link.h"
+#include "tesserkit/peers.h"
 
 namespace tesserkit {
 
@@ -42,6 +43,11 @@ UdpApi& UdpApi::port(uint16_t p) {
 
 UdpApi& UdpApi::peerAccess(Access level) {
     peerAccess_ = static_cast<Level>(level);
+    return *this;
+}
+
+UdpApi& UdpApi::maxCalls(size_t n) {
+    maxCalls_ = n;
     return *this;
 }
 
@@ -115,7 +121,9 @@ void UdpApi::start() {
 
 void UdpApi::begin() {
     if (!transport_ || running_) return;
-    running_ = transport_->begin(dev_.api(), port_, dev_.hostname());
+    bool had = transport_->link() != nullptr;
+    running_ = transport_->begin(dev_.api(), port_, dev_.hostname(), maxCalls_);
+    if (!had && transport_->link()) Peers::watch(dev_, transport_->link()->endpoint());
     if (!running_) {
         tesser::logError("tesserkit: UDP didn't start on port %u", static_cast<unsigned>(port_));
         statusNode_->changed();

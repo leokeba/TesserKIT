@@ -1,0 +1,344 @@
+#include "tesserkit/peers.h"
+
+#include <stdio.h>
+
+#include "tesser/remote.h"
+#include "tesser/udp_link.h"
+
+namespace tesserkit {
+
+using tesser::Access;
+using tesser::Check;
+using tesser::PeerAddress;
+using tesser::RemoteNode;
+using tesser::Status;
+using tesser::TransportKind;
+
+namespace {
+
+// The transports a route can take.
+constexpr TransportKind kRouteKinds[] = {TransportKind::Udp, TransportKind::NowTP};
+
+int hexDigit(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+// "10521c75f37c" or "10:52:1c:75:f3:7c", any case.
+bool parseId(const std::string& text, PeerAddress& out) {
+    uint8_t b[6];
+    size_t digits = 0;
+    for (char c : text) {
+        if (c == ':') continue;
+        int d = hexDigit(c);
+        if (d < 0 || digits >= 12) return false;
+        if (digits % 2 == 0) {
+            b[digits / 2] = static_cast<uint8_t>(d << 4);
+        } else {
+            b[digits / 2] = static_cast<uint8_t>(b[digits / 2] | d);
+        }
+        digits++;
+    }
+    if (digits != 12) return false;
+    out = PeerAddress::fromBytes(b, 6);
+    return true;
+}
+
+std::string idOf(const PeerAddress& device) {
+    std::string s;
+    char hex[3];
+    for (uint8_t i = 0; i < device.length; i++) {
+        snprintf(hex, sizeof(hex), "%02x", device.bytes[i]);
+        s += hex;
+    }
+    return s;
+}
+
+// "udp, nowtp": each transport once, by TesserAPI's names. Empty is valid.
+bool parseOrder(const std::string& text, std::vector<TransportKind>& out) {
+    out.clear();
+    size_t i = 0;
+    while (i < text.size()) {
+        while (i < text.size() && (text[i] == ' ' || text[i] == ',')) i++;
+        size_t start = i;
+        while (i < text.size() && text[i] != ' ' && text[i] != ',') i++;
+        if (start == i) break;
+        std::string word = text.substr(start, i - start);
+        bool known = false;
+        for (TransportKind k : kRouteKinds) {
+            if (word != tesser::toString(k)) continue;
+            for (TransportKind seen : out) {
+                if (seen == k) return false;
+            }
+            out.push_back(k);
+            known = true;
+        }
+        if (!known) return false;
+    }
+    return true;
+}
+
+Check checkOrder(const std::string& v) {
+    std::vector<TransportKind> order;
+    return parseOrder(v, order) ? Check::ok()
+                                : Check::fail(Status::InvalidValue, "transports in order: udp, nowtp, or one of them");
+}
+
+std::string kindsOf(const std::vector<RemoteNode::Route>& routes) {
+    std::string s;
+    for (const RemoteNode::Route& r : routes) {
+        const char* k = tesser::toString(r.kind());
+        if (s.find(k) != std::string::npos) continue;
+        if (!s.empty()) s += ", ";
+        s += k;
+    }
+    return s;
+}
+
+}  // namespace
+
+void describe(tesser::Object& o, PeerSettings& s) {
+    o.value("id", s.id)
+        .label("Device")
+        .doc("Its station MAC, as /peers shows it (id)")
+        .validate([](const std::string& v) {
+            PeerAddress a;
+            return parseId(v, a) ? Check::ok() : Check::fail(Status::InvalidValue, "a MAC: 12 hex digits");
+        })
+        .ui("placeholder", "10521c75f37c");
+    o.value("name", s.name).doc("Its name under /peers when declared by address").ui("placeholder", "from the id");
+    o.value("order", s.order).label("Routes").validate(checkOrder).ui("placeholder", "the default");
+    o.value("address", s.address)
+        .doc("Reached over UDP at this address even when it isn't discovered (another subnet)")
+        .validate([](const std::string& v) {
+            PeerAddress a;
+            return v.empty() || tesser::parseUdpAddress(v, 8484, a)
+                       ? Check::ok()
+                       : Check::fail(Status::InvalidValue, "an IPv4 address, with a port or not");
+        })
+        .ui("placeholder", "discovered");
+}
+
+Peers& Peers::order(const char* order) {
+    order_ = order ? order : "";
+    return *this;
+}
+
+Peers& Peers::onDeviceLost(DeviceLostHandler fn) {
+    lost_ = std::move(fn);
+    return *this;
+}
+
+tesser::Object& Peers::nodes() {
+    if (!peers_) peers_ = &dev_.api().object("peers").label("Nodes nearby").ui("icon", "target");
+    return *peers_;
+}
+
+void Peers::describe(tesser::Object& o) {
+    o.label("Nodes")
+        .ui("icon", "target")
+        .doc("How this device reaches the nodes under /peers: over UDP, NowTP, or both in order")
+        .writeAccess(Access::Admin);
+    orderNode_ = &o.value("order", order_)
+                      .validate(checkOrder)
+                      .persist()
+                      .label("Routes")
+                      .doc("The transports tried for each node, in order, the next one when a node is lost on one")
+                      .ui("placeholder", "in the order the nodes were found");
+    settingsNode_ =
+        &o.list("nodes", settings_).key("id").maxSize(kMaxNodes).persist().label("Settings per node").ui("advanced");
+    statusNode_ = &o.list("status", states_,
+                          [](tesser::Object& e, State& s) {
+                              e.value("id", static_cast<const std::string&>(s.id)).label("Device");
+                              e.value("name", static_cast<const std::string&>(s.name));
+                              e.value("online", static_cast<const bool&>(s.online));
+                              e.value("route", static_cast<const std::string&>(s.route)).label("Over");
+                              e.value("routes", static_cast<const std::string&>(s.routes)).label("Routes");
+                              e.value("rtt", static_cast<const uint32_t&>(s.rtt)).unit("ms").label("Round trip");
+                              e.value("heard", static_cast<const int32_t&>(s.heard))
+                                  .unit("s")
+                                  .label("Last heard")
+                                  .doc("Seconds ago; -1: never");
+                          })
+                       .key("id")
+                       .maxSize(kMaxNodes)
+                       .readOnly()
+                       .label("Nodes");
+    lostEvent_ = &o.event("lost").label("Lost").ui("toast", "warn").ui("hidden");
+    reachedEvent_ = &o.event("reached").label("Reached").ui("toast", "info").ui("hidden");
+}
+
+void Peers::start() {
+    nodes();
+    orderGen_ = orderNode_->generation();
+    settingsGen_ = settingsNode_->generation();
+    applyDefaultOrder();
+    Device& dev = dev_;
+    // One hook for every node: wakes refresh() rather than touching the tree
+    // from the endpoint's task.
+    RemoteNode::onStateChange([&dev](RemoteNode&) {
+        Event e;
+        e.type = Event::Type::PeersChanged;
+        dev.post(std::move(e));
+    });
+    dirty_ = true;
+}
+
+void Peers::watch(Device& dev, tesser::DatagramEndpoint& endpoint) {
+    // Set once, as the endpoint is created: no peer can be lost before.
+    endpoint.onPeerLost([&dev](const PeerAddress&, const PeerAddress& device) {
+        if (!device.length) return;
+        Event e;
+        e.type = Event::Type::DeviceLost;
+        e.text.assign(reinterpret_cast<const char*>(device.bytes), device.length);
+        dev.post(std::move(e));
+    });
+}
+
+std::vector<tesser::DatagramEndpoint*> Peers::endpoints() const {
+    std::vector<tesser::DatagramEndpoint*> out;
+    Platform& p = dev_.platform();
+    if (p.udpApi && p.udpApi->link()) out.push_back(&p.udpApi->link()->endpoint());
+    if (p.nowtp && p.nowtp->endpoint()) out.push_back(p.nowtp->endpoint());
+    return out;
+}
+
+void Peers::applyDefaultOrder() {
+    std::vector<TransportKind> order;
+    if (!parseOrder(order_, order)) order.clear();  // a bad factory default: the order found
+    RemoteNode::setDefaultRouteOrder(order);
+}
+
+const PeerSettings* Peers::settingsFor(const PeerAddress& device) const {
+    if (!device.length) return nullptr;
+    for (const PeerSettings& s : settings_) {
+        PeerAddress a;
+        if (parseId(s.id, a) && a == device) return &s;
+    }
+    return nullptr;
+}
+
+void Peers::declare() {
+    Platform& p = dev_.platform();
+    tesser::UdpLink* link = p.udpApi ? p.udpApi->link() : nullptr;
+    if (!link) return;
+    tesser::DatagramEndpoint& ep = link->endpoint();
+    for (const PeerSettings& s : settings_) {
+        if (s.address.empty()) continue;
+        std::string done = s.id + " " + s.address;
+        bool seen = false;
+        for (const std::string& d : declared_) seen = seen || d == done;
+        if (seen) continue;
+        PeerAddress device, address;
+        if (!parseId(s.id, device) || !tesser::parseUdpAddress(s.address, 8484, address)) continue;
+        declared_.push_back(done);
+        if (RemoteNode* n = RemoteNode::byDevice(*peers_, device)) {
+            // Found already: one more way to reach it, unless UDP has one.
+            bool udp = false;
+            for (const RemoteNode::Route& r : n->routes()) udp = udp || r.endpoint == &ep;
+            if (!udp) n->addRoute(ep, address);
+            continue;
+        }
+        std::string name = s.name.empty() ? "node-" + idOf(device).substr(6) : s.name;
+        if (peers_->child(name)) name += "-" + idOf(device).substr(6);
+        if (peers_->child(name)) {
+            tesser::logWarning("tesserkit: /peers/%s is taken", name.c_str());
+            continue;
+        }
+        names_.push_back(name);
+        RemoteNode& n = peers_->remote(names_.back().c_str(), ep, address);
+        n.setDevice(device);
+        n.changed();
+    }
+}
+
+void Peers::refresh(uint32_t nowMs) {
+    refreshedMs_ = nowMs;
+    dirty_ = false;
+    declare();
+    std::vector<State> states;
+    for (tesser::Node* c = peers_->first(); c; c = c->next()) {
+        if (c->type() != tesser::NodeType::Remote) continue;
+        auto* n = static_cast<RemoteNode*>(c);
+        PeerAddress device = n->device();
+        // Each node's own order, or the default (applied as soon as the device
+        // is known, whenever it appears).
+        std::vector<TransportKind> order;
+        const PeerSettings* s = settingsFor(device);
+        if (s && !parseOrder(s->order, order)) order.clear();
+        if (n->routeOrder() != order) n->routeOrder(order);
+        if (states.size() >= kMaxNodes) continue;
+        State st;
+        st.id = idOf(device);
+        st.name = n->name();
+        st.online = n->online();
+        std::vector<RemoteNode::Route> routes = n->routes();
+        st.routes = kindsOf(routes);
+        RemoteNode::Route cur;
+        if (n->route(cur)) {
+            st.route = tesser::toString(cur.kind());
+            st.rtt = cur.rttMs;
+        }
+        for (const RemoteNode::Route& r : routes) {
+            if (!r.heardMs || !r.endpoint) continue;
+            int32_t ago = static_cast<int32_t>((r.endpoint->now() - r.heardMs) / 1000);
+            if (st.heard < 0 || ago < st.heard) st.heard = ago;
+        }
+        states.push_back(st);
+    }
+    // Toasts: a node lost, or reached again or another way. A node seen for
+    // the first time isn't news.
+    for (const State& st : states) {
+        for (const State& old : states_) {
+            if (old.name != st.name) continue;
+            if (old.online && !st.online) {
+                lostEvent_->emit(st.name);
+            } else if (st.online && (!old.online || old.route != st.route)) {
+                reachedEvent_->emit(st.name + " over " + st.route);
+            }
+        }
+    }
+    bool same = states.size() == states_.size();
+    for (size_t i = 0; same && i < states.size(); i++) {
+        const State &a = states[i], &b = states_[i];
+        same = a.id == b.id && a.name == b.name && a.online == b.online && a.route == b.route &&
+               a.routes == b.routes && a.rtt == b.rtt && a.heard == b.heard;
+    }
+    if (!same) {
+        states_ = std::move(states);
+        statusNode_->changed();
+    }
+}
+
+void Peers::tick(uint32_t nowMs) {
+    uint16_t gen = orderNode_->generation();
+    if (gen != orderGen_) {
+        orderGen_ = gen;
+        applyDefaultOrder();
+        dirty_ = true;
+    }
+    if ((gen = settingsNode_->generation()) != settingsGen_) {
+        settingsGen_ = gen;
+        dirty_ = true;
+    }
+    if (dirty_ || nowMs - refreshedMs_ >= kRefreshMs) refresh(nowMs);
+}
+
+void Peers::event(const Event& e) {
+    if (e.type == Event::Type::PeersChanged) {
+        dirty_ = true;
+        return;
+    }
+    if (e.type != Event::Type::DeviceLost) return;
+    PeerAddress device =
+        PeerAddress::fromBytes(reinterpret_cast<const uint8_t*>(e.text.data()), static_cast<uint8_t>(e.text.size()));
+    // Gone from one transport, perhaps not from the others (a failover).
+    for (tesser::DatagramEndpoint* ep : endpoints()) {
+        if (ep->deviceOnline(device)) return;
+    }
+    if (lost_) lost_(device);
+}
+
+}  // namespace tesserkit

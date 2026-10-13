@@ -348,9 +348,31 @@ struct NowTp : tesserkit::NowTpRadio {
     int begins = 0, ends = 0, pairings = 0, accepts = 0, forgets = 0;
     bool keyStored = false;
 
-    bool begin(tesser::Api&, tesser::Object* peers, const tesserkit::NowTpConfig& c,
+    // TesserAPI's endpoint, its messages kept in `sent` for a test to carry.
+    struct Message {
+        tesser::PeerAddress to;
+        std::string text;
+    };
+    const uint64_t* clock = nullptr;  // the fake core's
+    std::unique_ptr<tesser::DatagramEndpoint> ep;
+    std::vector<Message> sent;
+    tesser::DatagramEndpoint* endpoint() override { return ep.get(); }
+
+    bool begin(tesser::Api& api, tesser::Object* peers, const tesserkit::NowTpConfig& c,
                tesserkit::EventSink s) override {
         begins++;
+        if (!ep) {
+            tesser::DatagramEndpoint::Options o;
+            o.maxCalls = c.maxCalls;
+            ep.reset(new tesser::DatagramEndpoint(
+                &api, tesser::TransportKind::NowTP,
+                [this](const tesser::PeerAddress& to, const std::string& m, tesser::Delivery) {
+                    sent.push_back(Message{to, m});
+                    return true;
+                },
+                [this] { return clock ? static_cast<uint32_t>(*clock) : 0; }, o));
+            if (peers) ep->mountPeers(*peers);
+        }
         config = c;
         sink = std::move(s);
         mountedUnder = peers;
@@ -521,7 +543,8 @@ struct UdpApi : tesserkit::UdpApiTransport {
     std::string name;
     uint32_t nonce = 0x4000;
 
-    bool begin(tesser::Api& api, uint16_t p, const std::string& n) override;
+    size_t maxCalls = 0;
+    bool begin(tesser::Api& api, uint16_t p, const std::string& n, size_t calls) override;
     void end() override {
         ends++;
         if (l) l->stop();
@@ -566,6 +589,7 @@ struct Platform {
         p.power = &power;
         p.pins = &pins;
         udpApi.clock = &core.now;
+        nowtp.clock = &core.now;
         p.udpApi = &udpApi;
     }
 };

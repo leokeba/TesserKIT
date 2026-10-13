@@ -22,6 +22,7 @@
 #include "tesserkit/mqtt.h"
 #include "tesserkit/network.h"
 #include "tesserkit/nowtp.h"
+#include "tesserkit/peers.h"
 #include "tesserkit/sequencer.h"
 #include "tesserkit/sleep.h"
 #include "tesserkit/system.h"
