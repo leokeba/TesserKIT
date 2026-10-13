@@ -76,8 +76,10 @@ jobs:
       - name: Build the bundle
         working-directory: TesserUI/web
         run: pnpm install --frozen-lockfile && pnpm build
+      # ui.js loads the launcher's workspace (several nodes at once) from
+      # launcher.js beside it.
       - name: Site
-        run: mkdir _site && cp pages/index.html TesserUI/web/dist/ui.js _site/ && cp -R TesserUI/web/dist/flash _site/flash
+        run: mkdir _site && cp pages/index.html TesserUI/web/dist/ui.js TesserUI/web/dist/launcher.js _site/ && cp -R TesserUI/web/dist/flash _site/flash
       # A page can't read release assets from GitHub (no CORS): the flasher
       # finds them next to it.
       - name: The firmware the launcher installs
