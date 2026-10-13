@@ -123,6 +123,10 @@ struct StaInfo {
     uint8_t bssid[6] = {};
 };
 
+// The station's power save: none (lowest latency), modem sleep between
+// beacons (ESP-IDF's default), or maximum (sleeps through several).
+enum class PowerSave : uint8_t { None, Min, Max };
+
 struct ApConfig {
     std::string ssid, password;  // an empty password makes an open network
     uint8_t channel = 1;
@@ -137,6 +141,7 @@ public:
     virtual void begin(const char* hostname, EventSink sink) = 0;
     virtual void hostname(const char* name) = 0;
     virtual void txPower(int8_t dBm) = 0;
+    virtual void powerSave(PowerSave mode) = 0;
     // Asynchronous: Event::ScanDone, then scanResults().
     virtual bool scan() = 0;
     virtual std::vector<ScanResult> scanResults() = 0;

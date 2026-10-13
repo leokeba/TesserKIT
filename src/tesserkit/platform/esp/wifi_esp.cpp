@@ -53,6 +53,13 @@ public:
 
     void txPower(int8_t dBm) override { esp_wifi_set_max_tx_power(static_cast<int8_t>(dBm * 4)); }
 
+    void powerSave(PowerSave mode) override {
+        esp_err_t err = esp_wifi_set_ps(mode == PowerSave::None  ? WIFI_PS_NONE
+                                        : mode == PowerSave::Max ? WIFI_PS_MAX_MODEM
+                                                                 : WIFI_PS_MIN_MODEM);
+        if (err != ESP_OK) tesser::logWarning("tesserkit: esp_wifi_set_ps: %s", esp_err_to_name(err));
+    }
+
     bool scan() override {
         wifi_scan_config_t config = {};
         return esp_wifi_scan_start(&config, false) == ESP_OK;

@@ -720,6 +720,29 @@ TEST(network_station_mode_without_ethernet) {
     CHECK(r.fake.wifi.apUp);  // its own network, offline
 }
 
+TEST(network_power_save) {
+    NetRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.value("/sys/network/wifi/powerSave"), "\"min\"");
+    CHECK(r.fake.wifi.ps == tesserkit::PowerSave::Min);  // set at start
+    CHECK_EQ(r.set("/sys/network/wifi/powerSave", "\"none\"").status, Status::Ok);
+    r.settle();
+    CHECK(r.fake.wifi.ps == tesserkit::PowerSave::None);
+    CHECK(r.net.connected());  // the station isn't disturbed
+    int sets = r.fake.wifi.psSets;
+    r.run(1000);
+    CHECK_EQ(r.fake.wifi.psSets, sets);  // applied once
+    CHECK_EQ(r.set("/sys/network/wifi/powerSave", "\"off\"").status, Status::InvalidValue);
+
+    NetRig d;
+    d.net.powerSave(tesserkit::PowerSave::None);  // factory default
+    CHECK(d.dev.begin());
+    CHECK_EQ(d.value("/sys/network/wifi/powerSave"), "\"none\"");
+    CHECK(d.fake.wifi.ps == tesserkit::PowerSave::None);
+}
+
 TEST(network_ethernet_switched_off) {
     EthRig r;
     r.air("Home", "password1");

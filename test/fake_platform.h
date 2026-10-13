@@ -59,6 +59,8 @@ struct Wifi : tesserkit::Wifi {
     EventSink sink;
     std::string hostnameSet;
     int8_t tx = 0;
+    tesserkit::PowerSave ps = tesserkit::PowerSave::Min;
+    int psSets = 0;
     std::vector<Air> air;
     bool scanStarts = true;
     bool scanSilent = false;  // a scan that never ends
@@ -80,6 +82,10 @@ struct Wifi : tesserkit::Wifi {
     }
     void hostname(const char* name) override { hostnameSet = name; }
     void txPower(int8_t dBm) override { tx = dBm; }
+    void powerSave(tesserkit::PowerSave mode) override {
+        ps = mode;
+        psSets++;
+    }
     bool scan() override;
     std::vector<tesserkit::ScanResult> scanResults() override;
     bool connect(const tesserkit::StaConfig& c) override;

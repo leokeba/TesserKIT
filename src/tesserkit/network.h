@@ -59,6 +59,9 @@ public:
     Network& apChannel(uint8_t channel);
     // Caps the radio's transmit power (weak supplies brown out at 20 dBm).
     Network& txPower(int8_t dBm);
+    // The station's power save (wifi/powerSave): PowerSave::None for the
+    // lowest latency, at about 100 mA more.
+    Network& powerSave(PowerSave mode);
     // The board's Ethernet (boards::gledopto(), ...): /sys/network/ethernet.
     // The station keeps away while it has a DHCP lease (StationMode::Fallback).
     Network& ethernet(const EthernetBoard& board);
@@ -137,6 +140,7 @@ private:
     bool apHidden_ = false;
     bool mdns_ = true;
     int8_t txPower_ = 0;
+    PowerSave powerSave_ = PowerSave::Min;
     StationMode staMode_ = StationMode::Fallback;  // Always without Ethernet
     bool ethWanted_ = false;
     bool ethEnabled_ = true;
@@ -153,13 +157,14 @@ private:
     tesser::EventNode* joined_ = nullptr;
     tesser::EventNode* failed_ = nullptr;
     tesser::Node* staModeNode_ = nullptr;
+    tesser::Node* powerSaveNode_ = nullptr;
     tesser::Node* ethEnabledNode_ = nullptr;
     std::vector<tesser::Node*> ethIpNodes_;
     tesser::Node* ethStatus_ = nullptr;
     tesser::EventNode* ethJoined_ = nullptr;
     uint16_t networksGen_ = 0, hostnameGen_ = 0, mdnsGen_ = 0;
     uint32_t apGen_ = 0, ethGen_ = 0;
-    uint16_t staModeGen_ = 0, ethEnabledGen_ = 0;
+    uint16_t staModeGen_ = 0, ethEnabledGen_ = 0, powerSaveGen_ = 0;
 
     // Station.
     Sta sta_ = Sta::Idle;

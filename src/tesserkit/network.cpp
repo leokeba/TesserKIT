@@ -190,6 +190,11 @@ Network& Network::txPower(int8_t dBm) {
     return *this;
 }
 
+Network& Network::powerSave(PowerSave mode) {
+    powerSave_ = mode;
+    return *this;
+}
+
 Network& Network::ethernet(const EthernetBoard& board) {
     ethWanted_ = true;
     ethBoard_ = board;
@@ -263,6 +268,12 @@ void Network::describe(tesser::Object& o) {
         staModeNode_ = &w.value("mode", staMode_, {"always", "never"}).persist().label("Station").ui("labels", "On,Off");
     }
 
+    powerSaveNode_ = &w.value("powerSave", powerSave_, {"none", "min", "max"})
+                          .persist()
+                          .label("Power save")
+                          .ui("labels", "Off: lowest latency,Modem sleep,Maximum")
+                          .ui("advanced");
+
     networksNode_ = &w.list("networks", networks_)
                          .key("ssid")
                          .maxSize(5)
@@ -320,6 +331,8 @@ void Network::start() {
     Device& dev = dev_;
     wifi_->begin(dev.hostname().c_str(), [&dev](Event e) { dev.post(std::move(e)); });
     if (txPower_) wifi_->txPower(txPower_);
+    wifi_->powerSave(powerSave_);
+    powerSaveGen_ = powerSaveNode_->generation();
     uint32_t now = static_cast<uint32_t>(dev.core().uptimeMs());
     if (eth_) {
         if (eth_->begin(ethBoard_, dev.hostname().c_str(), ethConfig(), [&dev](Event e) { dev.post(std::move(e)); })) {
@@ -667,6 +680,10 @@ void Network::checkSettings(uint32_t nowMs) {
     if (mdnsNode_ && mdnsNode_->generation() != mdnsGen_) {
         mdnsGen_ = mdnsNode_->generation();
         applyMdns();
+    }
+    if (powerSaveNode_->generation() != powerSaveGen_) {
+        powerSaveGen_ = powerSaveNode_->generation();
+        wifi_->powerSave(powerSave_);
     }
     if (staModeNode_->generation() != staModeGen_) {
         staModeGen_ = staModeNode_->generation();
