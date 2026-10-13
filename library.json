@@ -1,7 +1,7 @@
 {
   "name": "TesserKIT",
   "version": "0.1.0",
-  "description": "A device framework for ESP32: Wi-Fi with a captive portal, time, firmware updates, backups and system status as TesserAPI subtrees, drawn by TesserUI's web interface with no UI code. Arduino and ESP-IDF.",
+  "description": "A device framework for ESP32: Wi-Fi, Ethernet, time, firmware updates, backups, files, users, schedules, MQTT, Art-Net, Bluetooth and ESP-NOW as TesserAPI subtrees, drawn by TesserUI's web interface with no UI code. Arduino and ESP-IDF.",
   "keywords": ["framework", "wifi", "captive-portal", "ota", "ntp", "web", "esp32", "tesserapi", "tesserui"],
   "repository": {
     "type": "git",

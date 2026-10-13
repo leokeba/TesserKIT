@@ -10,3 +10,4 @@ AGENTS.md
 compile_commands.json
 __pycache__/
 secrets.h
+.DS_Store

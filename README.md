@@ -2,7 +2,7 @@
 
 A device framework for ESP32 firmware with a rich web interface and a small footprint. It provides what every connected device needs besides its own function, network setup, time, firmware updates, backups, files, users, MQTT, Art-Net, Bluetooth, ESP-NOW and system status, as subtrees of a [TesserAPI](https://github.com/leokeba/TesserAPI) tree, drawn by [TesserUI](https://github.com/leokeba/TesserUI)'s generic renderer with no UI code.
 
-> **Status: phase 2, with parts of 4.** Device, System, Network, Time, Firmware, Backup, Timers, Auth, Mqtt, ArtNet, Bluetooth, NowTp, Files and Sequencer work, on the host (166 tests) and on hardware (classic ESP32, ESP-IDF and Arduino, `test/e2e_device.py`). Porting helionext is under way in its own repository. The specification is [docs/DESIGN.md](docs/DESIGN.md).
+> **Status: phases 1 and 2 done, parts of 4 and 5.** Device, System, Network (Wi-Fi and Ethernet), Time, Firmware, Backup, Files, Timers, Sequencer, Auth, Mqtt, ArtNet, Bluetooth and NowTp work on the host (176 tests) and on hardware (classic ESP32 with ESP-IDF and Arduino, a Gledopto Ethernet controller; the `test/e2e_*.py` scripts). Releases are published from each push to main ([latest](https://github.com/leokeba/TesserKIT/releases/latest)). Porting helionext is under way in its own repository. The specification is [docs/DESIGN.md](docs/DESIGN.md).
 
 ```cpp
 #include <TesserKIT.h>
@@ -15,6 +15,7 @@ tesserkit::Firmware firmware(dev);    // upload, rollback; .downloads() for URLs
 tesserkit::Backup backup(dev);        // download and restore the settings, or store them on the device
 tesserkit::Files files(dev);          // LittleFS: browse, upload, download (optional, needs a partition)
 tesserkit::Timers timers(dev);        // daily schedules over the whole tree
+tesserkit::Sequencer sequencer(dev);  // steps played in turn, each a write to the tree
 tesserkit::Auth auth(dev);            // accounts, roles, sign-in
 tesserkit::Bluetooth bluetooth(dev);  // the interface from a phone, over Bluetooth LE
 tesserkit::NowTp nowtp(dev);          // the nodes nearby over ESP-NOW, each with its page
@@ -30,7 +31,7 @@ A fresh device opens an access point named after it (`heliostat-a67c`) with a ca
 
 Or open the launcher, [leokeba.github.io/TesserKIT](https://leokeba.github.io/TesserKIT/), in Chrome: it reaches a device over USB or Bluetooth with no network at all, by its address, or among those [TesserUI's bridge](https://github.com/leokeba/TesserUI/tree/main/bridge) finds nearby.
 
-It aims at most of [ESP32-sveltekit](https://github.com/theelims/ESP32-sveltekit)'s functionality: a library rather than a template, every service a subtree reachable over HTTP, WebSocket, serial, ESP-NOW and MQTT, the whole interface within a 50 KB bundle, and settings in NVS, with a filesystem partition only for the optional Files service.
+It aims at most of [ESP32-sveltekit](https://github.com/theelims/ESP32-sveltekit)'s functionality: a library rather than a template, every service a subtree reachable over HTTP, WebSocket, serial, Bluetooth, ESP-NOW and MQTT (firmware, backups and files included: they transfer in chunks where there is no HTTP), the whole interface within a 50 KB bundle, and settings in NVS, with a filesystem partition only for the optional Files service.
 
 ## Services
 
@@ -47,24 +48,24 @@ It aims at most of [ESP32-sveltekit](https://github.com/theelims/ESP32-sveltekit
 | `Auth` | `/sys/auth` | Accounts with user and admin roles, salted PBKDF2 hashes, stateless signed tokens, sign-in from TesserUI's dialog |
 | `Mqtt` | `/sys/mqtt` | A broker bridge: chosen subtrees published as retained topics, one per leaf, with intervals; `<prefix>/<path>/set` commands with user access; online/offline availability; TLS with the certificate bundle (opt-in) |
 | `Bluetooth` | `/sys/bluetooth` | TesserAPI's Bluetooth LE transport, for TesserUI's launcher on a phone: on and off at runtime, named after the hostname, the client shown; clients sign in with a token |
-| `NowTp` | `/sys/nowtp`, `/peers` | NowTP over ESP-NOW: the TesserAPI nodes nearby mounted under `/peers`, each with its page (a UI host), and this device on theirs; pairing with an installation key, whose holders are trusted; channel following, network time, the nodes heard |
+| `NowTp` | `/sys/nowtp`, `/peers` | NowTP over ESP-NOW: the TesserAPI nodes nearby mounted under `/peers`, each with its page (a UI host), and this device on theirs; pairing with an installation key, whose holders are trusted; channel following, network time, the nodes heard; a gateway relays its peers' firmware updates and files |
 | `ArtNet` | `/sys/artnet` | An Art-Net node: DMX channels of one universe (8 or 16 bits, scaled, or gates) written to any nodes, only when they change; answers ArtPoll |
 
 Without the Auth service, or until it holds an admin account, the device is open: every client is Admin.
 
 ## Footprint
 
-On a classic ESP32 with ESP-IDF and `-Os`, the five services add 113 KB of flash above TesserAPI and TesserUI, 78 KB without mDNS (`CONFIG_TESSERKIT_MDNS=n`, or `-DTESSERKIT_NO_MDNS`). Firmware downloads from URLs add TLS and an HTTP client, about 130 KB, only with `firmware.downloads()`; GitHub releases 10 KB more, only with `firmware.github()`. ArtNet adds 9 KB; Mqtt about 110 KB (esp-mqtt with its transports), more than Arduino's default 1.25 MB app slot holds next to every other service on ESP32. Bluetooth adds about 200 KB on ESP-IDF; every service and transport together (`examples/idf/full`) is 1.58 MB. Details in [DESIGN §11](docs/DESIGN.md#11-footprint).
+On a classic ESP32 with ESP-IDF and `-Os`, Device, System, Network, Time, Firmware and Backup add 113 KB of flash above TesserAPI and TesserUI, 78 KB without mDNS (`CONFIG_TESSERKIT_MDNS=n`, or `-DTESSERKIT_NO_MDNS`). Firmware downloads from URLs add TLS and an HTTP client, about 130 KB, only with `firmware.downloads()`; GitHub releases 10 KB more, only with `firmware.github()`. ArtNet adds 9 KB; Files 41 KB (LittleFS); Ethernet 41 KB, only when declared; Mqtt about 110 KB (esp-mqtt with its transports), more than Arduino's default 1.25 MB app slot holds next to every other service on ESP32. Bluetooth adds about 200 KB on ESP-IDF; every service and transport together (`examples/idf/full`) is 1.66 MB, 90% of an app slot of `partitions/tesserkit_4mb_files.csv`. Details in [DESIGN §11](docs/DESIGN.md#11-footprint).
 
 ## Building
 
 - **ESP-IDF:** `examples/idf/minimal` (it finds TesserAPI and TesserUI next to this repository, or through `TESSERAPI_PATH` and `TESSERUI_PATH`). Its `sdkconfig.defaults` selects `partitions/tesserkit_4mb.csv`, rollback and core dumps.
 - **Arduino / PlatformIO:** `examples/arduino/Minimal`, with TesserAPI, TesserUI and ArduinoJson 7.
-- **Ethernet:** `examples/idf/full` built with `-DETHERNET_BOARD=gledopto` (or another preset of `tesserkit::boards`) uses the board's cable, and Wi-Fi when it is unplugged. The ESP32's internal MAC with an RMII PHY; about 40 KB of flash, only when declared.
+- **Ethernet:** `examples/idf/full` built with `-DETHERNET_BOARD=gledopto` (or another preset of `tesserkit::boards`) uses the board's cable, and Wi-Fi when it is unplugged. The ESP32's internal MAC with an RMII PHY; about 40 KB of flash, only when declared. On a Gledopto GL-C-611WL, firmware uploads run at 170 KB/s over the cable (70 KB/s over Wi-Fi).
 - **Bluetooth:** `examples/idf/bluetooth` and `examples/arduino/Bluetooth` (ESP32-C3, ESP32-S3) add the Bluetooth service beside Wi-Fi: the launcher reaches the device from a phone with no network in common.
 - **Everything:** `examples/idf/full` has every service and transport, with the factory defaults each one takes, and a dashboard; it needs NowTP next to TesserKIT (or `NOWTP_PATH`). Two boards running it show each other. On a classic ESP32 without PSRAM it is at the edge of the RAM: HTTPS waits while an MQTT session runs (DESIGN §11).
 - **Host tests:** `cmake -S . -B build && cmake --build build -j && ctest --test-dir build`.
-- **On hardware:** `python3 test/e2e_device.py http://<ip> [--image app.bin] [--crash-image crash.bin]`; ArtNet and Mqtt: the example built with `-DWITH_ARTNET=1 -DWITH_MQTT=1`, then `uv run --with paho-mqtt python test/e2e_services.py http://<ip> --broker <host>`; GitHub releases: `python3 test/e2e_github.py http://<ip> --image newer.bin --tag v9.9.9` (instructions in the script).
+- **On hardware:** `python3 test/e2e_device.py http://<ip> [--image app.bin] [--crash-image crash.bin]`; ArtNet and Mqtt: the example built with `-DWITH_ARTNET=1 -DWITH_MQTT=1`, then `uv run --with paho-mqtt python test/e2e_services.py http://<ip> --broker <host>`; GitHub releases: `python3 test/e2e_github.py http://<ip> --image newer.bin --tag v9.9.9` (instructions in the script); Files, Ethernet and transfers over serial and through a gateway: `test/e2e_files.py`, `test/e2e_ethernet.py`, `test/e2e_transfers.py`.
 
 ## Releases
 
@@ -92,6 +93,14 @@ jobs:
 ```
 
 and `firmware.github("owner/repo", "heliostat-{target}.bin")` in the firmware.
+
+## Related
+
+| Repository | Role |
+|---|---|
+| [TesserAPI](https://github.com/leokeba/TesserAPI) | The tree, its schema, transports (HTTP, WebSocket, serial, Bluetooth, NowTP), persistence and access control |
+| [TesserUI](https://github.com/leokeba/TesserUI) | The web interface generated from the schema, served from flash in under 50 KB, and the launcher |
+| [NowTP](https://github.com/leokeba/NowTP) | Reliable messaging over ESP-NOW, behind the NowTp service |
 
 ## License
 
