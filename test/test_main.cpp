@@ -13,5 +13,6 @@
 #include "files_cases.h"
 #include "sequencer_cases.h"
 #include "power_cases.h"
+#include "udp_cases.h"
 
 int main(int argc, char** argv) { return check::run(argc > 1 ? argv[1] : nullptr) ? 1 : 0; }

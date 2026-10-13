@@ -21,6 +21,7 @@
 namespace tesser {
 class Api;
 class Object;
+class UdpLink;
 }  // namespace tesser
 
 namespace tesserkit {
@@ -403,6 +404,23 @@ public:
     virtual bool forgetKey() = 0;
 };
 
+// TesserAPI's API over UDP (its UdpTransport): UdpApi's. The protocol is
+// TesserAPI's own tesser::UdpLink, platform-independent; this owns its
+// socket and tasks.
+class UdpApiTransport {
+public:
+    virtual ~UdpApiTransport() = default;
+    // Opens the socket on `port` and starts the link, advertising as
+    // `name`; the transport is created on the first call. False if it
+    // couldn't.
+    virtual bool begin(tesser::Api& api, uint16_t port, const std::string& name) = 0;
+    // Says goodbye, closes the socket and forgets the peers; begin() again
+    // to restart. Safe from a request that came over UDP.
+    virtual void end() = 0;
+    // The link: null before the first begin().
+    virtual tesser::UdpLink* link() = 0;
+};
+
 // The log's output (ESP-IDF's esp_log, which TesserAPI's warnings use too):
 // Log's. Lines still go to the console; captured ones wait here for the
 // device's task.
@@ -480,6 +498,7 @@ struct Platform {
     LogOutput* log = nullptr;
     Power* power = nullptr;
     Pins* pins = nullptr;
+    UdpApiTransport* udpApi = nullptr;
 };
 
 // The ESP implementations (null on the host).
@@ -500,5 +519,6 @@ Filesystem* espFilesystem();  // null if the build has no LittleFS
 LogOutput* espLog();
 Power* espPower();
 Pins* espPins();
+UdpApiTransport* espUdpApi();
 
 }  // namespace tesserkit

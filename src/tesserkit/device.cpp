@@ -303,6 +303,7 @@ Filesystem* espFilesystem() { return nullptr; }
 LogOutput* espLog() { return nullptr; }
 Power* espPower() { return nullptr; }
 Pins* espPins() { return nullptr; }
+UdpApiTransport* espUdpApi() { return nullptr; }
 #endif
 
 }  // namespace tesserkit

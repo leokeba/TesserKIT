@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "tesser/udp_link.h"
 #include "tesserkit/device.h"
 
 namespace fake {
@@ -496,6 +497,32 @@ struct Pins : tesserkit::Pins {
     bool input(int8_t pin) override { return level[pin]; }
 };
 
+// TesserAPI's UDP link over an in-memory network: what the device sends
+// waits in `out` for the test to deliver (to another link), and the test
+// hands it datagrams with packet() and runs it with tick(), as the
+// transport's tasks do.
+struct UdpApi : tesserkit::UdpApiTransport {
+    struct Datagram {
+        tesser::PeerAddress to;
+        std::vector<uint8_t> data;
+    };
+    const uint64_t* clock = nullptr;  // the fake core's
+    std::unique_ptr<tesser::UdpLink> l;
+    std::vector<Datagram> out;
+    bool opens = true;
+    int begins = 0, ends = 0;
+    uint16_t port = 0;
+    std::string name;
+    uint32_t nonce = 0x4000;
+
+    bool begin(tesser::Api& api, uint16_t p, const std::string& n) override;
+    void end() override {
+        ends++;
+        if (l) l->stop();
+    }
+    tesser::UdpLink* link() override { return l.get(); }
+};
+
 struct Platform {
     Core core;
     Wifi wifi;
@@ -513,6 +540,7 @@ struct Platform {
     Log log;
     Power power;
     Pins pins;
+    UdpApi udpApi;
     void install(tesserkit::Device& dev, bool withCoredump = true) {
         tesserkit::Platform& p = dev.platform();
         p.core = &core;
@@ -531,6 +559,8 @@ struct Platform {
         p.log = &log;
         p.power = &power;
         p.pins = &pins;
+        udpApi.clock = &core.now;
+        p.udpApi = &udpApi;
     }
 };
 

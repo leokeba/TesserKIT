@@ -275,6 +275,27 @@ std::unique_ptr<tesserkit::UdpSocket> Udp::open(uint16_t port) {
     return std::unique_ptr<tesserkit::UdpSocket>(new UdpSocket(*this, port));
 }
 
+bool UdpApi::begin(tesser::Api& api, uint16_t p, const std::string& n) {
+    begins++;
+    if (!opens) return false;
+    port = p;
+    name = n;
+    if (!l) {
+        l.reset(new tesser::UdpLink(
+            &api,
+            [this](const tesser::PeerAddress& to, const uint8_t* d, size_t len) {
+                out.push_back(Datagram{to, std::vector<uint8_t>(d, d + len)});
+                return true;
+            },
+            [this] { return clock ? static_cast<uint32_t>(*clock) : 0; }));
+    }
+    l->setName(n);
+    const uint8_t mac[6] = {0xc8, 0xf0, 0x9e, 0xf4, 0xa6, 0x7c};
+    l->setDeviceId(mac);
+    l->start(nonce++);
+    return true;
+}
+
 void Mqtt::stop() {
     if (!running) return;
     running = false;

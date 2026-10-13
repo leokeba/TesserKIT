@@ -4,8 +4,9 @@
 //
 // Reach it from the launcher (https://leokeba.github.io/TesserKIT/): over USB,
 // Bluetooth, the network or the bridge; from its own page; over MQTT and
-// Art-Net; and from the nodes nearby over ESP-NOW, which it shows under
-// Nodes nearby (a UI host). Two boards running it show each other.
+// Art-Net; and from the nodes nearby over ESP-NOW and the nodes on the LAN over
+// UDP, which it shows under Nodes nearby (a UI host). Two boards running it
+// show each other, and /sys/udp/send writes to every one of them at once.
 //
 // A gitignored main/secrets.h may define:
 //   WIFI_SSID, WIFI_PASSWORD  the factory default network
@@ -87,6 +88,7 @@ tesserkit::ArtNet artnet(dev);        // lighting consoles
 tesserkit::Bluetooth bluetooth(dev);  // the launcher from a phone
 #endif
 tesserkit::NowTp nowtp(dev);          // the nodes nearby over ESP-NOW (after Network: Wi-Fi first)
+tesserkit::UdpApi udp(dev);           // the nodes on the LAN over UDP, and writes to all at once
 tesserkit::Sequencer sequencer(dev);  // /sequencer: steps played in turn
 tesserkit::Log logs(dev);             // the firmware's log, as events and a file
 tesserkit::Sleep sleeper(dev);        // deep sleep, woken by a timer or the BOOT button
