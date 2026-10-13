@@ -64,6 +64,10 @@ public:
             vTaskDelay(pdMS_TO_TICKS(20));  // the oscillator settles
         }
         eth_mac_config_t macConfig = ETH_MAC_DEFAULT_CONFIG();
+        // ESP-IDF's 4 KB is far more than the receive task uses (1 KB under
+        // load on a GL-C-611WL, DESIGN.md section 11); the rest is headroom
+        // for its error logs.
+        macConfig.rx_task_stack_size = 2560;
         eth_esp32_emac_config_t emac = ETH_ESP32_EMAC_DEFAULT_CONFIG();
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 4, 0)
         emac.smi_gpio.mdc_num = b.mdc;
