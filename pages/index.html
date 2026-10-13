@@ -3,16 +3,36 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="description" content="Reach a TesserKIT device over USB, Bluetooth or the network: TesserUI's launcher." />
+    <meta name="description" content="Reach a TesserKIT device over USB, Bluetooth or the network, or install one on a board: TesserUI's launcher." />
     <title>TesserKIT</title>
     <link rel="icon" href="data:," />
   </head>
   <body>
     <!-- TesserUI's bundle, published by .github/workflows/release.yml with the
          firmware it serves. A launcher: it opens ?api=, or the device the user
-         picks (TesserUI's DESIGN.md section 9.7). -->
+         picks (TesserUI's DESIGN.md section 9.7). It installs the examples'
+         latest releases over USB, which the workflow copies next to it, then
+         sets up the device's Wi-Fi (section 9.7.1). -->
     <script>
-      window.TESSER = { launcher: true, title: 'TesserKIT' };
+      window.TESSER = {
+        launcher: true,
+        title: 'TesserKIT',
+        firmware: {
+          images: [
+            {
+              label: 'Full',
+              asset: 'tesserkit-full-{target}-factory.bin',
+              description: 'Every service and transport: a starting point to strip down. Bluetooth is left out on the ESP32-C3.',
+            },
+            {
+              label: 'Minimal',
+              asset: 'tesserkit-minimal-{target}-factory.bin',
+              description: 'Wi-Fi, time, firmware updates from these releases, backups, timers and accounts.',
+            },
+          ],
+          wifi: '/sys/network/wifi',
+        },
+      };
     </script>
     <script src="ui.js"></script>
   </body>

@@ -2,7 +2,8 @@
 # (examples/idf/minimal and examples/idf/full, with firmware.github() pointing
 # here) under the next patch version, or library.json's version when it was raised above it, and
 # TesserUI's launcher on GitHub Pages (https://leokeba.github.io/TesserKIT/),
-# built from the same TesserUI as the firmware. A commit message with
+# built from the same TesserUI as the firmware, with the latest three
+# releases' factory images to install. A commit message with
 # "[skip ci]" releases nothing.
 name: Release
 
@@ -44,11 +45,15 @@ jobs:
         leokeba/NowTP
 
   # The launcher (TesserUI's DESIGN.md section 9.7): devices reached over USB,
-  # Bluetooth or the network, with no interface of their own needed.
+  # Bluetooth or the network, with no interface of their own needed, and
+  # firmware installed over USB (section 9.7.1). After the release, which it
+  # offers; deployed even when the release failed, with the releases there are.
   pages:
-    needs: host-tests
+    needs: [host-tests, firmware]
+    if: ${{ !cancelled() && needs.host-tests.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
@@ -72,7 +77,13 @@ jobs:
         working-directory: TesserUI/web
         run: pnpm install --frozen-lockfile && pnpm build
       - name: Site
-        run: mkdir _site && cp pages/index.html TesserUI/web/dist/ui.js _site/
+        run: mkdir _site && cp pages/index.html TesserUI/web/dist/ui.js _site/ && cp -R TesserUI/web/dist/flash _site/flash
+      # A page can't read release assets from GitHub (no CORS): the flasher
+      # finds them next to it.
+      - name: The firmware the launcher installs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node TesserUI/web/scripts/firmware.mjs "$GITHUB_REPOSITORY" _site/firmware --releases 3
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
