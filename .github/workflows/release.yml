@@ -37,9 +37,6 @@ jobs:
         [{"project": "examples/idf/minimal", "name": "tesserkit-minimal", "build-args": "-DWITH_GITHUB=1"},
          {"project": "examples/idf/full", "name": "tesserkit-full"}]
       targets: '["esp32", "esp32c3", "esp32s3"]'
-      # What the boards are tested with; the full example doesn't fit the C3's
-      # slot when built with 5.5.
-      idf-version: release-v6.1
       version-command: jq -r .version library.json
       dependencies: |
         leokeba/TesserAPI

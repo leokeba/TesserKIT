@@ -1,0 +1,5 @@
+# Read after sdkconfig.defaults when building for the ESP32-C3, whose code is
+# larger: without Bluetooth (about 200 KB), every other service fits the files
+# table's 1.75 MB slot with room to spare (DESIGN.md 11). examples/idf/bluetooth
+# has Bluetooth on the C3.
+CONFIG_BT_ENABLED=n

@@ -8,4 +8,13 @@ config TESSERKIT_MDNS
         ESP-IDF's mdns component (about 34 KB of flash). Off: the same as
         building with -DTESSERKIT_NO_MDNS.
 
+config TESSERKIT_HOME_ASSISTANT
+    bool "Home Assistant discovery (Mqtt)"
+    default y
+    help
+        Mqtt announces the published values and actions to Home Assistant's
+        MQTT discovery, when its homeAssistant setting is on (about 10 KB of
+        flash with Mqtt). Off: the same as building with
+        -DTESSERKIT_NO_HOME_ASSISTANT; the settings aren't in the tree.
+
 endmenu

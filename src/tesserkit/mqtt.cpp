@@ -24,6 +24,7 @@ Check topicPart(const std::string& v) {
     return ok ? Check::ok() : Check::fail(Status::InvalidValue, "no + or #, and no slash at either end");
 }
 
+#if !defined(TESSERKIT_NO_HOME_ASSISTANT)
 // Presentation metadata, where the build keeps it (not with TESSER_NO_UI).
 const tesser::UiMeta* uiOf(const tesser::Node& n) { return n.meta() ? n.meta()->ui : nullptr; }
 
@@ -77,6 +78,7 @@ const char* componentOf(const tesser::Node& n, bool writable) {
     return nullptr;
 }
 
+#endif
 }  // namespace
 
 Mqtt& Mqtt::enable(bool on) {
@@ -165,6 +167,7 @@ void Mqtt::describe(tesser::Object& o) {
                         .label("Published")
                         .doc("Subtrees published as retained topics, one per leaf, at most once per interval");
     discoverySettings_.clear();
+#if !defined(TESSERKIT_NO_HOME_ASSISTANT)
     discoverySettings_.push_back(&o.value("homeAssistant", homeAssistant_)
                                       .persist()
                                       .label("Home Assistant")
@@ -178,15 +181,18 @@ void Mqtt::describe(tesser::Object& o) {
                                       .ui("visibleWhen", "homeAssistant=true")
                                       .ui("advanced"));
     discoverySettings_.push_back(publishNode_);
+#endif
     auto& s = o.object("status").label("Status");
     status_ = &s;
     s.value("connected", static_cast<const bool&>(connected_));
     s.value("error", static_cast<const std::string&>(error_)).label("Last error");
     s.value("published", static_cast<const uint32_t&>(published_)).label("Messages published").watch();
     s.value("dropped", static_cast<const uint32_t&>(dropped_)).label("Messages dropped").watch().ui("advanced");
+#if !defined(TESSERKIT_NO_HOME_ASSISTANT)
     entitiesNode_ = &s.value("entities", static_cast<const uint32_t&>(entities_))
                          .label("Home Assistant entities")
                          .ui("visibleWhen", "../homeAssistant=true");
+#endif
     lost_ = &o.event("lost").label("Connection lost").ui("toast", "warn").ui("hidden");
 }
 
@@ -419,6 +425,14 @@ void Mqtt::setError(const std::string& e) {
 
 namespace tesserkit {
 
+#if defined(TESSERKIT_NO_HOME_ASSISTANT)
+
+// Left out of the build (CONFIG_TESSERKIT_HOME_ASSISTANT=n).
+void Mqtt::discover() {}
+void Mqtt::announce() {}
+
+#else
+
 // Home Assistant discovery (docs/DESIGN.md section 5.8): a retained config
 // per published value or action, under
 // <discoveryPrefix>/<component>/<hostname>/<object id>/config.
@@ -601,5 +615,7 @@ void Mqtt::announce() {
         pending_.erase(pending_.begin());
     }
 }
+
+#endif
 
 }  // namespace tesserkit

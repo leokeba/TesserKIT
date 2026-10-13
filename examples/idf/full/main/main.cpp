@@ -20,6 +20,7 @@
 // that board's Ethernet.
 #include "TesserKIT.h"
 #include "driver/ledc.h"
+#include "sdkconfig.h"
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -82,7 +83,9 @@ tesserkit::Timers timers(dev);        // daily schedules
 tesserkit::Auth auth(dev);            // accounts and sign-in
 tesserkit::Mqtt mqtt(dev);            // a broker bridge
 tesserkit::ArtNet artnet(dev);        // lighting consoles
+#if CONFIG_BT_ENABLED  // not on the ESP32-C3 (sdkconfig.defaults.esp32c3)
 tesserkit::Bluetooth bluetooth(dev);  // the launcher from a phone
+#endif
 tesserkit::NowTp nowtp(dev);          // the nodes nearby over ESP-NOW (after Network: Wi-Fi first)
 tesserkit::Sequencer sequencer(dev);  // /sequencer: steps played in turn
 tesserkit::Log logs(dev);             // the firmware's log, as events and a file
