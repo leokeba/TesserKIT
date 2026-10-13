@@ -1,6 +1,5 @@
 #pragma once
 
-#include <deque>
 #include <functional>
 #include <memory>
 #include <string>
@@ -121,7 +120,6 @@ private:
     std::unique_ptr<tesser::LocalClient> client_;  // signs in, Admin
     DeviceLostHandler lost_;
 
-    std::deque<std::string> names_;     // declared nodes' names: Object::remote() keeps the pointer
     std::vector<std::string> declared_; // "id address" pairs done (nodes are never removed)
     tesser::Object* peers_ = nullptr;
     bool dirty_ = false;

@@ -287,8 +287,7 @@ void Peers::declare() {
             tesser::logWarning("tesserkit: /peers/%s is taken", name.c_str());
             continue;
         }
-        names_.push_back(name);
-        RemoteNode& n = peers_->remote(names_.back().c_str(), ep, address);
+        RemoteNode& n = peers_->remote(name, ep, address);  // keeps a copy of the name
         n.setDevice(device);
         n.changed();
     }
