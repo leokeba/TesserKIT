@@ -131,6 +131,9 @@ public:
     void onTimeSynced(std::function<void()> fn) { onTimeSynced_.push_back(std::move(fn)); }
     // Called when the station's Wi-Fi channel changes (Network).
     void onChannel(std::function<void(uint8_t)> fn) { onChannel_.push_back(std::move(fn)); }
+    // Called in the device's task just before it goes to deep sleep (Sleep):
+    // park the hardware, hold its pins.
+    void onSleep(std::function<void()> fn) { onSleep_.push_back(std::move(fn)); }
     // The application's own error state (State::Error while set).
     void fail(bool failed);
 
@@ -157,6 +160,9 @@ public:
     void timeSynced();
     void channel(uint8_t ch);
     void address(uint32_t ip, const uint8_t* mac);
+    // The device is about to sleep: runs the onSleep() callbacks, then saves
+    // what the persistence's debounce holds.
+    void sleeping();
     // The state value (/sys/status/state), marked changed with the state.
     State& stateVar() { return state_; }
     void stateNode(tesser::Node* node) { stateNode_ = node; }
@@ -210,6 +216,7 @@ private:
     std::vector<std::function<void(uint32_t)>> onTick_;
     std::vector<std::function<void()>> onTimeSynced_;
     std::vector<std::function<void(uint8_t)>> onChannel_;
+    std::vector<std::function<void()>> onSleep_;
 
 #if defined(ESP_PLATFORM)
     tesser::HttpServer http_;

@@ -403,6 +403,64 @@ public:
     virtual bool forgetKey() = 0;
 };
 
+// The log's output (ESP-IDF's esp_log, which TesserAPI's warnings use too):
+// Log's. Lines still go to the console; captured ones wait here for the
+// device's task.
+class LogOutput {
+public:
+    virtual ~LogOutput() = default;
+    // Captures the log's lines from now on, keeping up to `bytes` of them
+    // until next() takes them; more are counted in dropped(). False if it
+    // can't.
+    virtual bool begin(size_t bytes) = 0;
+    // The level the whole firmware logs at, the console included: 0 none,
+    // 1 error, 2 warn, 3 info, 4 debug, 5 verbose.
+    virtual uint8_t level() = 0;
+    virtual void level(uint8_t level) = 0;
+    // The most verbose level the build keeps (CONFIG_LOG_MAXIMUM_LEVEL):
+    // above it, lines aren't compiled in.
+    virtual uint8_t maxLevel() = 0;
+    // The oldest captured line, without colours or its newline: "W (1234)
+    // wifi: ...". False if there is none.
+    virtual bool next(std::string& line) = 0;
+    // Lines lost because nothing took them in time.
+    virtual uint32_t dropped() = 0;
+    // While muted, what the calling task logs isn't captured (the console
+    // still has it): the Log service's own emission can't feed itself.
+    virtual void mute(bool on) = 0;
+};
+
+// How the device last woke from deep sleep.
+enum class WakeCause : uint8_t { None, Timer, Pin, Other };
+
+// Deep sleep: Sleep's.
+class Power {
+public:
+    virtual ~Power() = default;
+    // Why this boot happened, if it was a wake from deep sleep.
+    virtual WakeCause wakeCause() = 0;
+    // Whether `pin` can wake the chip from deep sleep.
+    virtual bool wakePin(int8_t pin) = 0;
+    // Deep sleep until `us` have passed (0: no timer) or `pin` (-1: none) is
+    // at the `high` level, held there by the chip's pull resistor when
+    // `pull`. Returns only if the chip couldn't sleep.
+    virtual void deepSleep(uint64_t us, int8_t pin, bool high, bool pull) = 0;
+};
+
+// GPIO inputs: Battery's.
+class Pins {
+public:
+    virtual ~Pins() = default;
+    // Prepares `pin` for analogMv(); false if it has no ADC that works beside
+    // Wi-Fi (ADC1 on the ESP32).
+    virtual bool analogBegin(int8_t pin) = 0;
+    // The pin's voltage, calibrated, in millivolts.
+    virtual bool analogMv(int8_t pin, uint32_t& mv) = 0;
+    // Prepares `pin` as a digital input, pulled up or not.
+    virtual bool inputBegin(int8_t pin, bool pullUp) = 0;
+    virtual bool input(int8_t pin) = 0;
+};
+
 // What a device runs on. Null members are filled with the ESP
 // implementations by the services that use them.
 struct Platform {
@@ -419,6 +477,9 @@ struct Platform {
     Ble* ble = nullptr;
     NowTpRadio* nowtp = nullptr;
     Filesystem* fs = nullptr;
+    LogOutput* log = nullptr;
+    Power* power = nullptr;
+    Pins* pins = nullptr;
 };
 
 // The ESP implementations (null on the host).
@@ -436,5 +497,8 @@ MqttClient* espMqttTls();  // the same, verifying brokers with the certificate b
 Ble* espBle();             // null if the build has no Bluetooth LE (NimBLE, or Arduino's BLE)
 NowTpRadio* espNowTp();    // null if the build has no NowTP
 Filesystem* espFilesystem();  // null if the build has no LittleFS
+LogOutput* espLog();
+Power* espPower();
+Pins* espPins();
 
 }  // namespace tesserkit

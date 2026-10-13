@@ -102,6 +102,10 @@ int main(int argc, char** argv) {
     tesserkit::Bluetooth bluetooth(dev);
     tesserkit::NowTp nowtp(dev);
     tesserkit::Sequencer sequencer(dev);
+    tesserkit::Log log(dev);
+    tesserkit::Battery battery(dev);  // fed below, as an application with a fuel gauge would
+    tesserkit::Sleep sleep(dev);
+    sleep.wakePin(0);
     net.defaultNetwork("Workshop", "workshop-pw");
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");
     // A newer release to find and install.
@@ -178,6 +182,18 @@ int main(int argc, char** argv) {
         fake.clock.epoch = now;
         fake.core.heap = static_cast<uint32_t>(182000 + (now / 700 % 9) * 350);
         fake.core.runTasks();
+        // A battery running down over an hour, and the firmware's log.
+        static int64_t lastSample = 0, lastLine = 0;
+        if (now - lastSample >= 1000) {
+            lastSample = now;
+            float v = 4.15f - static_cast<float>((now - start) % 3600000) / 3600000.0f * 0.6f;
+            battery.update(v);
+        }
+        if (now - lastLine >= 3000) {
+            lastLine = now;
+            static int n = 0;
+            fake.log.write("I (" + std::to_string(now - start) + ") demo: line " + std::to_string(++n));
+        }
         dev.loop();
         if (!nearby && fake.nowtp.sink) {
             nearby = true;

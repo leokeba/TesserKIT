@@ -418,6 +418,84 @@ struct Filesystem : tesserkit::Filesystem {
     bool format() override;
 };
 
+// The log: the test writes lines as the firmware would.
+struct Log : tesserkit::LogOutput {
+    bool began = false;
+    size_t capacity = 0;
+    uint8_t lvl = 2, max = 5;
+    std::deque<std::string> lines;
+    size_t bytes = 0;
+    uint32_t lost = 0;
+    bool muted = false;
+    int mutedLines = 0;  // written while muted: not captured
+
+    bool begin(size_t b) override {
+        began = true;
+        capacity = b;
+        return true;
+    }
+    uint8_t level() override { return lvl; }
+    void level(uint8_t l) override { lvl = l; }
+    uint8_t maxLevel() override { return max; }
+    bool next(std::string& line) override {
+        if (lines.empty()) return false;
+        line = lines.front();
+        bytes -= line.size();
+        lines.pop_front();
+        return true;
+    }
+    uint32_t dropped() override { return lost; }
+    void mute(bool on) override { muted = on; }
+    // A line the firmware logs.
+    void write(const std::string& line) {
+        if (muted) {
+            mutedLines++;
+        } else if (!began || bytes + line.size() > capacity) {
+            lost++;
+        } else {
+            lines.push_back(line);
+            bytes += line.size();
+        }
+    }
+};
+
+// Deep sleep that the test watches and wakes from.
+struct Power : tesserkit::Power {
+    tesserkit::WakeCause cause = tesserkit::WakeCause::None;
+    int sleeps = 0;
+    uint64_t us = 0;
+    int8_t pin = -1;
+    bool high = false, pull = false;
+    tesserkit::WakeCause wakeCause() override { return cause; }
+    bool wakePin(int8_t p) override { return p >= 0 && p <= 39 && p != 20 && p != 24; }
+    void deepSleep(uint64_t u, int8_t p, bool h, bool pl) override {
+        sleeps++;
+        us = u;
+        pin = p;
+        high = h;
+        pull = pl;
+    }
+};
+
+// Pins whose voltages and levels the test sets.
+struct Pins : tesserkit::Pins {
+    std::map<int, uint32_t> mv;     // analog pins and their millivolts
+    std::map<int, bool> level;      // digital inputs
+    std::map<int, bool> pulled;     // inputBegin()'s
+    bool analogBegin(int8_t pin) override { return mv.count(pin) > 0; }
+    bool analogMv(int8_t pin, uint32_t& out) override {
+        auto it = mv.find(pin);
+        if (it == mv.end()) return false;
+        out = it->second;
+        return true;
+    }
+    bool inputBegin(int8_t pin, bool pullUp) override {
+        pulled[pin] = pullUp;
+        return level.count(pin) > 0;
+    }
+    bool input(int8_t pin) override { return level[pin]; }
+};
+
 struct Platform {
     Core core;
     Wifi wifi;
@@ -432,6 +510,9 @@ struct Platform {
     Ble ble;
     NowTp nowtp;
     Filesystem fs;
+    Log log;
+    Power power;
+    Pins pins;
     void install(tesserkit::Device& dev, bool withCoredump = true) {
         tesserkit::Platform& p = dev.platform();
         p.core = &core;
@@ -447,6 +528,9 @@ struct Platform {
         p.ble = &ble;
         p.nowtp = &nowtp;
         p.fs = &fs;
+        p.log = &log;
+        p.power = &power;
+        p.pins = &pins;
     }
 };
 

@@ -22,6 +22,9 @@ int main(int argc, char** argv) {
     tesserkit::Bluetooth bluetooth(r.dev);
     tesserkit::NowTp nowtp(r.dev);
     tesserkit::Sequencer sequencer(r.dev);
+    tesserkit::Log log(r.dev);
+    tesserkit::Battery battery(r.dev);
+    tesserkit::Sleep sleep(r.dev);
     files.root(r.fake.fs.dir.c_str());
     firmware.github("leokeba/TesserKIT", "tesserkit-minimal-{target}.bin");
     network.ethernet(tesserkit::boards::gledopto());

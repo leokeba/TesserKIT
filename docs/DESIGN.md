@@ -86,6 +86,9 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
   bluetooth/            Bluetooth (§5.10)
   nowtp/                NowTp (§5.11)
   files/                Files (§5.12)
+  log/                  Log (§5.14)
+  battery/              Battery (§5.15)
+  sleep/                Sleep (§5.16)
 /peers                  the nodes NowTp finds nearby, mounted beside the application's tree
 /sequencer              Sequencer (§5.13): the application's, so at the root
 ```
@@ -96,7 +99,7 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
 
 ### 3.3 Platform layer
 
-Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Ethernet` (the internal MAC and its PHY), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads and release checks), `Coredump`, `Udp` (Art-Net), `MqttClient`, `Ble` (Bluetooth LE), `NowTpRadio` (ESP-NOW) and `Filesystem` (LittleFS: mounting, usage, formatting; the files themselves through stdio and `dirent`, the same on the host):
+Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Ethernet` (the internal MAC and its PHY), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads and release checks), `Coredump`, `Udp` (Art-Net), `MqttClient`, `Ble` (Bluetooth LE), `NowTpRadio` (ESP-NOW), `Filesystem` (LittleFS: mounting, usage, formatting; the files themselves through stdio and `dirent`, the same on the host), `LogOutput` (the log's lines and level), `Power` (deep sleep and its wake-up) and `Pins` (ADC and digital inputs):
 
 - `src/tesserkit/platform/esp/` implements them on ESP-IDF APIs, which Arduino-ESP32 3.x also ships, so one implementation serves both.
 - `test/fake_platform.*` implements them in memory for host tests: a Wi-Fi radio whose scans and connections the test scripts, a clock the test advances, an OTA partition that's a byte vector.
@@ -172,7 +175,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - Values that only change at boot (chip, flash, idf) are constants: zero cost per read.
 - Watched values (heap, uptime, temperature) are sampled only while someone is subscribed (TesserAPI §11), so a UI chart (TesserUI §7.7) replaces ESP32-sveltekit's analytics service and its device-side history.
 - `restart` answers first, then restarts after 500 ms, so the client sees the reply.
-- *(later)* `/sys/log`: an event carrying ESP log lines (`esp_log_set_vprintf`), at a configurable level, for a log view in the UI.
+- The firmware's log lines are the Log service's (§5.14).
 
 ### 5.2 Network
 
@@ -367,7 +370,9 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
   clientId *(p)         string (empty: the hostname), advanced
   prefix *(p)           string (empty: "tesser/<hostname>"), no + or #, no slash at either end, advanced
   publish *(p)          list ≤ 8 of {path, interval ms 0–86400000 (default 1000)}
-  status/               connected, error, published, dropped (watched counters)
+  homeAssistant *(p)    boolean (default false): Home Assistant discovery
+  discoveryPrefix *(p)  string (default "homeassistant"), not empty, no + or #, no slash at either end, advanced
+  status/               connected, error, published, dropped (watched counters), entities (announced to Home Assistant)
   lost                  event, warn toast: a connected session dropped by the broker or the network, with the error
 ```
 
@@ -377,8 +382,19 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - **Availability:** `<prefix>/status` is `online` on each connection and the last will is `offline` (QoS 1), both retained. Stopping a session publishes the will itself before disconnecting, since a clean disconnection doesn't.
 - **Platform:** `MqttClient` (§3.3) on esp-mqtt, a component of ESP-IDF 5 and `espressif/mqtt` from ESP-IDF 6 (a dependency of TesserKIT's manifest for those versions). Publishing only queues: each session's task of the platform layer (`tk_mqtt_pub`, 4 KB of stack) sends with `esp_mqtt_client_publish()`, from the session's queue of 32 messages and 16 KB, so TesserKIT's task never waits on the network. Once the session stops, that task skips what is left, publishes the will, destroys the client and ends, freeing its queue: a stopped session holds no memory. esp-mqtt's own queue (`esp_mqtt_client_enqueue`) isn't used: its task sends one queued message per pass and waits up to a second between passes. A message the queue refuses counts in `dropped`.
 - **TLS:** `mqtts://` and `wss://` brokers are verified with ESP-IDF's certificate bundle when the application calls `mqtt.tls()` before `begin()`; without it the bundle isn't linked.
-- **Factory defaults:** `mqtt.broker("mqtt://...", user, password).enable(true).prefix("home/lamp").publish("/led", 0)`.
-- **Home Assistant discovery** *(later)*: for each published leaf, a config under `homeassistant/<component>/<hostname>/<path>/config`, the component chosen from the schema: writable boolean → `switch`, read-only boolean → `binary_sensor`, number with a range → `number`, read-only number → `sensor` (with `unit`), enum → `select`, action without argument → `button`.
+- **Factory defaults:** `mqtt.broker("mqtt://...", user, password).enable(true).prefix("home/lamp").publish("/led", 0).homeAssistant(true)`.
+- **Home Assistant discovery:** with `homeAssistant` on, each value and action under the published subtrees is announced to Home Assistant's MQTT discovery: a retained JSON config at `<discoveryPrefix>/<component>/<hostname>/<object id>/config`, the object id being the path with `_` for `/` (`led_on`). The component comes from the schema, and "writable" means writable by the broker's clients (User access, as commands are):
+
+  | Node | Component |
+  |---|---|
+  | boolean | `switch` writable, else `binary_sensor` |
+  | integer, number | `number` writable (`min`, `max` from the range, a slider; without one a box from -10⁹ to 10⁹; `step` from the node's, else 1 for an integer), else `sensor` (`state_class: measurement`) |
+  | string with options (an enum) | `select` writable, else `sensor` with `device_class: enum` and its options |
+  | other string | `text` writable, else `sensor` |
+  | action without argument | `button` (`payload_press: null`) |
+
+  Secrets, `ui.hidden` nodes (and objects), events, lists, arrays, files, remote nodes and actions with an argument aren't announced; at most 64 entities. Each config has the node's label, prefixed by its parent's below the root ("LED on"), a `unique_id` (`<hostname>_<object id>`), the leaf's state topic and its `/set` command topic, `<prefix>/status` as availability, the unit and the display precision (`ui.precision`), `entity_category` `diagnostic` (read-only) or `config` (writable) under `/sys`, and the device (identifiers the hostname, name the label, manufacturer TesserKIT, model the chip, the firmware's version, a link to its page). Payloads are JSON both ways: `payload_on: "true"`, `value_template: "{{ value_json }}"` for strings, `command_template: "{{ value | tojson }}"` for strings and `"{{ value | int }}"` for integers, since Home Assistant formats numbers as `100.0`.
+- **Announcing:** on each connection, and when `homeAssistant`, `discoveryPrefix` or the publish list change (no reconnection), the configs are queued after the states and sent four a period while the client's queue takes them: discovery never pushes states out, and a full queue only delays it (it isn't `dropped`). Configs announced earlier in this boot that no longer apply (a path removed from the list, discovery switched off, another prefix) are emptied, which removes them from Home Assistant. Those announced before a restart can't be known: switching discovery off before changing what is published removes them cleanly. Disabling MQTT leaves the configs, and Home Assistant shows the entities unavailable (the will).
 - One generic bridge replaces ESP32-sveltekit's per-service `MqttEndpoint`s.
 
 ### 5.9 ArtNet
@@ -505,14 +521,61 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - **Factory defaults:** `sequencer.add(step)`, `.boot("intro")`, `.finally("/motor/stop", "null")`. From code, under the API lock: `play(step)`, `execute(step)`, `stop()`, `running()`, `current()`, `find(ref)`.
 - This replaces spin-seq's JSON sequencer (§10.2), which had a command language for its motor and its broadcasts.
 
-### 5.14 Later
+### 5.14 Log
+
+```
+/sys/log                label "Log", ui.icon "menu", read Admin
+  level *(p)            enum none, error, warn, info, debug, verbose: what the firmware logs, its console included
+  line                  event: a log line, "W (1234) wifi: ..."
+  recent                file, download only (text/plain, log.txt): the last lines
+  dropped               integer: lines lost (advanced)
+```
+
+- **Capture:** the platform's `LogOutput` (§3.3) hooks ESP-IDF's log output (`esp_log_set_vprintf`), which TesserAPI's warnings and errors go through too. Each line still goes to the console; a copy, without its colour codes or newline and cut at 160 characters, waits in a 2 KB ring for TesserKIT's task, which emits up to 16 lines a period as `line` events and keeps the last 4 KB (`log.history(bytes)`) for `recent`. Lines that find the ring full are counted in `dropped`. Lines are assembled from what each call prints, so ESP-IDF's log v2, which prints a line in pieces, works too.
+- **No feedback:** while the service emits, the lines its own task logs aren't captured, so a transport that warns per event can't feed itself.
+- **Level:** `esp_log_level_set("*", level)`, so it applies to the console as well, and to every tag without a level of its own. Lines above the build's `CONFIG_LOG_MAXIMUM_LEVEL` aren't compiled in: a level above it is refused (`invalid_value`). The examples log warnings (their console's UART also carries the API, §8), so their maximum is `warn`. The factory default is the level the firmware runs at when the service starts, or `log.level(tesserkit::LogLevel::Info)`.
+- **Access:** logs carry addresses, network names and errors: Admin only.
+- **In the interface:** TesserUI's events widget shows the last eight lines while the page is open; `recent` downloads the history. Arduino's own `log_x()` macros print without esp_log unless the core is built with `CONFIG_ARDUHAL_ESP_LOG`, so only ESP-IDF's and TesserKIT's lines come through there.
+
+### 5.15 Battery
+
+```
+/sys/battery            label "Battery", ui.icon "battery", write Admin
+  soc                   integer 0–100 %, read-only, ui.widget gauge
+  voltage               number, V, read-only, ui.widget chart
+  charging              boolean, read-only: with a charging pin, or fed by the application
+  low *(p)              integer 0–50 % (default 15): below it, lowBattery (advanced)
+  lowBattery            event, warn toast: the charge, once each time it falls under `low`
+```
+
+- **Sources:** an ADC pin through a divider, `battery.adc(pin, ratio)` (the battery's voltage is the pin's times `ratio`: 2 for two equal resistors), sampled each second, 16 readings averaged and smoothed over the last few samples; or the application's own measurement (a fuel gauge, a power management chip), `battery.update(volts, soc, charging)` from any task, where a charge or a charging state below 0 means unknown. A charger's status pin, `battery.chargingPin(pin, activeLow)`, is read with each sample (TP4056's CHRG: open drain, low while charging, so pulled up).
+- **Charge:** from the voltage on a lithium cell's resting curve (3.27 V empty, 3.84 V half, 4.2 V full), or a straight line, `battery.linear(emptyV, fullV)`, for other chemistries and several cells. A voltage under load or while charging reads high or low: the charge is an estimate, which a fuel gauge's `soc` replaces.
+- **Notifications:** the voltage is marked changed when it moves by 10 mV, the charge when it changes by a percent. `lowBattery` is emitted when the charge falls to `low` or under while not charging, then again only after charging or rising 5 % above it. Putting the device to sleep at that point is the application's (or a timer's) choice: Sleep (§5.16) is an action like any other.
+- **Platform:** `Pins` (§3.3): ESP-IDF's ADC oneshot driver with its calibration (curve fitting, or line fitting on the ESP32) at 12 dB, ADC1 only: the ESP32's ADC2 belongs to Wi-Fi. On Arduino, `analogRead()` claims ADC1 itself: a sketch reading its own analog pins feeds the service with `update()` instead.
+- **Factory default:** `battery.lowAt(20)`.
+
+### 5.16 Sleep
+
+```
+/sys/sleep              label "Sleep", ui.icon "moon", write Admin
+  sleep                 action (integer 0–31 536 000 s): deep sleep for that long, 0 until the wake pin; ui.confirm
+  wakePin *(p)          integer -1–63: the GPIO that wakes the device (-1 none), checked against the chip
+  wakeLevel *(p)        enum low, high (default low)
+  wakePull *(p)         boolean (default true): the chip's pull resistor holds the pin at the other level (advanced)
+  wakeCause             enum none, timer, pin, other, read-only: how this boot woke (none: not from deep sleep)
+```
+
+- **Sleeping:** the action answers, then half a second later TesserKIT's task calls the application's `dev.onSleep(fn)` callbacks (to park its hardware, hold its pins), saves what the persistence's debounce still holds, and enters deep sleep. A sleep with neither a time nor a wake pin is refused, and so is one during a firmware update (`busy`). The device wakes as from a reset, with `/sys/status/resetReason` `deep-sleep`.
+- **Wake pin:** ext1 on chips that have it (ESP32, ESP32-S3: RTC GPIOs only; on the ESP32 a single pin's "all low" is that pin low), the GPIO wake-up of the others (ESP32-C3: GPIO 0–5). The pull resistor stays on through sleep (the ESP32's RTC peripherals are kept powered for it). A devkit's BOOT button (GPIO 0, pulled up) wakes it at `low`: `sleep.wakePin(0)`.
+- **Composition:** being an action, sleep is what a timer (§5.6) or a sequence step (§5.13) can call: "every night at 23:00, sleep 8 hours".
+- **Platform:** `Power` (§3.3).
+- **Factory default:** `sleep.wakePin(pin, high, pull)`.
+
+### 5.17 Later
 
 | Service | Content |
 |---|---|
-| Battery | `soc` (%), `charging`, `voltage`; fed by the application (`battery.update(...)`) or an ADC pin with a divider. |
-| Sleep | `sleep` action (deep sleep), wake-up pin and level *(p)*, `dev.onSleep(fn)` for the application to park its hardware. |
 | Ethernet on SPI | W5500 and similar modules, for chips without the internal MAC (§5.2). |
-| Log | §5.1. |
 
 ## 6. Persistence
 
@@ -547,10 +610,10 @@ They apply only when the stored state doesn't set the value, so a user's change 
 
 The UI is TesserUI's generic renderer, self-hosted by the device (TesserUI §9.4): `/` and `/ui.js`, about 41 KB of flash. Nothing is TesserKIT-specific in the bundle:
 
-- **Menu:** `/sys` has `ui.page`, so TesserUI's menu (TesserUI §6.3) shows it as one entry with a sub-entry, and a page, per service. Each service names its icon (`ui.icon`): Status `info`, Network `wifi`, Time `clock`, Firmware `download`, Backup `refresh`, Timers `play`, Users `lock`, MQTT `link`, Art-Net `bulb`.
+- **Menu:** `/sys` has `ui.page`, so TesserUI's menu (TesserUI §6.3) shows it as one entry with a sub-entry, and a page, per service. Each service names its icon (`ui.icon`): Status `info`, Network `wifi`, Time `clock`, Firmware `download`, Backup `refresh`, Timers `play`, Users `lock`, MQTT `link`, Art-Net `bulb`, Log `menu`, Battery `battery`, Sleep `moon`.
 - **Services' pages** are their trees with hints: labels, units, `confirm` on destructive actions, `style danger`, `advanced` on rarely used settings, `form` where several fields must change together (the access point), `visibleWhen` for conditional fields (static IP), `chart` on heap and RSSI.
 - **The application's pages** are its tree, plus TesserUI views (§8 there) for dashboards and custom elements (§9.8 there) for what generic widgets can't draw.
-- **Notifications:** what happens in the background, after any reply, is an event with `ui.toast` (TesserUI §7.8) and `ui.hidden`: a toast, not an events log on the service's page. Network's `joined`, Firmware's `updateFailed` and `newRelease`, `timerFailed`, Mqtt's `lost`, ArtNet's `refused` and the Sequencer's `failed`. TesserUI shows them on any page, as "<parent's label> › <label>: <payload>" ("Wi-Fi › Joined: 192.168.1.50 on Workshop"), so their labels don't repeat their parent's. A moment a reply or a widget already shows isn't one: a failed upload, a manual release check, a pairing (its state is on the page), a restore. Clients only hear events while subscribed, so what a device does at boot (a rollback, a crash) stays a value (`resetReason`, `coredumpPresent`).
+- **Notifications:** what happens in the background, after any reply, is an event with `ui.toast` (TesserUI §7.8) and `ui.hidden`: a toast, not an events log on the service's page. Network's `joined`, Firmware's `updateFailed` and `newRelease`, `timerFailed`, Mqtt's `lost`, ArtNet's `refused`, the Sequencer's `failed` and Battery's `lowBattery`. TesserUI shows them on any page, as "<parent's label> › <label>: <payload>" ("Wi-Fi › Joined: 192.168.1.50 on Workshop"), so their labels don't repeat their parent's. A moment a reply or a widget already shows isn't one: a failed upload, a manual release check, a pairing (its state is on the page), a restore. Clients only hear events while subscribed, so what a device does at boot (a rollback, a crash) stays a value (`resetReason`, `coredumpPresent`).
 - **Login:** when a request answers `unauthorized`, TesserUI's sign-in dialog calls `/sys/auth/login` with a name and password (TesserUI §7.4). Without the Auth service it never needs to: everyone is Admin.
 - **Theming and text:** `dev.web().theme(...)`, `.text(...)`, `.title(...)` (TesserUI §9.4).
 - **The launcher** (TesserUI §9.7): the same bundle on GitHub Pages, `https://leokeba.github.io/TesserKIT/`, published by CI with the TesserUI the example firmware is built with (§13). It reaches a device without the device serving a page:
@@ -643,6 +706,8 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 | Mqtt with `CONFIG_MQTT_TRANSPORT_SSL=n` and `CONFIG_MQTT_TRANSPORT_WEBSOCKET=n` (mqtt:// only) | 102 KB |
 | Files with the stored backups (2026-10-12, `examples/idf/full` with and without `Files`): LittleFS, the VFS directory calls, the service | 40.9 KB |
 | Ethernet (2026-10-12, `examples/idf/full` with and without `-DETHERNET_BOARD=gledopto`): `esp_eth`'s MAC and generic PHY drivers, its netif glue, the GPIO driver | 40.5 KB |
+| Log, Sleep and Home Assistant discovery together (2026-10-13, `examples/idf/full` before and after) | 28.7 KB |
+| Battery on an ADC pin (2026-10-13, `examples/idf/full` with and without `-DBATTERY_GPIO=34`): the service, the ADC oneshot driver and its calibration | 12.1 KB |
 
 - **Where it goes** (with mDNS): TesserKIT's own code 42 KB (Network 15 KB, most of it the `std::function`s behind bound values and the keyed list), ESP-IDF's `mdns` 34 KB, libc's time zone support 17 KB (`tzset()` parses with `vfscanf`), lwIP's DHCP server, DNS client and sockets 7.6 KB, the access point in the Wi-Fi driver 6 KB, OTA 2.6 KB.
 - **Against the budget:** 60 KB is exceeded. Features stay, as options where they are large (mDNS, downloads); the rest is smaller only at the cost of clarity, and is left as it is until a measured application needs the space.
@@ -666,7 +731,7 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 
 1. **Host tests** (CMake, ASan and UBSan, the same warnings as TesserAPI): every service against the fake platform. Wi-Fi state machine (join, lose, fall back to the AP, recovery), Ethernet (preferred to the station, the station's wait for it, recovery on a cable, a static address), time and DST, timers (catch-up, no double runs), firmware upload checks, release checks (versions, GitHub's answers and failures, scheduling), backup round trips, tokens (expiry, revocation, brute-force delay), the MQTT bridge (topics, commands with User access, sessions, intervals), Art-Net (scaling, gates, changes only, ArtPollReply's bytes), Bluetooth (the name following the hostname, switching off and on, the client shown), NowTp (waiting for the network, the nodes listed and read-only, pairing, the factory reset forgetting the key), HTTPS refused without the memory for it, Files (names and paths refused, uploads replaced whole and cut short, directories, space, formatting, the application's own writes), the stored backups (names, `keep`, `before-restore`, the factory reset) and the Sequencer (each wait, names, indices and offsets, finally, take-overs, loops, failures, boot). The fake platform is a CMake target, `tesserkit_fake` (`fake_platform.h`, `fake::Platform::install(dev)`), so applications' host tests and simulators show `/sys` too.
 2. **Golden schemas:** each service's schema with its hints, checked in as `fixtures/*.json`. TesserUI renders them in its golden-model tests, so a hint change shows as a diff in both repositories.
-3. **On target:** `examples/idf/minimal` (and `examples/arduino/Minimal`, with `--app /lamp`), driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, sign-in with tokens over HTTP and WebSocket, a timer running, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. Releases: `test/e2e_github.py` serves a release endpoint and a newer image from the test machine, and watches the device find it, install it and come back up to date; `--check-only` checks the device's own feed (GitHub's API). A real GitHub download (2026-10-11, DEVKIT-V3: v0.1.2's asset through its ~950-character signed CDN redirect, 1.5 MB in 25 s, installed and booted): the mock server's short URLs had hidden that the HTTP client's request buffer was too small for it. Bluetooth: `examples/idf/bluetooth`, driven from a Mac with `bleak` (Nordic UART): an open device is Admin, a locked one public, sign-in with a line token gives Admin, a bad token public, and a reconnection starts public again. `examples/idf/full` (2026-10-11, DEVKIT-V3 beside DEVKIT-R1 running TesserAPI's test firmware): every service up, R1 found over NowTP and mounted under `/peers`, the envelopes on the serial line among the logs, a GitHub release check over HTTPS beside Bluetooth and NowTP, and with an MQTT session too (when it ran out of memory, which the guard of §11 now refuses). Files: `test/e2e_files.py` on `examples/idf/full` (2026-10-12, DEVKIT-V3, 39 checks): directories, a 100 KB upload and download compared byte for byte, a name with a space and accents (`filename*=UTF-8''`), refused names and sizes, replace, rename and delete, and stored backups saved, downloaded, restored and deleted. Two transfers on one path can't overlap over HTTP there: ESP-IDF's server handles one request at a time, so the second waits for the first (TesserAPI's host tests cover `busy`). Ethernet: `test/e2e_ethernet.py` on `examples/idf/full -DETHERNET_BOARD=gledopto` (2026-10-13, a Gledopto GL-C-611WL cabled to the router, 17 checks): the generic PHY driver with the LAN8720, link at 100 Mbit/s, a DHCP lease, the station kept away, `<hostname>.local` on Ethernet's address, a restart back over the cable in 13 s, a static address reached within 1 s and DHCP's lease back within 10 s. A script beside it (18 checks) switched the station to `always` (joined beside Ethernet, the device reached on both addresses), Ethernet off (the link down within 0.5 s, the device online over Wi-Fi), the station to `fallback` without Ethernet (it stays), Ethernet on (the lease back in 11 s, the station leaving at once) and the station off; every `state` read as specified. An ArtPoll over the cable got Ethernet's address and MAC; OTA updates installed and confirmed over the cable. A cable pulled by hand: the device unreachable for 21 s, then on Wi-Fi (the station's join, the Freebox's slow DHCP), Ethernet's state "no cable"; plugged back, "waiting for DHCP" while still on Wi-Fi, then the lease 9 s after the link and the station leaving at once. Not tried on hardware: a link-local address (needs a cable without DHCP). Found there: NowTP polled the station's connection every 10 ms, and ESP-IDF logs a warning for each poll while the station isn't connected, so a board on Ethernet with its station idle flooded its console (100 lines a second), which drowned the serial line's long replies; fixed in NowTP 65e8176 (§14). Transfers: `test/e2e_transfers.py` on `examples/idf/full` (2026-10-13, DEVKIT-V3 and DEVKIT-R1, 18 checks) moves the services' file nodes in envelopes: over the serial line, a file to Files and back, the settings downloaded and restored, the core dump downloaded, and a firmware update (the serial task writing the flash), the device coming back on the other slot from a software restart; through the gateway's WebSocket to the peer under `/peers`, a file and a firmware update, each chunk's reply timed against the relay's 3 s. A GitHub release check (§5.4) that falls during a relay takes the gateway's heap down to about 20 KB for a few seconds. *(later)* a test firmware with every service and serial scripts.
+3. **On target:** `examples/idf/minimal` (and `examples/arduino/Minimal`, with `--app /lamp`), driven over HTTP and WebSocket by `test/e2e_device.py`: status, the interface, subscriptions, a scan, SNTP, sign-in with tokens over HTTP and WebSocket, a timer running, persistence across a restart, backup and restore, refused images, an OTA upload, its confirmation and rollback, and an image that crashes at boot (`-DCRASH_AT_BOOT=1`) rolled back by the bootloader, with its core dump downloaded. Provisioning: `test/captive_probe` is a firmware that plays a phone on a second board. It joins a fresh device's access point (built with `-DNO_DEFAULT_NETWORK=1`), checks that any name resolves to the device and that Android's and Apple's connectivity probes are redirected to the interface, then saves a network through the API and watches the device join it and the access point go. Releases: `test/e2e_github.py` serves a release endpoint and a newer image from the test machine, and watches the device find it, install it and come back up to date; `--check-only` checks the device's own feed (GitHub's API). A real GitHub download (2026-10-11, DEVKIT-V3: v0.1.2's asset through its ~950-character signed CDN redirect, 1.5 MB in 25 s, installed and booted): the mock server's short URLs had hidden that the HTTP client's request buffer was too small for it. Bluetooth: `examples/idf/bluetooth`, driven from a Mac with `bleak` (Nordic UART): an open device is Admin, a locked one public, sign-in with a line token gives Admin, a bad token public, and a reconnection starts public again. `examples/idf/full` (2026-10-11, DEVKIT-V3 beside DEVKIT-R1 running TesserAPI's test firmware): every service up, R1 found over NowTP and mounted under `/peers`, the envelopes on the serial line among the logs, a GitHub release check over HTTPS beside Bluetooth and NowTP, and with an MQTT session too (when it ran out of memory, which the guard of §11 now refuses). Files: `test/e2e_files.py` on `examples/idf/full` (2026-10-12, DEVKIT-V3, 39 checks): directories, a 100 KB upload and download compared byte for byte, a name with a space and accents (`filename*=UTF-8''`), refused names and sizes, replace, rename and delete, and stored backups saved, downloaded, restored and deleted. Two transfers on one path can't overlap over HTTP there: ESP-IDF's server handles one request at a time, so the second waits for the first (TesserAPI's host tests cover `busy`). Ethernet: `test/e2e_ethernet.py` on `examples/idf/full -DETHERNET_BOARD=gledopto` (2026-10-13, a Gledopto GL-C-611WL cabled to the router, 17 checks): the generic PHY driver with the LAN8720, link at 100 Mbit/s, a DHCP lease, the station kept away, `<hostname>.local` on Ethernet's address, a restart back over the cable in 13 s, a static address reached within 1 s and DHCP's lease back within 10 s. A script beside it (18 checks) switched the station to `always` (joined beside Ethernet, the device reached on both addresses), Ethernet off (the link down within 0.5 s, the device online over Wi-Fi), the station to `fallback` without Ethernet (it stays), Ethernet on (the lease back in 11 s, the station leaving at once) and the station off; every `state` read as specified. An ArtPoll over the cable got Ethernet's address and MAC; OTA updates installed and confirmed over the cable. A cable pulled by hand: the device unreachable for 21 s, then on Wi-Fi (the station's join, the Freebox's slow DHCP), Ethernet's state "no cable"; plugged back, "waiting for DHCP" while still on Wi-Fi, then the lease 9 s after the link and the station leaving at once. Not tried on hardware: a link-local address (needs a cable without DHCP). Found there: NowTP polled the station's connection every 10 ms, and ESP-IDF logs a warning for each poll while the station isn't connected, so a board on Ethernet with its station idle flooded its console (100 lines a second), which drowned the serial line's long replies; fixed in NowTP 65e8176 (§14). Transfers: `test/e2e_transfers.py` on `examples/idf/full` (2026-10-13, DEVKIT-V3 and DEVKIT-R1, 18 checks) moves the services' file nodes in envelopes: over the serial line, a file to Files and back, the settings downloaded and restored, the core dump downloaded, and a firmware update (the serial task writing the flash), the device coming back on the other slot from a software restart; through the gateway's WebSocket to the peer under `/peers`, a file and a firmware update, each chunk's reply timed against the relay's 3 s. A GitHub release check (§5.4) that falls during a relay takes the gateway's heap down to about 20 KB for a few seconds. Log, Sleep, Battery and Home Assistant discovery: `test/e2e_power.py` on `examples/idf/full` (2026-10-13, DEVKIT-V3, and DEVKIT-R1 built with `-DBATTERY_GPIO=34`, 40 checks): the recent lines downloaded without colours, a level above the build's refused, log lines streamed as events (`GET ?sub`) while an unresolvable broker fails; discovery against a broker on the test machine (amqtt), 13 configs (switch, number with the LED's step, sensors with units and an enum, `diagnostic` under `/sys`), commands as Home Assistant sends them, nothing dropped, every config emptied when switched off; a deep sleep of 8 s (back on the network 25 s after the request, `deep-sleep`, woken by `timer`, the LED parked by `onSleep`), and woken by the pin (GPIO 0 at `high`, which a devkit's pull-up holds); a battery voltage read and sampled each second (a floating GPIO 34: 0.28 V). *(later)* a test firmware with every service and serial scripts.
 4. **CI:** each push to main runs the host tests, then releases the example and publishes the launcher (§13). *(later)* ESP-IDF builds (5.1, 5.4, 5.5, latest × ESP32, ESP32-C3, ESP32-S3), Arduino-ESP32 3.x builds of the examples, the footprint budgets.
 
 ## 13. Packaging
@@ -752,7 +817,7 @@ Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presentin
 | 2 *(done)* | Timers, Auth | spin-seq's timers and a locked-down device. |
 | 3 | helionext on TesserKIT, in tiny-heliostat (§10.1) | Every helionext page usable, with custom elements only for the keyframes and the sky. |
 | 4 | spin-seq on TesserKIT, NowTP channel following and pairing, shared clock | A master and three remotes run a synchronized sequence; fleet update through the master. |
-| 5 | Battery, Sleep, Ethernet (RMII *(done)*), Log, Home Assistant discovery | *(later)* |
+| 5 *(done)* | Battery, Sleep, Ethernet (RMII), Log, Home Assistant discovery | Host-tested, and on hardware (§12). Ethernet on SPI stays *(later)* (§5.17). |
 
 Mqtt and ArtNet were built ahead of the roadmap (2026-10-11), ArtNet for tiny-heliostat, and so were GitHub releases with the workflow that publishes them, and the Bluetooth and NowTp services with `examples/idf/full` (2026-10-11): phase 4's NowTP part, short of the synchronized sequence. Ethernet on the internal MAC came on 2026-10-12, for a Gledopto LED controller.
 

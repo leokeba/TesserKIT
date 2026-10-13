@@ -16,7 +16,10 @@ set(TESSERKIT_CORE_SRCS
     src/tesserkit/artnet.cpp
     src/tesserkit/mqtt.cpp
     src/tesserkit/bluetooth.cpp
-    src/tesserkit/nowtp.cpp)
+    src/tesserkit/nowtp.cpp
+    src/tesserkit/log.cpp
+    src/tesserkit/battery.cpp
+    src/tesserkit/sleep.cpp)
 
 if(ESP_PLATFORM)
     # TesserAPI and TesserUI are hard dependencies. Their component names
@@ -63,10 +66,13 @@ if(ESP_PLATFORM)
              src/tesserkit/platform/esp/ble_esp.cpp
              src/tesserkit/platform/esp/nowtp_esp.cpp
              src/tesserkit/platform/esp/filesystem_esp.cpp
+             src/tesserkit/platform/esp/log_esp.cpp
+             src/tesserkit/platform/esp/power_esp.cpp
+             src/tesserkit/platform/esp/pins_esp.cpp
         INCLUDE_DIRS "src"
         REQUIRES esp_http_server esp_wifi esp_netif nvs_flash
         PRIV_REQUIRES esp_event esp_timer app_update esp_http_client mbedtls lwip mdns mqtt espcoredump joltwallet__littlefs
-                      esp_partition spi_flash efuse esp_app_format esp_eth ${TESSERKIT_DRIVER_REQS})
+                      esp_partition spi_flash efuse esp_app_format esp_eth esp_adc ${TESSERKIT_DRIVER_REQS})
     if(NOT CONFIG_TESSERKIT_MDNS)
         target_compile_definitions(${COMPONENT_LIB} PRIVATE TESSERKIT_NO_MDNS=1)
     endif()

@@ -1,8 +1,8 @@
 # TesserKIT
 
-A device framework for ESP32 firmware with a rich web interface and a small footprint. It provides what every connected device needs besides its own function, network setup, time, firmware updates, backups, files, users, MQTT, Art-Net, Bluetooth, ESP-NOW and system status, as subtrees of a [TesserAPI](https://github.com/leokeba/TesserAPI) tree, drawn by [TesserUI](https://github.com/leokeba/TesserUI)'s generic renderer with no UI code.
+A device framework for ESP32 firmware with a rich web interface and a small footprint. It provides what every connected device needs besides its own function, network setup, time, firmware updates, backups, files, users, MQTT (with Home Assistant discovery), Art-Net, Bluetooth, ESP-NOW, the log, the battery, deep sleep and system status, as subtrees of a [TesserAPI](https://github.com/leokeba/TesserAPI) tree, drawn by [TesserUI](https://github.com/leokeba/TesserUI)'s generic renderer with no UI code.
 
-> **Status: phases 1 and 2 done, parts of 4 and 5.** Device, System, Network (Wi-Fi and Ethernet), Time, Firmware, Backup, Files, Timers, Sequencer, Auth, Mqtt, ArtNet, Bluetooth and NowTp work on the host (176 tests) and on hardware (classic ESP32 with ESP-IDF and Arduino, a Gledopto Ethernet controller; the `test/e2e_*.py` scripts). Releases are published from each push to main ([latest](https://github.com/leokeba/TesserKIT/releases/latest)). Porting helionext is under way in its own repository. The specification is [docs/DESIGN.md](docs/DESIGN.md).
+> **Status: phases 1, 2 and 5 done, part of 4.** Device, System, Network (Wi-Fi and Ethernet), Time, Firmware, Backup, Files, Timers, Sequencer, Auth, Mqtt (with Home Assistant discovery), ArtNet, Bluetooth, NowTp, Log, Battery and Sleep work on the host (191 tests) and on hardware (classic ESP32 with ESP-IDF and Arduino, a Gledopto Ethernet controller; the `test/e2e_*.py` scripts). Releases are published from each push to main ([latest](https://github.com/leokeba/TesserKIT/releases/latest)). Porting helionext is under way in its own repository. The specification is [docs/DESIGN.md](docs/DESIGN.md).
 
 ```cpp
 #include <TesserKIT.h>
@@ -19,6 +19,9 @@ tesserkit::Sequencer sequencer(dev);  // steps played in turn, each a write to t
 tesserkit::Auth auth(dev);            // accounts, roles, sign-in
 tesserkit::Bluetooth bluetooth(dev);  // the interface from a phone, over Bluetooth LE
 tesserkit::NowTp nowtp(dev);          // the nodes nearby over ESP-NOW, each with its page
+tesserkit::Log logs(dev);             // the firmware's log lines, live and as a file
+tesserkit::Battery battery(dev);      // charge and voltage: .adc(pin) or .update() from a fuel gauge
+tesserkit::Sleep sleeper(dev);        // deep sleep, woken by a timer or a pin
 
 void setup() {
     dev.api().mount("heliostat", heliostat);   // the application's own tree
@@ -46,16 +49,19 @@ It aims at most of [ESP32-sveltekit](https://github.com/theelims/ESP32-sveltekit
 | `Timers` | `/sys/timers` | Daily schedules on chosen weekdays: set any value or call any action of the tree at a local time |
 | `Sequencer` | `/sequencer` | Steps played in turn, each a write to the tree (here or on the nodes under `/peers`), waiting a time or until the write's reply; named or by index, next step by name, index or offset; a `finally` write when it stops; played at boot |
 | `Auth` | `/sys/auth` | Accounts with user and admin roles, salted PBKDF2 hashes, stateless signed tokens, sign-in from TesserUI's dialog |
-| `Mqtt` | `/sys/mqtt` | A broker bridge: chosen subtrees published as retained topics, one per leaf, with intervals; `<prefix>/<path>/set` commands with user access; online/offline availability; TLS with the certificate bundle (opt-in) |
+| `Mqtt` | `/sys/mqtt` | A broker bridge: chosen subtrees published as retained topics, one per leaf, with intervals; `<prefix>/<path>/set` commands with user access; online/offline availability; TLS with the certificate bundle (opt-in); Home Assistant discovery, each value and action announced as a switch, number, select, text, sensor or button from its schema |
 | `Bluetooth` | `/sys/bluetooth` | TesserAPI's Bluetooth LE transport, for TesserUI's launcher on a phone: on and off at runtime, named after the hostname, the client shown; clients sign in with a token |
 | `NowTp` | `/sys/nowtp`, `/peers` | NowTP over ESP-NOW: the TesserAPI nodes nearby mounted under `/peers`, each with its page (a UI host), and this device on theirs; pairing with an installation key, whose holders are trusted; channel following, network time, the nodes heard; a gateway relays its peers' firmware updates and files |
+| `Log` | `/sys/log` | The firmware's log lines (ESP-IDF's and TesserKIT's) as live events and the last 4 KB as a file; the log level, the console's too (Admin only) |
+| `Battery` | `/sys/battery` | Charge, voltage and charging state, from an ADC pin through a divider (calibrated, smoothed) or the application's fuel gauge; a lithium curve or a straight line; a toast when it runs low |
+| `Sleep` | `/sys/sleep` | Deep sleep for a time or until a wake pin (ext1, or the GPIO wake-up on the C3), `dev.onSleep()` to park the hardware first, and what woke this boot; an action, so timers and sequences can call it |
 | `ArtNet` | `/sys/artnet` | An Art-Net node: DMX channels of one universe (8 or 16 bits, scaled, or gates) written to any nodes, only when they change; answers ArtPoll |
 
 Without the Auth service, or until it holds an admin account, the device is open: every client is Admin.
 
 ## Footprint
 
-On a classic ESP32 with ESP-IDF and `-Os`, Device, System, Network, Time, Firmware and Backup add 113 KB of flash above TesserAPI and TesserUI, 78 KB without mDNS (`CONFIG_TESSERKIT_MDNS=n`, or `-DTESSERKIT_NO_MDNS`). Firmware downloads from URLs add TLS and an HTTP client, about 130 KB, only with `firmware.downloads()`; GitHub releases 10 KB more, only with `firmware.github()`. ArtNet adds 9 KB; Files 41 KB (LittleFS); Ethernet 41 KB, only when declared; Mqtt about 110 KB (esp-mqtt with its transports), more than Arduino's default 1.25 MB app slot holds next to every other service on ESP32. Bluetooth adds about 200 KB on ESP-IDF; every service and transport together (`examples/idf/full`) is 1.66 MB, 90% of an app slot of `partitions/tesserkit_4mb_files.csv`. Details in [DESIGN §11](docs/DESIGN.md#11-footprint).
+On a classic ESP32 with ESP-IDF and `-Os`, Device, System, Network, Time, Firmware and Backup add 113 KB of flash above TesserAPI and TesserUI, 78 KB without mDNS (`CONFIG_TESSERKIT_MDNS=n`, or `-DTESSERKIT_NO_MDNS`). Firmware downloads from URLs add TLS and an HTTP client, about 130 KB, only with `firmware.downloads()`; GitHub releases 10 KB more, only with `firmware.github()`. ArtNet adds 9 KB; Files 41 KB (LittleFS); Ethernet 41 KB, only when declared; Log, Sleep and Home Assistant discovery 29 KB together; Battery on an ADC pin 12 KB; Mqtt about 110 KB (esp-mqtt with its transports), more than Arduino's default 1.25 MB app slot holds next to every other service on ESP32. Bluetooth adds about 200 KB on ESP-IDF; every service and transport together (`examples/idf/full`) is 1.69 MB, 92% of an app slot of `partitions/tesserkit_4mb_files.csv`. Details in [DESIGN §11](docs/DESIGN.md#11-footprint).
 
 ## Building
 
@@ -63,9 +69,9 @@ On a classic ESP32 with ESP-IDF and `-Os`, Device, System, Network, Time, Firmwa
 - **Arduino / PlatformIO:** `examples/arduino/Minimal`, with TesserAPI, TesserUI and ArduinoJson 7.
 - **Ethernet:** `examples/idf/full` built with `-DETHERNET_BOARD=gledopto` (or another preset of `tesserkit::boards`) uses the board's cable, and Wi-Fi when it is unplugged. The ESP32's internal MAC with an RMII PHY; about 40 KB of flash, only when declared. On a Gledopto GL-C-611WL, firmware uploads run at 170 KB/s over the cable (70 KB/s over Wi-Fi).
 - **Bluetooth:** `examples/idf/bluetooth` and `examples/arduino/Bluetooth` (ESP32-C3, ESP32-S3) add the Bluetooth service beside Wi-Fi: the launcher reaches the device from a phone with no network in common.
-- **Everything:** `examples/idf/full` has every service and transport, with the factory defaults each one takes, and a dashboard; it needs NowTP next to TesserKIT (or `NOWTP_PATH`). Two boards running it show each other. On a classic ESP32 without PSRAM it is at the edge of the RAM: HTTPS waits while an MQTT session runs (DESIGN §11).
+- **Everything:** `examples/idf/full` has every service and transport (Battery with `-DBATTERY_GPIO=<adc pin>`), with the factory defaults each one takes, and a dashboard; it needs NowTP next to TesserKIT (or `NOWTP_PATH`). Two boards running it show each other. On a classic ESP32 without PSRAM it is at the edge of the RAM: HTTPS waits while an MQTT session runs (DESIGN §11).
 - **Host tests:** `cmake -S . -B build && cmake --build build -j && ctest --test-dir build`.
-- **On hardware:** `python3 test/e2e_device.py http://<ip> [--image app.bin] [--crash-image crash.bin]`; ArtNet and Mqtt: the example built with `-DWITH_ARTNET=1 -DWITH_MQTT=1`, then `uv run --with paho-mqtt python test/e2e_services.py http://<ip> --broker <host>`; GitHub releases: `python3 test/e2e_github.py http://<ip> --image newer.bin --tag v9.9.9` (instructions in the script); Files, Ethernet and transfers over serial and through a gateway: `test/e2e_files.py`, `test/e2e_ethernet.py`, `test/e2e_transfers.py`.
+- **On hardware:** `python3 test/e2e_device.py http://<ip> [--image app.bin] [--crash-image crash.bin]`; ArtNet and Mqtt: the example built with `-DWITH_ARTNET=1 -DWITH_MQTT=1`, then `uv run --with paho-mqtt python test/e2e_services.py http://<ip> --broker <host>`; GitHub releases: `python3 test/e2e_github.py http://<ip> --image newer.bin --tag v9.9.9` (instructions in the script); Files, Ethernet and transfers over serial and through a gateway: `test/e2e_files.py`, `test/e2e_ethernet.py`, `test/e2e_transfers.py`; Log, Sleep, Battery and Home Assistant discovery: `uv run --with paho-mqtt python test/e2e_power.py http://<ip> --broker <host>`.
 
 ## Releases
 

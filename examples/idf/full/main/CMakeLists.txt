@@ -8,3 +8,8 @@ endif()
 if(DEFINED ETHERNET_BOARD)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE ETHERNET_BOARD=${ETHERNET_BOARD})
 endif()
+# -DBATTERY_GPIO=n: the Battery service on that ADC1 pin, through a divider of
+# two equal resistors.
+if(DEFINED BATTERY_GPIO)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE BATTERY_GPIO=${BATTERY_GPIO})
+endif()

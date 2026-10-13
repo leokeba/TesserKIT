@@ -14,6 +14,10 @@
 //   ADMIN_PASSWORD            an "admin" account from the start (else the
 //                             device is open until one is added)
 //   NOWTP_PAIRING_CODE        what pairings between nodes must know
+//
+// Build options: -DBATTERY_GPIO=n adds the Battery service on that ADC pin,
+// through a divider of two equal resistors; -DETHERNET_BOARD=gledopto uses
+// that board's Ethernet.
 #include "TesserKIT.h"
 #include "driver/ledc.h"
 
@@ -81,6 +85,11 @@ tesserkit::ArtNet artnet(dev);        // lighting consoles
 tesserkit::Bluetooth bluetooth(dev);  // the launcher from a phone
 tesserkit::NowTp nowtp(dev);          // the nodes nearby over ESP-NOW (after Network: Wi-Fi first)
 tesserkit::Sequencer sequencer(dev);  // /sequencer: steps played in turn
+tesserkit::Log logs(dev);             // the firmware's log, as events and a file
+tesserkit::Sleep sleeper(dev);        // deep sleep, woken by a timer or the BOOT button
+#if defined(BATTERY_GPIO)
+tesserkit::Battery battery(dev);      // charge and voltage
+#endif
 // The launcher's USB way: envelopes on the console's UART, Admin (physical
 // access). Logs stay at warnings (sdkconfig.defaults).
 tesser::UartTransport serialApi(dev.api(), UART_NUM_0);
@@ -126,7 +135,7 @@ extern "C" void app_main() {
     sequencer.finally("/led/on", "false");
     // Writes to every node nearby (/peers/*/...) each wait in a pending slot.
     dev.api().config().maxPending = 8;
-    mqtt.tls().publish("/led", 0).publish("/sys/status", 10000);
+    mqtt.tls().publish("/led", 0).publish("/sys/status", 10000).homeAssistant(true);
 #if defined(MQTT_URI)
     mqtt.broker(MQTT_URI).enable(true);
 #endif
@@ -143,10 +152,18 @@ extern "C" void app_main() {
 #if defined(NOWTP_PAIRING_CODE)
     nowtp.pairingCode(NOWTP_PAIRING_CODE);
 #endif
+    sleeper.wakePin(0);  // the BOOT button, low when pressed
+#if defined(BATTERY_GPIO)
+    battery.adc(BATTERY_GPIO, 2.0f);
+#endif
 
     // The application: the LED, and a dashboard over it and the nodes nearby
     // ("$" stands for each node under /peers).
     led.begin();
+    dev.onSleep([] {
+        led.on = false;  // dark while asleep
+        led.apply();
+    });
     dev.api().mount("led", led).label("LED").ui("icon", "bulb");
     static tesserui::Views views(dev.api());
     auto& home = views.page("overview", "Overview").icon("home");

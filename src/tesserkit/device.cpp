@@ -233,6 +233,11 @@ void Device::fail(bool failed) {
     failed_ = failed;
 }
 
+void Device::sleeping() {
+    for (auto& fn : onSleep_) fn();
+    api_.save();  // what the debounce still holds
+}
+
 void Device::networkState(State s) { netState_ = s; }
 
 void Device::updating(bool on) { updating_ = on; }
@@ -295,6 +300,9 @@ MqttClient* espMqttTls() { return nullptr; }
 Ble* espBle() { return nullptr; }
 NowTpRadio* espNowTp() { return nullptr; }
 Filesystem* espFilesystem() { return nullptr; }
+LogOutput* espLog() { return nullptr; }
+Power* espPower() { return nullptr; }
+Pins* espPins() { return nullptr; }
 #endif
 
 }  // namespace tesserkit
