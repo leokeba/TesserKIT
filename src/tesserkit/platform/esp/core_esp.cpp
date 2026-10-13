@@ -135,6 +135,9 @@ public:
     uint64_t uptimeMs() override { return static_cast<uint64_t>(esp_timer_get_time() / 1000); }
     uint32_t freeHeap() override { return esp_get_free_heap_size(); }
     uint32_t minFreeHeap() override { return esp_get_minimum_free_heap_size(); }
+    uint32_t largestFreeBlock() override {
+        return static_cast<uint32_t>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    }
     uint32_t freePsram() override { return static_cast<uint32_t>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)); }
     bool temperature(float& celsius) override {
 #if SOC_TEMP_SENSOR_SUPPORTED

@@ -87,6 +87,9 @@ public:
     virtual uint64_t uptimeMs() = 0;
     virtual uint32_t freeHeap() = 0;
     virtual uint32_t minFreeHeap() = 0;
+    // The largest block one allocation can get: a fragmented heap aborts on
+    // a large one with plenty free in all.
+    virtual uint32_t largestFreeBlock() = 0;
     virtual uint32_t freePsram() = 0;
     // False on chips without a sensor.
     virtual bool temperature(float& celsius) = 0;

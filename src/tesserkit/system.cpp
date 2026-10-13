@@ -43,6 +43,11 @@ void System::describe(tesser::Object& o) {
     s.value("uptime", [&dev] { return static_cast<uint32_t>(dev.core().uptimeMs() / 1000); }).unit("s").watch();
     s.value("heap", [&dev] { return dev.core().freeHeap(); }).label("Free heap").unit("B").watch().ui("widget", "chart");
     s.value("minHeap", [&dev] { return dev.core().minFreeHeap(); }).label("Lowest free heap").unit("B").watch();
+    s.value("maxBlock", [&dev] { return dev.core().largestFreeBlock(); })
+        .label("Largest free block")
+        .unit("B")
+        .doc("The largest allocation the heap can serve now; far below the free heap, it is fragmented")
+        .ui("advanced");
     if (info.psram) s.value("psram", [&dev] { return dev.core().freePsram(); }).label("Free PSRAM").unit("B").watch();
     s.value("resetReason", resetReason_,
             {"power-on", "software", "panic", "watchdog", "brownout", "deep-sleep", "other"})

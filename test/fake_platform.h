@@ -21,7 +21,7 @@ using tesserkit::EventSink;
 struct Core : tesserkit::Core {
     tesserkit::BootInfo boot;
     uint64_t now = 1000;
-    uint32_t heap = 180000, minHeap = 150000, psram = 0;
+    uint32_t heap = 180000, minHeap = 150000, maxBlock = 110000, psram = 0;
     bool hasSensor = false;
     float celsius = 41.5f;
     int restarts = 0;
@@ -33,6 +33,7 @@ struct Core : tesserkit::Core {
     uint64_t uptimeMs() override { return now; }
     uint32_t freeHeap() override { return heap; }
     uint32_t minFreeHeap() override { return minHeap; }
+    uint32_t largestFreeBlock() override { return maxBlock; }
     uint32_t freePsram() override { return psram; }
     bool temperature(float& c) override {
         c = celsius;
