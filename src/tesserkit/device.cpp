@@ -190,6 +190,7 @@ void Device::loop() {
         updateState(now);
     }
     api_.poll(now);
+    poll();
     if (state_ != before) {
         for (auto& fn : onState_) fn(state_);
     }
@@ -205,6 +206,10 @@ void Device::loop() {
         api_.save();  // what the debounce still holds
         core().restart();
     }
+}
+
+void Device::poll() {
+    for (auto& fn : pollers_) fn();
 }
 
 void Device::post(Event e) {
@@ -285,6 +290,7 @@ bool Device::startTask() {
     tesser::logWarning("tesserkit: no task on the host; call Device::loop()");
     return true;
 }
+void Device::wake() {}
 tesser::Storage* Device::defaultStorage() { return nullptr; }
 Core* espCore() { return nullptr; }
 Wifi* espWifi() { return nullptr; }

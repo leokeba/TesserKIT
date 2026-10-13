@@ -62,7 +62,9 @@ public:
             tesser::logError("tesserkit: NowTP: %s", nowtp::toString(st));
             return false;
         }
-        if (!transport_->begin()) return false;
+        if (!transport_->begin(config.runTask)) return false;
+        polled_ = !config.runTask;
+        if (polled_) transport_->endpoint().onQueued(config.queued);
         if (peers && !mounted_) {
             transport_->mountPeers(*peers);
             mounted_ = true;
@@ -72,6 +74,9 @@ public:
     }
 
     tesser::DatagramEndpoint* endpoint() override { return transport_ ? &transport_->endpoint() : nullptr; }
+    void poll() override {
+        if (polled_ && transport_) transport_->poll();
+    }
 
     void end() override {
         if (transport_) transport_->end();
@@ -165,6 +170,7 @@ private:
 
     nowtp::EspNowTransport radio_;
     std::unique_ptr<tesser::NowTpTransport> transport_;
+    bool polled_ = false;  // no worker task: poll() handles the messages
     bool mounted_ = false;
     EventSink sink_;
 };

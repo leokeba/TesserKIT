@@ -37,10 +37,21 @@ esp_err_t notFound(httpd_req_t* req, httpd_err_code_t) {
 
 void deviceTask(void* arg) {
     Device* dev = static_cast<Device*>(arg);
-    TickType_t last = xTaskGetTickCount();
+    const TickType_t period = pdMS_TO_TICKS(20);
+    TickType_t next = xTaskGetTickCount();
     for (;;) {
         dev->loop();
-        vTaskDelayUntil(&last, pdMS_TO_TICKS(20));
+        next += period;
+        // Until the next period, the pollers run whenever a transport wakes
+        // the task (Device::wake()).
+        for (;;) {
+            TickType_t now = xTaskGetTickCount();
+            if (static_cast<int32_t>(next - now) <= 0) {
+                if (static_cast<int32_t>(now - next) > static_cast<int32_t>(period)) next = now;  // late: don't catch up
+                break;
+            }
+            if (ulTaskNotifyTake(pdTRUE, next - now)) dev->poll();
+        }
     }
 }
 
@@ -88,11 +99,21 @@ bool Device::startServer() {
     return true;
 }
 
+void Device::wake() {
+    void* task = task_.load();
+    if (task) xTaskNotifyGive(static_cast<TaskHandle_t>(task));
+}
+
 bool Device::startTask() {
-    if (xTaskCreate(deviceTask, "tesserkit", 6144, this, 3, nullptr) != pdPASS) {
+    // Measured: the services use 1.3 KB. A transport polled here also runs
+    // its requests here, which take up to 5 KB as in the HTTP task.
+    uint32_t stack = pollers_.empty() ? 6144 : 8192;
+    TaskHandle_t task = nullptr;
+    if (xTaskCreate(deviceTask, "tesserkit", stack, this, 3, &task) != pdPASS) {
         tesser::logError("tesserkit: no memory for the task");
         return false;
     }
+    task_ = task;
     return true;
 }
 

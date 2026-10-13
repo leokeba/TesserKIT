@@ -20,6 +20,11 @@ NowTp& NowTp::enable(bool on) {
     return *this;
 }
 
+NowTp& NowTp::ownTask(bool own) {
+    ownTask_ = own;
+    return *this;
+}
+
 NowTp& NowTp::maxCalls(size_t n) {
     maxCalls_ = n;
     return *this;
@@ -145,6 +150,10 @@ void NowTp::start() {
     if (!p.nowtp) p.nowtp = espNowTp();
     radio_ = p.nowtp;
     if (!radio_) tesser::logError("tesserkit: NowTp has no NowTP in this build");
+    if (radio_ && !ownTask_) {
+        NowTpRadio* radio = radio_;
+        dev_.poller([radio] { radio->poll(); });
+    }
     enabledGen_ = enabledNode_->generation();
     channelGen_ = channelNode_->generation();
     longRangeGen_ = longRangeNode_->generation();
@@ -175,6 +184,8 @@ void NowTp::begin() {
     c.txPower = txPower_;
     c.pairingCode = pairingCode_;
     c.maxCalls = maxCalls_;
+    c.runTask = ownTask_;
+    if (!ownTask_) c.queued = [&dev = dev_] { dev.wake(); };
     Device& dev = dev_;
     bool had = radio_->endpoint() != nullptr;
     started_ = radio_->begin(dev.api(), peersObject_, c, [&dev](Event e) { dev.post(std::move(e)); });

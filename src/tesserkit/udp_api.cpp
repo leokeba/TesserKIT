@@ -46,6 +46,11 @@ UdpApi& UdpApi::peerAccess(Access level) {
     return *this;
 }
 
+UdpApi& UdpApi::ownTask(bool own) {
+    ownTask_ = own;
+    return *this;
+}
+
 UdpApi& UdpApi::maxCalls(size_t n) {
     maxCalls_ = n;
     return *this;
@@ -109,6 +114,10 @@ void UdpApi::start() {
     if (!p.udpApi) p.udpApi = espUdpApi();
     transport_ = p.udpApi;
     if (!transport_) tesser::logError("tesserkit: UdpApi has no UDP transport in this build");
+    if (transport_ && !ownTask_) {
+        UdpApiTransport* t = transport_;
+        dev_.poller([t] { t->poll(); });
+    }
     enabledGen_ = enabledNode_->generation();
     portGen_ = portNode_->generation();
     accessGen_ = accessNode_->generation();
@@ -122,7 +131,8 @@ void UdpApi::start() {
 void UdpApi::begin() {
     if (!transport_ || running_) return;
     bool had = transport_->link() != nullptr;
-    running_ = transport_->begin(dev_.api(), port_, dev_.hostname(), maxCalls_);
+    Device& dev = dev_;
+    running_ = transport_->begin(dev_.api(), port_, dev_.hostname(), maxCalls_, ownTask_, [&dev] { dev.wake(); });
     if (!had && transport_->link()) Peers::watch(dev_, transport_->link()->endpoint());
     if (!running_) {
         tesser::logError("tesserkit: UDP didn't start on port %u", static_cast<unsigned>(port_));

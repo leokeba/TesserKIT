@@ -39,6 +39,11 @@ public:
     // at least the number of nodes a master streams to at once
     // (RemoteNode::stream()).
     UdpApi& maxCalls(size_t n);
+    // By default (false), no worker task of its own: the receive task stays,
+    // and requests from the nodes are handled in the device's task, woken as
+    // they arrive, which saves 6 KB of heap for about 10 ms per round trip.
+    // true: a worker task.
+    UdpApi& ownTask(bool own);
 
     void describe(tesser::Object& o) override;
 
@@ -66,6 +71,7 @@ private:
     Level peerAccess_ = Level::User;
     bool mountPeers_ = true;
     size_t maxCalls_ = 8;
+    bool ownTask_ = false;
 
     UdpApiTransport* transport_ = nullptr;
     tesser::Object* peersObject_ = nullptr;

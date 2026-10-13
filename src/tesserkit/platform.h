@@ -46,7 +46,7 @@ struct Event {
         EthLink,          // value: 1 when the cable's link came up, 0 when it went down
         EthGotIp,         // Ethernet has an address
         PeersChanged,     // a node under /peers was mounted, got a route, or changed state or route
-        DeviceLost,       // text: the MAC of a device an endpoint lost (Peers::watch())
+        DeviceLost,       // text: the MAC of a device an endpoint lost (Peers::watch()); value: tesser::PeerLoss
         PeerRefused,      // text: the MAC of a device that refused this device's token
     };
     Type type;
@@ -369,6 +369,10 @@ struct NowTpConfig {
     int8_t txPower = 0;    // dBm, 0: the driver's
     std::string pairingCode;
     size_t maxCalls = 8;   // calls in flight to other nodes (one per node streamed to)
+    // false: no worker task; the transport's messages are handled in poll(),
+    // and `queued` runs (from NowTP's task) when one arrives.
+    bool runTask = true;
+    std::function<void()> queued;
 };
 
 struct NowTpPeer {
@@ -414,6 +418,9 @@ public:
     virtual bool forgetKey() = 0;
     // TesserAPI's endpoint: null before the first begin(), then kept.
     virtual tesser::DatagramEndpoint* endpoint() = 0;
+    // Without a worker task (NowTpConfig::runTask false): handles what
+    // arrived, and expires calls. In the device's task.
+    virtual void poll() = 0;
 };
 
 // TesserAPI's API over UDP (its UdpTransport): UdpApi's. The protocol is
@@ -426,8 +433,14 @@ public:
     // `name`; the transport is created on the first call. False if it
     // couldn't.
     // `maxCalls`: calls in flight to other nodes, fixed when the transport
-    // is created.
-    virtual bool begin(tesser::Api& api, uint16_t port, const std::string& name, size_t maxCalls) = 0;
+    // is created. Without `ownTask`, no worker task: the messages are
+    // handled in poll(), and `queued` runs (from the receive task) when one
+    // arrives.
+    virtual bool begin(tesser::Api& api, uint16_t port, const std::string& name, size_t maxCalls, bool ownTask,
+                       std::function<void()> queued) = 0;
+    // Without a worker task: handles what arrived, retransmits, advertises.
+    // In the device's task, when `queued` ran and at least every 20 ms.
+    virtual void poll() = 0;
     // Says goodbye, closes the socket and forgets the peers; begin() again
     // to restart. Safe from a request that came over UDP.
     virtual void end() = 0;

@@ -87,7 +87,7 @@ tesserkit::ArtNet artnet(dev);        // lighting consoles
 #if CONFIG_BT_ENABLED  // not on the ESP32-C3 (sdkconfig.defaults.esp32c3)
 tesserkit::Bluetooth bluetooth(dev);  // the launcher from a phone
 #endif
-tesserkit::NowTp nowtp(dev);          // the nodes nearby over ESP-NOW (after Network: Wi-Fi first)
+tesserkit::NowTp espNow(dev);         // the nodes nearby over ESP-NOW (after Network: Wi-Fi first)
 tesserkit::UdpApi udp(dev);           // the nodes on the LAN over UDP, and writes to all at once
 tesserkit::Peers peers(dev);          // how the nodes are reached: UDP, NowTP, in which order
 tesserkit::Sequencer sequencer(dev);  // /sequencer: steps played in turn
@@ -156,7 +156,7 @@ extern "C" void app_main() {
     on.threshold = 128;
     artnet.universe(0).map(brightness).map(on);
 #if defined(NOWTP_PAIRING_CODE)
-    nowtp.pairingCode(NOWTP_PAIRING_CODE);
+    espNow.pairingCode(NOWTP_PAIRING_CODE);
 #endif
     sleeper.wakePin(0);  // the BOOT button, low when pressed
 #if defined(BATTERY_GPIO)

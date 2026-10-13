@@ -275,9 +275,12 @@ std::unique_ptr<tesserkit::UdpSocket> Udp::open(uint16_t port) {
     return std::unique_ptr<tesserkit::UdpSocket>(new UdpSocket(*this, port));
 }
 
-bool UdpApi::begin(tesser::Api& api, uint16_t p, const std::string& n, size_t calls) {
+bool UdpApi::begin(tesser::Api& api, uint16_t p, const std::string& n, size_t calls, bool own,
+                   std::function<void()> q) {
     begins++;
     maxCalls = calls;
+    ownTask = own;
+    queued = std::move(q);
     if (!opens) return false;
     port = p;
     name = n;

@@ -161,4 +161,25 @@ TEST(nowtp_settings_need_admin) {
     CHECK_EQ(r.as(tesser::Access::User, rig::Op::Set, "/sys/nowtp/enabled", "false").status, Status::Unauthorized);
 }
 
+TEST(nowtp_without_its_own_task) {
+    NowTpRig r;
+    r.nowtp.ownTask(false);
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK(!r.fake.nowtp.config.runTask);
+    CHECK(r.fake.nowtp.config.queued != nullptr);
+    tesser::DatagramEndpoint* ep = r.fake.nowtp.endpoint();
+    CHECK(ep != nullptr);
+    if (!ep) return;
+    // A request from a node is answered by the device's own loop.
+    const uint8_t mac[6] = {0x10, 0x52, 0x1c, 0x75, 0xf3, 0x7c};
+    const char req[] = "{\"id\":7,\"op\":\"get\",\"path\":\"/sys/nowtp/status/started\"}";
+    ep->receive(tesser::PeerAddress::fromBytes(mac, 6), req, sizeof(req) - 1, true);
+    r.fake.nowtp.sent.clear();
+    r.step(20);
+    CHECK_EQ(r.fake.nowtp.sent.size(), 1u);
+    if (!r.fake.nowtp.sent.empty()) CHECK(r.fake.nowtp.sent[0].text.find("\"id\":7") != std::string::npos);
+    CHECK(r.fake.nowtp.polls > 0);
+}
+
 }  // namespace nowtp_cases

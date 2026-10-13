@@ -249,4 +249,30 @@ TEST(udp_socket_that_wont_open) {
     CHECK_EQ(r.value("/sys/udp/status/running"), "false");
 }
 
+TEST(udp_without_its_own_task) {
+    UdpRig r;
+    r.udp.ownTask(false);
+    r.online();
+    CHECK(!r.fake.udpApi.ownTask);
+    CHECK(r.fake.udpApi.queued != nullptr);
+    // A request from the other node: only the device's loop ticks its link.
+    auto done = std::make_shared<std::string>();
+    r.peer->endpoint().request(r.self, Op::Get, "/lamp/on", "", [done](Status s, JsonVariantConst b) {
+        *done = s == Status::Ok ? b.as<bool>() ? "true" : "false" : "error";
+    });
+    int polls = r.fake.udpApi.polls;
+    for (int i = 0; i < 50 && done->empty(); i++) {
+        auto mine = std::move(r.fake.udpApi.out);
+        r.fake.udpApi.out.clear();
+        auto theirs = std::move(r.peerOut);
+        r.peerOut.clear();
+        for (auto& d : mine) r.peer->packet(r.self, d.data.data(), d.data.size());
+        for (auto& d : theirs) r.link()->packet(r.other, d.second.data(), d.second.size());
+        r.peer->tick();
+        r.step(20);
+    }
+    CHECK_EQ(*done, "false");
+    CHECK(r.fake.udpApi.polls > polls);
+}
+
 }  // namespace udp_cases

@@ -30,6 +30,10 @@ public:
     // Calls in flight to other nodes (default 8): at least the number of
     // nodes a master streams to at once (RemoteNode::stream()).
     NowTp& maxCalls(size_t n);
+    // By default (false), no worker task of its own: requests from the nodes
+    // are handled in the device's task, woken as they arrive, which saves
+    // 6 KB of heap at no measurable latency. true: a worker task.
+    NowTp& ownTask(bool own);
 
     void describe(tesser::Object& o) override;
 
@@ -62,6 +66,7 @@ private:
     bool longRange_ = false;
     int8_t txPower_ = 0;
     size_t maxCalls_ = 8;
+    bool ownTask_ = false;
     std::string pairingCode_;
 
     NowTpRadio* radio_ = nullptr;

@@ -18,7 +18,7 @@ tesserkit::Timers timers(dev);        // daily schedules over the whole tree
 tesserkit::Sequencer sequencer(dev);  // steps played in turn, each a write to the tree
 tesserkit::Auth auth(dev);            // accounts, roles, sign-in
 tesserkit::Bluetooth bluetooth(dev);  // the interface from a phone, over Bluetooth LE
-tesserkit::NowTp nowtp(dev);          // the nodes nearby over ESP-NOW, each with its page
+tesserkit::NowTp espNow(dev);         // the nodes nearby over ESP-NOW, each with its page (not "nowtp": NowTP's namespace)
 tesserkit::UdpApi udp(dev);           // the nodes on the LAN over UDP, and writes to all of them at once
 tesserkit::Peers peers(dev);          // how the nodes are reached: UDP, NowTP, in which order
 tesserkit::Log logs(dev);             // the firmware's log lines, live and as a file

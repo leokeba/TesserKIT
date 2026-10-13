@@ -12,14 +12,20 @@ namespace {
 
 class EspUdpApi : public UdpApiTransport {
 public:
-    bool begin(tesser::Api& api, uint16_t port, const std::string& name, size_t maxCalls) override {
+    bool begin(tesser::Api& api, uint16_t port, const std::string& name, size_t maxCalls, bool ownTask,
+               std::function<void()> queued) override {
         if (!transport_) {
             tesser::DatagramEndpoint::Options o = tesser::UdpLink::endpointOptions();
             o.maxCalls = maxCalls;
             transport_.reset(new tesser::UdpTransport(&api, tesser::UdpLink::Options(), o));
         }
         transport_->setName(name);
-        return transport_->begin(port);
+        polled_ = !ownTask;
+        if (polled_) transport_->link().onQueued(std::move(queued));
+        return transport_->begin(port, polled_ ? tesser::UdpTransport::Tasks::Receive : tesser::UdpTransport::Tasks::Both);
+    }
+    void poll() override {
+        if (polled_ && transport_) transport_->poll();
     }
     void end() override {
         if (transport_) transport_->end();
@@ -28,6 +34,7 @@ public:
 
 private:
     std::unique_ptr<tesser::UdpTransport> transport_;
+    bool polled_ = false;  // no worker task: poll() does its work
 };
 
 }  // namespace

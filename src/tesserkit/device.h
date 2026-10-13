@@ -127,6 +127,16 @@ public:
     void onState(std::function<void(State)> fn) { onState_.push_back(std::move(fn)); }
     // Called every period of the device's task.
     void onTick(std::function<void(uint32_t nowMs)> fn) { onTick_.push_back(std::move(fn)); }
+    // A transport without a task of its own (NowTp::ownTask(false)): `fn`
+    // runs in the device's task, without the API lock, every period and at
+    // once after wake(). Before begin().
+    void poller(std::function<void()> fn) { pollers_.push_back(std::move(fn)); }
+    // Wakes the device's task to run the pollers now, from any task (a
+    // transport's message arrived). Without the device's own task, the next
+    // loop() runs them.
+    void wake();
+    // Runs the pollers: the device's task, when woken.
+    void poll();
     // Called once, on the first valid time after boot (Time).
     void onTimeSynced(std::function<void()> fn) { onTimeSynced_.push_back(std::move(fn)); }
     // Called when the station's Wi-Fi channel changes (Network).
@@ -214,6 +224,8 @@ private:
 
     std::vector<std::function<void(State)>> onState_;
     std::vector<std::function<void(uint32_t)>> onTick_;
+    std::vector<std::function<void()>> pollers_;
+    std::atomic<void*> task_{nullptr};  // the device's task (ESP: its handle), for wake()
     std::vector<std::function<void()>> onTimeSynced_;
     std::vector<std::function<void(uint8_t)>> onChannel_;
     std::vector<std::function<void()>> onSleep_;

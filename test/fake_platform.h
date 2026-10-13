@@ -357,6 +357,11 @@ struct NowTp : tesserkit::NowTpRadio {
     std::unique_ptr<tesser::DatagramEndpoint> ep;
     std::vector<Message> sent;
     tesser::DatagramEndpoint* endpoint() override { return ep.get(); }
+    int polls = 0;
+    void poll() override {
+        polls++;
+        if (ep && !config.runTask) ep->process();
+    }
 
     bool begin(tesser::Api& api, tesser::Object* peers, const tesserkit::NowTpConfig& c,
                tesserkit::EventSink s) override {
@@ -544,7 +549,15 @@ struct UdpApi : tesserkit::UdpApiTransport {
     uint32_t nonce = 0x4000;
 
     size_t maxCalls = 0;
-    bool begin(tesser::Api& api, uint16_t p, const std::string& n, size_t calls) override;
+    bool ownTask = true;
+    std::function<void()> queued;
+    int polls = 0;
+    bool begin(tesser::Api& api, uint16_t p, const std::string& n, size_t calls, bool own,
+               std::function<void()> q) override;
+    void poll() override {
+        polls++;
+        if (l && !ownTask) l->tick();
+    }
     void end() override {
         ends++;
         if (l) l->stop();
