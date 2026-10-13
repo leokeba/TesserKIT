@@ -71,7 +71,12 @@ public:
             }
 #endif
 #elif SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP
-            esp_deep_sleep_enable_gpio_wakeup(mask, high ? ESP_GPIO_WAKEUP_GPIO_HIGH : ESP_GPIO_WAKEUP_GPIO_LOW);
+            auto mode = high ? ESP_GPIO_WAKEUP_GPIO_HIGH : ESP_GPIO_WAKEUP_GPIO_LOW;
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+            esp_sleep_enable_gpio_wakeup_on_hp_periph_powerdown(mask, mode);
+#else
+            esp_deep_sleep_enable_gpio_wakeup(mask, mode);
+#endif
             if (pull) {
                 gpio_set_direction(io, GPIO_MODE_INPUT);
                 gpio_set_pull_mode(io, high ? GPIO_PULLDOWN_ONLY : GPIO_PULLUP_ONLY);
