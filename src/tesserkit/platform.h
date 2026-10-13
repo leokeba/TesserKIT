@@ -442,8 +442,10 @@ public:
     // is created. Without `ownTask`, no worker task: the messages are
     // handled in poll(), and `queued` runs (from the receive task) when one
     // arrives.
+    // `interfaces`: a mask of TesserAPI's UdpTransport::kEthernet, kWifi and
+    // kAp, the only interfaces used (one: the socket is bound to it).
     virtual bool begin(tesser::Api& api, uint16_t port, const std::string& name, size_t maxCalls, bool ownTask,
-                       std::function<void()> queued) = 0;
+                       std::function<void()> queued, uint8_t interfaces) = 0;
     // Without a worker task: handles what arrived, retransmits, advertises.
     // In the device's task, when `queued` ran and at least every 20 ms.
     virtual void poll() = 0;

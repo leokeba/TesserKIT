@@ -275,4 +275,33 @@ TEST(udp_without_its_own_task) {
     CHECK(r.fake.udpApi.polls > polls);
 }
 
+TEST(udp_interfaces) {
+    UdpRig r;
+    r.online();
+    CHECK_EQ(int(r.fake.udpApi.interfaces), 7);  // all of them by default
+    CHECK_EQ(r.value("/sys/udp/interfaces"), "7");
+    CHECK_EQ(r.schema("/sys/udp/interfaces").status, Status::Ok);
+    CHECK_EQ(at(r.schema("/sys/udp/interfaces").body, "ui/widget"), "\"flags\"");
+    int begins = r.fake.udpApi.begins;
+    // Ethernet only: the transport starts again, on that interface.
+    CHECK_EQ(r.set("/sys/udp/interfaces", "1").status, Status::Ok);
+    r.pump();
+    CHECK_EQ(r.fake.udpApi.begins, begins + 1);
+    CHECK_EQ(int(r.fake.udpApi.interfaces), 1);
+    CHECK_EQ(r.set("/sys/udp/interfaces", "0").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/udp/interfaces", "8").status, Status::InvalidValue);
+    // Kept to one interface, a new address binds it again.
+    const uint8_t mac[6] = {0xc8, 0xf0, 0x9e, 0xf4, 0xa6, 0x7c};
+    r.dev.address(0xC0A8013C, mac);
+    r.pump();
+    CHECK_EQ(r.fake.udpApi.begins, begins + 2);
+    r.pump(500);
+    CHECK_EQ(r.fake.udpApi.begins, begins + 2);  // once
+
+    UdpRig f;
+    f.udp.interfaces(tesserkit::UdpApi::kEthernet | tesserkit::UdpApi::kAp);  // factory default
+    f.online();
+    CHECK_EQ(int(f.fake.udpApi.interfaces), 5);
+}
+
 }  // namespace udp_cases

@@ -553,8 +553,9 @@ struct UdpApi : tesserkit::UdpApiTransport {
     bool ownTask = true;
     std::function<void()> queued;
     int polls = 0;
+    uint8_t interfaces = 0;
     bool begin(tesser::Api& api, uint16_t p, const std::string& n, size_t calls, bool own,
-               std::function<void()> q) override;
+               std::function<void()> q, uint8_t ifaces) override;
     void poll() override {
         polls++;
         if (l && !ownTask) l->tick();

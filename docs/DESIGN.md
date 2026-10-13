@@ -584,6 +584,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 /sys/udp                label "UDP", ui.icon "bolt", write Admin
   enabled *(p)          boolean (default true)
   port *(p)             integer 1024–65535 (default 8484), advanced
+  interfaces *(p)       flags Ethernet, Wi-Fi, Access point (default all), advanced: where UDP serves and reaches nodes
   peerAccess *(p)       enum public, user, admin (default user): the level of a node that presents no token
   mountPeers *(p)       boolean (default true): the nodes found on the networks under /peers (at the next restart)
   restartNeeded         hidden; restartWarning, a warning callout while it is true
@@ -596,15 +597,16 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - **Send:** `send` with an empty `to` is one broadcast set (`value` is JSON, empty for an action without argument), sent twice by the transport and applied once by every node of every local network at the level it gives this device; unanswered, and not applied here, so a sequence step that should also act here writes here as well. With an address (`192.168.1.97`, `192.168.1.97:8484`) it is a reliable set to that node, and the action replies with its reply. This is spin-seq's broadcast to its nodes (§10.2) without a format of its own: `send {"path": "/sequencer/play", "value": "\"intro\""}` starts every node's sequence at once.
 - **Timing and loss:** on Ethernet the nodes get a broadcast within about a millisecond of each other. Through a Wi-Fi access point they get it together, but at its next DTIM beacon (about 240 ms on the test network), and access points send group frames once, without retries: the two copies make a loss rare, not impossible (one of 72 broadcast writes between two devkits through the home access point, §12). A write that must arrive goes to each node with `to`, or through `/peers/*/...`.
 - **Access:** datagrams prove nothing about their sender. A node is at `peerAccess`, or at its token's level if it sends one (an `auth` envelope); while the device is open (no admin account, §5.7) every node is Admin, as every other client is. `send` itself is Admin.
-- **Runtime:** `enabled` and `port` apply at once (the transport says goodbye, closes its socket and opens the new one), `peerAccess` too; `mountPeers` at the next restart.
+- **Interfaces:** `interfaces` keeps UDP to some of the device's networks (TesserAPI 1cf73f9, its §10.7): nothing is served, advertised, broadcast or reached on the others. Ethernet alone keeps a show network's traffic off Wi-Fi entirely. With one interface the socket is bound to it, which needs the interface up: the transport starts again when the device's address changes (the interface came up, or got another address).
+- **Runtime:** `enabled`, `port` and `interfaces` apply at once (the transport says goodbye, closes its socket and opens the new one), `peerAccess` too; `mountPeers` at the next restart.
 - **Platform:** `UdpApiTransport` (§3.3), which owns TesserAPI's transport: its receive task (4 KB of stack) reads the socket, and the requests run in the device's task (§4.2; TesserAPI's `Tasks::Receive`, 6336093), or in a worker of their own (6 KB) with `udp.ownTask(true)`. The protocol is TesserAPI's platform-independent `UdpLink`, which the host tests run over an in-memory network.
-- **Factory defaults:** `udp.port(8484).peerAccess(tesser::Access::User).mountPeers(true)`; `udp.enable(false)` leaves it off until enabled; `udp.maxCalls(n)`, the calls in flight to other nodes (default 8, §5.19).
+- **Factory defaults:** `udp.port(8484).peerAccess(tesser::Access::User).mountPeers(true).interfaces(tesserkit::UdpApi::kEthernet)`; `udp.enable(false)` leaves it off until enabled; `udp.maxCalls(n)`, the calls in flight to other nodes (default 8, §5.19).
 
 ### 5.19 Peers
 
 ```
 /sys/peers              label "Nodes", ui.icon "target", write Admin
-  order *(p)            string: the transports tried for each node, in order ("udp, nowtp"); empty: the order found
+  order *(p)            string: the routes tried for each node, in order ("udp/ethernet, nowtp"); empty: the order found
   account *(p)          { name, password (secret) } ui.form: signed in with on every node (empty name: none)
   nodes *(p)            keyed list (key "id"), ≤ 16, advanced: settings per device
                           id       the device's station MAC, 12 hex digits (colons allowed), as /peers shows it
@@ -612,14 +614,15 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
                           order    its own order; empty: the default
                           address  "192.168.1.97" or "…:8484": reached over UDP without being discovered
                           user, password (secret)  this device's account on that node; empty: account
-  status                read-only keyed list (key "id"): id, name, online, route (the transport in use),
-                          routes (every transport that reaches it, in the order tried), rtt (ms), heard (s ago; -1 never),
+  status                read-only keyed list (key "id"): id, name, online, route (the route in use: udp/ethernet, nowtp…),
+                          routes (every route that reaches it, in the order tried, "(offline)" after a lost one), rtt (ms), heard (s ago; -1 never),
                           access (the level the node grants this device's token), signIn (how signing in went)
   lost                  event, warn toast: "lamp-f37c", when a node goes offline on every route
   reached               event, info toast: "lamp-f37c over nowtp", when a node is back or goes another way
 ```
 
 - **Routes:** UdpApi (§5.18) and NowTp (§5.11) mount their nodes under the same `/peers`, and a device both reach is one node there with a route per transport (TesserAPI §14.3, 02c3bf4): requests take the first online route in the order, the next one when a node is lost on it (UDP: a message unacknowledged for 3 s, a goodbye, a restart; NowTP: discovery losing it), and come back to the preferred one as soon as it is heard again. `order` is TesserAPI's default route order, a node's `order` its own; both apply at once, to nodes already mounted and to devices that appear later.
+- **Route names** (TesserAPI 1cf73f9): `udp/ethernet`, `udp/wifi` (the station) and `udp/ap` are UDP by one interface, the one whose subnet holds the node's address; `udp` is UDP by any; `nowtp`. A device heard on two interfaces has a UDP route by each. Routes the order doesn't name come after the named ones, so `udp/ethernet, nowtp` tries Ethernet, then NowTP, then UDP over Wi-Fi; to never use UDP over Wi-Fi, keep UDP off it (`/sys/udp/interfaces`, §5.18). Checked on the devkits (Wi-Fi only): their routes read `nowtp, udp/wifi`; `udp/wifi, nowtp` took UDP and `udp/ethernet, nowtp` NowTP, UDP over Wi-Fi coming after; with V3's UDP kept to Ethernet (which it hasn't), R1 showed `udp/wifi (offline)` and went over NowTP, and came back to UDP when V3's interfaces were all again.
 - **By device:** settings and status are keyed by the device's id, the station MAC that both transports know it by (`"id"` in `/peers`' schema), so a setting follows a device whatever its name, and can be written before the device is seen. The name is beside it.
 - **Declared devices:** an `address` mounts the device over UDP at that address (a node on another subnet, whose advertisements don't arrive), under `name`; TesserAPI probes it every 5 s while it is offline. A device already found gets a UDP route at that address instead (when it has none). Nodes are never removed: removing a setting takes effect at the next restart.
 - **Status** is refreshed every second, and at once when a node is mounted, gets a route, or changes state or route (TesserAPI's `RemoteNode::onStateChange()`, which the service owns). `rtt` is the smoothed round trip of the calls on the route in use.
@@ -840,6 +843,8 @@ TesserKIT/
 | Tokens as a client: a remote node's token presented on every route, again when the peer forgets it, and the level granted reported (TesserAPI 05190c8, 2026-10-13) | Peers' sign-in (§5.19) |
 | `Object::remote(std::string name, ...)`: a remote node declared at run time keeps a copy of its name (TesserAPI 1348199, 2026-10-13) | Peers' declared devices (§5.19) |
 | UDP with its receive task but no worker (`Tasks::Receive`), and hooks that `begin()` and `end()` leave in place (TesserAPI 6336093, 2026-10-13) | transports in the device's task (§4.2) |
+| UDP routes per interface, route orders naming them (`udp/ethernet`), UDP kept to chosen interfaces (TesserAPI 1cf73f9, 2026-10-13) | Peers' order (§5.19), UdpApi's `interfaces` (§5.18) |
+| A node's own device id at the root of its schema and in its mDNS record (TesserAPI b852626, 2026-10-13) | TesserUI's tabs: one per device, however it is reached |
 
 Done 2026-10-12, for Files (TesserAPI 0a44fdf): file nodes in list elements transfer (`/sys/files/entries/<name>/content`), and an upload carries the client's file name (`?filename=`, `FileRequest::filename`).
 

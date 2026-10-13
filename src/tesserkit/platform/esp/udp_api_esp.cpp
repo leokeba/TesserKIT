@@ -13,13 +13,14 @@ namespace {
 class EspUdpApi : public UdpApiTransport {
 public:
     bool begin(tesser::Api& api, uint16_t port, const std::string& name, size_t maxCalls, bool ownTask,
-               std::function<void()> queued) override {
+               std::function<void()> queued, uint8_t interfaces) override {
         if (!transport_) {
             tesser::DatagramEndpoint::Options o = tesser::UdpLink::endpointOptions();
             o.maxCalls = maxCalls;
             transport_.reset(new tesser::UdpTransport(&api, tesser::UdpLink::Options(), o));
         }
         transport_->setName(name);
+        transport_->setInterfaces(interfaces);
         polled_ = !ownTask;
         if (polled_) transport_->link().onQueued(std::move(queued));
         return transport_->begin(port, polled_ ? tesser::UdpTransport::Tasks::Receive : tesser::UdpTransport::Tasks::Both);

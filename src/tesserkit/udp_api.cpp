@@ -46,6 +46,11 @@ UdpApi& UdpApi::peerAccess(Access level) {
     return *this;
 }
 
+UdpApi& UdpApi::interfaces(uint8_t mask) {
+    interfaces_ = mask & kAllInterfaces ? mask & kAllInterfaces : kAllInterfaces;
+    return *this;
+}
+
 UdpApi& UdpApi::ownTask(bool own) {
     ownTask_ = own;
     return *this;
@@ -68,6 +73,14 @@ void UdpApi::describe(tesser::Object& o) {
         .writeAccess(Access::Admin);
     enabledNode_ = &o.value("enabled", enabled_).persist();
     portNode_ = &o.value("port", port_).range(1024, 65535).persist().ui("widget", "number").ui("advanced");
+    interfacesNode_ = &o.value("interfaces", interfaces_)
+                           .range(1, 7)
+                           .persist()
+                           .label("Networks")
+                           .doc("The interfaces UDP serves and reaches nodes on; nothing goes by the others")
+                           .ui("widget", "flags")
+                           .ui("labels", "Ethernet,Wi-Fi,Access point")
+                           .ui("advanced");
     accessNode_ = &o.value("peerAccess", peerAccess_, {"public", "user", "admin"})
                        .persist()
                        .label("Nodes' level")
@@ -120,6 +133,7 @@ void UdpApi::start() {
     }
     enabledGen_ = enabledNode_->generation();
     portGen_ = portNode_->generation();
+    interfacesGen_ = interfacesNode_->generation();
     accessGen_ = accessNode_->generation();
     mountGen_ = mountNode_->generation();
     // Beside NowTP's nodes: a device reached both ways is mounted once
@@ -132,7 +146,9 @@ void UdpApi::begin() {
     if (!transport_ || running_) return;
     bool had = transport_->link() != nullptr;
     Device& dev = dev_;
-    running_ = transport_->begin(dev_.api(), port_, dev_.hostname(), maxCalls_, ownTask_, [&dev] { dev.wake(); });
+    address_ = dev_.address();
+    running_ = transport_->begin(dev_.api(), port_, dev_.hostname(), maxCalls_, ownTask_, [&dev] { dev.wake(); },
+                                 interfaces_);
     if (!had && transport_->link()) Peers::watch(dev_, transport_->link()->endpoint());
     if (!running_) {
         tesser::logError("tesserkit: UDP didn't start on port %u", static_cast<unsigned>(port_));
@@ -187,6 +203,16 @@ void UdpApi::tick(uint32_t nowMs) {
     }
     if ((gen = portNode_->generation()) != portGen_) {
         portGen_ = gen;
+        if (running_) {
+            end();
+            begin();
+        }
+    }
+    // Kept to one interface, the socket is bound to it at begin(), if it is
+    // up then: an address that changes (it came up, or another) binds again.
+    bool single = interfaces_ == 1 || interfaces_ == 2 || interfaces_ == 4;
+    if ((gen = interfacesNode_->generation()) != interfacesGen_ || (single && running_ && dev_.address() != address_)) {
+        interfacesGen_ = gen;
         if (running_) {
             end();
             begin();

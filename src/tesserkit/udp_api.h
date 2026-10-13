@@ -25,6 +25,8 @@ void describe(tesser::Object& o, UdpSend& s);
 class UdpApi : public Service {
 public:
     static constexpr uint16_t kDefaultPort = 8484;
+    // Interfaces, as a mask (TesserAPI's UdpTransport::kEthernet...).
+    static constexpr uint8_t kEthernet = 1, kWifi = 2, kAp = 4, kAllInterfaces = 7;
 
     explicit UdpApi(Device& dev) : Service(dev, "udp") {}
 
@@ -39,6 +41,9 @@ public:
     // at least the number of nodes a master streams to at once
     // (RemoteNode::stream()).
     UdpApi& maxCalls(size_t n);
+    // The interfaces UDP serves and reaches nodes on (default all): kEthernet
+    // keeps it off Wi-Fi entirely.
+    UdpApi& interfaces(uint8_t mask);
     // By default (false), no worker task of its own: the receive task stays,
     // and requests from the nodes are handled in the device's task, woken as
     // they arrive, which saves 6 KB of heap for about 10 ms per round trip.
@@ -71,6 +76,8 @@ private:
     Level peerAccess_ = Level::User;
     bool mountPeers_ = true;
     size_t maxCalls_ = 8;
+    uint8_t interfaces_ = kAllInterfaces;
+    uint32_t address_ = 0;  // the device's when the transport began
     bool ownTask_ = false;
 
     UdpApiTransport* transport_ = nullptr;
@@ -85,10 +92,12 @@ private:
 
     tesser::Node* enabledNode_ = nullptr;
     tesser::Node* portNode_ = nullptr;
+    tesser::Node* interfacesNode_ = nullptr;
     tesser::Node* accessNode_ = nullptr;
     tesser::Node* mountNode_ = nullptr;
     tesser::Node* restartNode_ = nullptr;
     tesser::Node* statusNode_ = nullptr;
+    uint16_t interfacesGen_ = 0;
     uint16_t enabledGen_ = 0, portGen_ = 0, accessGen_ = 0, mountGen_ = 0;
 };
 

@@ -150,6 +150,11 @@ TEST(peers_settings_are_checked) {
     CHECK_EQ(r.set("/sys/peers/order", "\"udp, ble\"").status, Status::InvalidValue);
     CHECK_EQ(r.set("/sys/peers/order", "\"udp,udp\"").status, Status::InvalidValue);
     CHECK_EQ(r.set("/sys/peers/order", "\"\"").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/peers/order", "\"udp/ethernet, nowtp, udp/wifi\"").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/peers/order", "\"udp/ethernet, udp\"").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/peers/order", "\"nowtp/ethernet\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/peers/order", "\"udp/cable\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/peers/order", "\"udp/wifi, udp/wifi\"").status, Status::InvalidValue);
     CHECK_EQ(r.set("/sys/peers/order", "\"nowtp\"").status, Status::Ok);
     CHECK_EQ(r.set("/sys/peers/nodes", "[{\"id\": \"10521c75f3\"}]").status, Status::InvalidValue);
     CHECK_EQ(r.set("/sys/peers/nodes", "[{\"id\": \"10521c75f37c\", \"address\": \"lamp\"}]").status,
@@ -175,6 +180,7 @@ TEST(peers_failover_and_toasts) {
     CHECK(g->done);  // timed out: not sent again, it may have been applied
     CHECK_EQ(r.status("online"), "true");
     CHECK_EQ(r.status("route"), "\"nowtp\"");
+    CHECK_EQ(r.status("routes"), "\"udp (offline), nowtp\"");
     CHECK(reached.has("\"lamp-f37c over nowtp\""));
     CHECK(r.lost.empty());  // still reachable: not gone
     // NowTP loses it too: offline, a toast, and the device is gone.

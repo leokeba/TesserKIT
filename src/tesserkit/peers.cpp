@@ -12,13 +12,11 @@ using tesser::Access;
 using tesser::Check;
 using tesser::PeerAddress;
 using tesser::RemoteNode;
+using tesser::RouteKind;
 using tesser::Status;
 using tesser::TransportKind;
 
 namespace {
-
-// The transports a route can take.
-constexpr TransportKind kRouteKinds[] = {TransportKind::Udp, TransportKind::NowTP};
 
 int hexDigit(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -57,43 +55,36 @@ std::string idOf(const PeerAddress& device) {
     return s;
 }
 
-// "udp, nowtp": each transport once, by TesserAPI's names. Empty is valid.
-bool parseOrder(const std::string& text, std::vector<TransportKind>& out) {
-    out.clear();
-    size_t i = 0;
-    while (i < text.size()) {
-        while (i < text.size() && (text[i] == ' ' || text[i] == ',')) i++;
-        size_t start = i;
-        while (i < text.size() && text[i] != ' ' && text[i] != ',') i++;
-        if (start == i) break;
-        std::string word = text.substr(start, i - start);
-        bool known = false;
-        for (TransportKind k : kRouteKinds) {
-            if (word != tesser::toString(k)) continue;
-            for (TransportKind seen : out) {
-                if (seen == k) return false;
-            }
-            out.push_back(k);
-            known = true;
+// "udp/ethernet, nowtp": TesserAPI's route names (udp on any interface,
+// udp/ethernet, udp/wifi, udp/ap, nowtp), each once. Empty is valid.
+bool parseOrder(const std::string& text, std::vector<RouteKind>& out) {
+    std::vector<RouteKind> order;
+    if (!tesser::parseRouteOrder(text, order)) return false;
+    for (size_t i = 0; i < order.size(); i++) {
+        TransportKind t = order[i].transport;
+        if (t != TransportKind::Udp && t != TransportKind::NowTP) return false;
+        if (t == TransportKind::NowTP && order[i].iface != tesser::NetInterface::Any) return false;
+        for (size_t j = 0; j < i; j++) {
+            if (order[j] == order[i]) return false;
         }
-        if (!known) return false;
     }
+    out = std::move(order);
     return true;
 }
 
 Check checkOrder(const std::string& v) {
-    std::vector<TransportKind> order;
+    std::vector<RouteKind> order;
     return parseOrder(v, order) ? Check::ok()
-                                : Check::fail(Status::InvalidValue, "transports in order: udp, nowtp, or one of them");
+                                : Check::fail(Status::InvalidValue,
+                                              "routes in order: udp/ethernet, udp/wifi, udp/ap, udp (any), nowtp");
 }
 
-std::string kindsOf(const std::vector<RemoteNode::Route>& routes) {
+std::string namesOf(const std::vector<RemoteNode::Route>& routes) {
     std::string s;
     for (const RemoteNode::Route& r : routes) {
-        const char* k = tesser::toString(r.kind());
-        if (s.find(k) != std::string::npos) continue;
         if (!s.empty()) s += ", ";
-        s += k;
+        s += r.name();
+        if (!r.online) s += " (offline)";
     }
     return s;
 }
@@ -166,7 +157,8 @@ void Peers::describe(tesser::Object& o) {
                       .validate(checkOrder)
                       .persist()
                       .label("Routes")
-                      .doc("The transports tried for each node, in order, the next one when a node is lost on one")
+                      .doc("The routes tried for each node, in order, the next one when a node is lost on one: "
+                           "udp/ethernet, udp/wifi, udp/ap, udp (any interface), nowtp")
                       .ui("placeholder", "in the order the nodes were found");
     accountNode_ = &o.mount("account", account_)
                         .persist()
@@ -181,7 +173,9 @@ void Peers::describe(tesser::Object& o) {
                               e.value("name", static_cast<const std::string&>(s.name));
                               e.value("online", static_cast<const bool&>(s.online));
                               e.value("route", static_cast<const std::string&>(s.route)).label("Over");
-                              e.value("routes", static_cast<const std::string&>(s.routes)).label("Routes");
+                              e.value("routes", static_cast<const std::string&>(s.routes))
+                                  .label("Routes")
+                                  .doc("Every route to it, in the order tried; \"(offline)\" after one that lost it");
                               e.value("rtt", static_cast<const uint32_t&>(s.rtt)).unit("ms").label("Round trip");
                               e.value("heard", static_cast<const int32_t&>(s.heard))
                                   .unit("s")
@@ -247,7 +241,7 @@ std::vector<tesser::DatagramEndpoint*> Peers::endpoints() const {
 }
 
 void Peers::applyDefaultOrder() {
-    std::vector<TransportKind> order;
+    std::vector<RouteKind> order;
     if (!parseOrder(order_, order)) order.clear();  // a bad factory default: the order found
     RemoteNode::setDefaultRouteOrder(order);
 }
@@ -305,7 +299,7 @@ void Peers::refresh(uint32_t nowMs) {
         PeerAddress device = n->device();
         // Each node's own order, or the default (applied as soon as the device
         // is known, whenever it appears).
-        std::vector<TransportKind> order;
+        std::vector<RouteKind> order;
         const PeerSettings* s = settingsFor(device);
         if (s && !parseOrder(s->order, order)) order.clear();
         if (n->routeOrder() != order) n->routeOrder(order);
@@ -315,10 +309,10 @@ void Peers::refresh(uint32_t nowMs) {
         st.name = n->name();
         st.online = n->online();
         std::vector<RemoteNode::Route> routes = n->routes();
-        st.routes = kindsOf(routes);
+        st.routes = namesOf(routes);
         RemoteNode::Route cur;
         if (n->route(cur)) {
-            st.route = tesser::toString(cur.kind());
+            st.route = cur.name();
             st.rtt = cur.rttMs;
         }
         for (const RemoteNode::Route& r : routes) {
