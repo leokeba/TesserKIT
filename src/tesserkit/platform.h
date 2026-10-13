@@ -47,6 +47,7 @@ struct Event {
         EthGotIp,         // Ethernet has an address
         PeersChanged,     // a node under /peers was mounted, got a route, or changed state or route
         DeviceLost,       // text: the MAC of a device an endpoint lost (Peers::watch())
+        PeerRefused,      // text: the MAC of a device that refused this device's token
     };
     Type type;
     int32_t value = 0;

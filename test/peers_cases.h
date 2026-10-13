@@ -243,4 +243,97 @@ TEST(peers_max_calls_reach_the_endpoints) {
     CHECK_EQ(r.fake.nowtp.config.maxCalls, 12u);
 }
 
+// The other node with accounts: a login like Auth's, tokens it can revoke,
+// and a node only an admin may write.
+struct AccountsRig : PeersRig {
+    int token = 1;  // the valid one is "tok-<token>"
+    int logins = 0, wrongLogins = 0;
+    bool secret = false;
+
+    AccountsRig() {
+        peerApi.object("secret").value("on", secret).writeAccess(tesser::Access::Admin);
+        auto& a = peerApi.object("sys").object("auth");
+        a.action("login", [this](const tesserkit::Credentials& c, tesser::Call& call) {
+            logins++;
+            if (c.name != "show" || c.password != "pw") {
+                wrongLogins++;
+                return call.fail(Status::Unauthorized, "wrong name or password");
+            }
+            std::string t = "tok-" + std::to_string(token);
+            call.replyWith([&t](tesser::JsonWriter& w) {
+                w.beginObject();
+                w.key("token");
+                w.string(t);
+                w.key("access");
+                w.string("admin");
+                w.endObject();
+            });
+        });
+        peerApi.authenticate([this](std::string_view t) {
+            return t == "tok-" + std::to_string(token) ? tesser::Access::Admin : tesser::Access::Public;
+        });
+    }
+    Status writeSecret() {
+        auto out = std::make_shared<rig::Reply>();
+        admin.request(Op::Set, "/peers/lamp-f37c/secret/on", "true", [out](Status st, JsonVariantConst) {
+            out->status = st;
+            out->done = true;
+        });
+        pumpAll(300);
+        return out->done ? out->status : Status::Timeout;
+    }
+};
+
+TEST(peers_sign_in_with_an_account) {
+    AccountsRig r;
+    r.start();
+    r.run(1000);
+    CHECK_EQ(r.writeSecret(), Status::Unauthorized);  // peerAccess only
+    CHECK_EQ(r.status("signIn"), "\"\"");
+    CHECK_EQ(r.set("/sys/peers/account", "{\"name\": \"show\", \"password\": \"pw\"}").status, Status::Ok);
+    CHECK_EQ(r.value("/sys/peers/account/password"), "null");  // a secret
+    r.run(1000);
+    CHECK_EQ(r.logins, 1);
+    CHECK_EQ(r.status("signIn"), "\"signed in as show\"");
+    CHECK_EQ(r.writeSecret(), Status::Ok);
+    r.run(1000);
+    CHECK_EQ(r.status("access"), "\"admin\"");
+    CHECK(r.secret);
+
+    // The node revokes the token: refused, signed in again (not at once:
+    // the token was given less than 30 s ago).
+    r.token = 2;
+    r.peer->endpoint().forgetPeer(r.self);  // it forgets this device's token too
+    CHECK_EQ(r.writeSecret(), Status::Unauthorized);
+    r.run(2000);
+    CHECK_EQ(r.status("signIn"), "\"token refused\"");
+    r.run(30000);
+    CHECK_EQ(r.logins, 2);
+    CHECK_EQ(r.status("signIn"), "\"signed in as show\"");
+    CHECK_EQ(r.writeSecret(), Status::Ok);
+}
+
+TEST(peers_wrong_password_isnt_retried) {
+    AccountsRig r;
+    r.peers.account("show", "nope");
+    r.start();
+    r.run(1000);
+    CHECK_EQ(r.status("signIn"), "\"wrong name or password\"");
+    r.run(65000);
+    CHECK_EQ(r.wrongLogins, 1);  // the node would lock sign-ins out
+    // The node's own account, set for it: tried at once.
+    CHECK_EQ(r.set("/sys/peers/nodes", "[{\"id\": \"10521c75f37c\", \"user\": \"show\", \"password\": \"pw\"}]")
+                 .status,
+             Status::Ok);
+    r.run(1000);
+    CHECK_EQ(r.status("signIn"), "\"signed in as show\"");
+    CHECK_EQ(r.writeSecret(), Status::Ok);
+    // No account any more: the token goes.
+    CHECK_EQ(r.set("/sys/peers/nodes", "[]").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/peers/account", "{\"name\": \"\"}").status, Status::Ok);
+    r.run(1000);
+    CHECK_EQ(r.status("signIn"), "\"\"");
+    CHECK_EQ(r.status("access"), "\"\"");
+}
+
 }  // namespace peers_cases

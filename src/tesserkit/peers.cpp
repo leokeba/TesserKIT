@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 
+#include "tesser/client.h"
 #include "tesser/remote.h"
 #include "tesser/udp_link.h"
 
@@ -119,10 +120,30 @@ void describe(tesser::Object& o, PeerSettings& s) {
                        : Check::fail(Status::InvalidValue, "an IPv4 address, with a port or not");
         })
         .ui("placeholder", "discovered");
+    o.value("user", s.user)
+        .label("Account")
+        .doc("This device's account on that node; empty: the account of every node")
+        .ui("placeholder", "the default");
+    o.value("password", s.password).secret();
 }
+
+void describe(tesser::Object& o, PeerAccount& a) {
+    o.value("name", a.name).ui("placeholder", "none");
+    o.value("password", a.password).secret();
+}
+
+Peers::Peers(Device& dev) : Service(dev, "peers") {}
+
+Peers::~Peers() = default;
 
 Peers& Peers::order(const char* order) {
     order_ = order ? order : "";
+    return *this;
+}
+
+Peers& Peers::account(const char* name, const char* password) {
+    account_.name = name ? name : "";
+    account_.password = password ? password : "";
     return *this;
 }
 
@@ -147,6 +168,11 @@ void Peers::describe(tesser::Object& o) {
                       .label("Routes")
                       .doc("The transports tried for each node, in order, the next one when a node is lost on one")
                       .ui("placeholder", "in the order the nodes were found");
+    accountNode_ = &o.mount("account", account_)
+                        .persist()
+                        .label("Account on the nodes")
+                        .doc("Signed in with on each node that has accounts, for more than its level for nodes")
+                        .ui("form");
     settingsNode_ =
         &o.list("nodes", settings_).key("id").maxSize(kMaxNodes).persist().label("Settings per node").ui("advanced");
     statusNode_ = &o.list("status", states_,
@@ -161,6 +187,9 @@ void Peers::describe(tesser::Object& o) {
                                   .unit("s")
                                   .label("Last heard")
                                   .doc("Seconds ago; -1: never");
+                              e.value("access", static_cast<const std::string&>(s.access))
+                                  .doc("The level the node grants this device's token");
+                              e.value("signIn", static_cast<const std::string&>(s.signIn)).label("Sign-in");
                           })
                        .key("id")
                        .maxSize(kMaxNodes)
@@ -183,6 +212,17 @@ void Peers::start() {
         e.type = Event::Type::PeersChanged;
         dev.post(std::move(e));
     });
+    // A token refused (expired, revoked): sign in again.
+    RemoteNode::onAccess([&dev](RemoteNode& n, Status s, Access level) {
+        if (s != Status::Ok || level != Access::Public) return;
+        PeerAddress device = n.device();
+        Event e;
+        e.type = Event::Type::PeerRefused;
+        e.text.assign(reinterpret_cast<const char*>(device.bytes), device.length);
+        dev.post(std::move(e));
+    });
+    client_.reset(new tesser::LocalClient(dev_.api()));  // Admin: this device's own requests
+    accountGen_ = accountNode_->generation();
     dirty_ = true;
 }
 
@@ -286,6 +326,7 @@ void Peers::refresh(uint32_t nowMs) {
             int32_t ago = static_cast<int32_t>((r.endpoint->now() - r.heardMs) / 1000);
             if (st.heard < 0 || ago < st.heard) st.heard = ago;
         }
+        if (device.length) signIn(*n, s, nowMs, st);
         states.push_back(st);
     }
     // Toasts: a node lost, or reached again or another way. A node seen for
@@ -304,7 +345,8 @@ void Peers::refresh(uint32_t nowMs) {
     for (size_t i = 0; same && i < states.size(); i++) {
         const State &a = states[i], &b = states_[i];
         same = a.id == b.id && a.name == b.name && a.online == b.online && a.route == b.route &&
-               a.routes == b.routes && a.rtt == b.rtt && a.heard == b.heard;
+               a.routes == b.routes && a.rtt == b.rtt && a.heard == b.heard && a.access == b.access &&
+               a.signIn == b.signIn;
     }
     if (!same) {
         states_ = std::move(states);
@@ -312,7 +354,82 @@ void Peers::refresh(uint32_t nowMs) {
     }
 }
 
+Peers::SignIn& Peers::signInFor(const std::string& id) {
+    for (SignIn& s : signIns_) {
+        if (s.id == id) return s;
+    }
+    signIns_.push_back(SignIn());
+    signIns_.back().id = id;
+    return signIns_.back();
+}
+
+void Peers::signIn(RemoteNode& node, const PeerSettings* settings, uint32_t nowMs, State& state) {
+    // Its own account, or the one of every node.
+    const std::string& user = settings && !settings->user.empty() ? settings->user : account_.name;
+    const std::string& password = settings && !settings->user.empty() ? settings->password : account_.password;
+    SignIn& s = signInFor(state.id);
+    std::string credentials = user.empty() ? std::string() : user + '\n' + password;
+    if (credentials != s.credentials) {
+        // New credentials (or none any more): the old token goes.
+        if (s.hasToken) node.setToken("");
+        s.credentials = credentials;
+        s.phase = SignIn::Phase::Needed;
+        s.retryAtMs = nowMs;
+        s.hasToken = false;
+        s.text.clear();
+    }
+    if (credentials.empty()) return;
+    if (s.phase == SignIn::Phase::Needed && node.online() && static_cast<int32_t>(nowMs - s.retryAtMs) >= 0) {
+        s.phase = SignIn::Phase::Pending;
+        s.text = "signing in as " + user;
+        login(node.name(), s.id, user, password);
+    }
+    state.signIn = s.text;
+    if (s.hasToken) state.access = tesser::toString(node.access());
+}
+
+void Peers::login(const std::string& nodeName, const std::string& id, const std::string& user,
+                  const std::string& password) {
+    JsonDocument doc;
+    doc["name"] = user;
+    doc["password"] = password;
+    std::string body;
+    serializeJson(doc, body);
+    std::string path = "/peers/" + nodeName + "/sys/auth/login";
+    client_->request(tesser::Op::Set, path, body, [this, id, user](Status st, JsonVariantConst reply) {
+        // In client_->process(), from tick(): under the API lock.
+        uint32_t now = static_cast<uint32_t>(dev_.core().uptimeMs());
+        SignIn& s = signInFor(id);
+        if (s.phase != SignIn::Phase::Pending) return;  // the credentials changed meanwhile
+        PeerAddress device;
+        RemoteNode* node = parseId(id, device) ? RemoteNode::byDevice(*peers_, device) : nullptr;
+        const char* token = reply["token"] | "";
+        if (st == Status::Ok && node && *token) {
+            node->setToken(token);
+            s.phase = SignIn::Phase::Done;
+            s.hasToken = true;
+            s.signedInMs = now;
+            s.text = "signed in as " + user;
+        } else if (st == Status::Unauthorized || st == Status::InvalidValue) {
+            // Not again until the credentials change: the node locks sign-ins
+            // out after a few failures.
+            s.phase = SignIn::Phase::Stopped;
+            s.text = "wrong name or password";
+        } else if (st == Status::NotFound) {
+            s.phase = SignIn::Phase::Stopped;
+            s.text = "the node has no accounts";
+        } else {
+            s.phase = SignIn::Phase::Needed;
+            s.retryAtMs = now + kSignInRetryMs;
+            const char* why = reply["message"] | "";
+            s.text = std::string("couldn't sign in: ") + (*why ? why : tesser::toString(st));
+        }
+        dirty_ = true;
+    });
+}
+
 void Peers::tick(uint32_t nowMs) {
+    if (client_) client_->process();
     uint16_t gen = orderNode_->generation();
     if (gen != orderGen_) {
         orderGen_ = gen;
@@ -323,11 +440,29 @@ void Peers::tick(uint32_t nowMs) {
         settingsGen_ = gen;
         dirty_ = true;
     }
+    if ((gen = accountNode_->generation()) != accountGen_) {
+        accountGen_ = gen;
+        dirty_ = true;
+    }
     if (dirty_ || nowMs - refreshedMs_ >= kRefreshMs) refresh(nowMs);
 }
 
 void Peers::event(const Event& e) {
     if (e.type == Event::Type::PeersChanged) {
+        dirty_ = true;
+        return;
+    }
+    if (e.type == Event::Type::PeerRefused) {
+        PeerAddress device = PeerAddress::fromBytes(reinterpret_cast<const uint8_t*>(e.text.data()),
+                                                    static_cast<uint8_t>(e.text.size()));
+        SignIn& s = signInFor(idOf(device));
+        if (s.phase != SignIn::Phase::Done) return;
+        // Expired or revoked: sign in again, at most every kSignInRetryMs if
+        // new tokens keep being refused.
+        uint32_t now = static_cast<uint32_t>(dev_.core().uptimeMs());
+        s.phase = SignIn::Phase::Needed;
+        s.retryAtMs = now - s.signedInMs < kSignInRetryMs ? s.signedInMs + kSignInRetryMs : now;
+        s.text = "token refused";
         dirty_ = true;
         return;
     }
