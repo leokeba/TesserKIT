@@ -12,6 +12,7 @@ class DatagramEndpoint;
 class LocalClient;
 class RemoteNode;
 struct PeerAddress;
+enum class PeerLoss : uint8_t;
 }  // namespace tesser
 
 namespace tesserkit {
@@ -51,8 +52,10 @@ public:
     static constexpr uint32_t kSignInRetryMs = 30000;
 
     // `device` is the MAC of a device gone from every transport (UDP's and
-    // NowTP's), in the device's task, under the API lock.
-    using DeviceLostHandler = std::function<void(const tesser::PeerAddress& device)>;
+    // NowTP's), or that restarted (whatever it held is gone, even though it
+    // is back at once), and why (tesser::toString(reason)). In the device's
+    // task, under the API lock.
+    using DeviceLostHandler = std::function<void(const tesser::PeerAddress& device, tesser::PeerLoss reason)>;
 
     explicit Peers(Device& dev);
     ~Peers() override;

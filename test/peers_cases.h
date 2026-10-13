@@ -34,7 +34,9 @@ struct PeersRig : udp_cases::UdpRig {
                 return true;
             },
             [this] { return static_cast<uint32_t>(fake.core.now); }, tesser::DatagramEndpoint::Options()));
-        peers.onDeviceLost([this](const PeerAddress& d) { lost.push_back(std::string(1, char(d.bytes[5]))); });
+        peers.onDeviceLost([this](const PeerAddress& d, tesser::PeerLoss why) {
+            lost.push_back(std::string(1, char(d.bytes[5])) + tesser::toString(why));
+        });
     }
     static PeerAddress mac(const uint8_t* m) { return PeerAddress::fromBytes(m, 6); }
     tesser::DatagramEndpoint* now() { return fake.nowtp.ep.get(); }
@@ -208,7 +210,20 @@ TEST(peers_device_lost_from_every_transport) {
     r.now()->forgetPeer(PeersRig::mac(kPeerMac));
     r.pumpAll(500);
     CHECK_EQ(r.lost.size(), 1u);
-    if (!r.lost.empty()) CHECK_EQ(r.lost[0], std::string(1, char(0x7c)));
+    if (!r.lost.empty()) CHECK_EQ(r.lost[0], std::string(1, char(0x7c)) + "lost");
+}
+
+TEST(peers_device_restarted_counts_as_lost) {
+    PeersRig r;
+    r.start();
+    r.discoverOverNowTp();
+    CHECK_EQ(r.fromPeer(Op::Set, "/lamp/on", "true").status, Status::Ok);
+    // It restarts: a new session over UDP, while NowTP still has it.
+    r.peer->start(0x9100);
+    r.peer->advertise();
+    r.pumpAll(500);
+    CHECK_EQ(r.lost.size(), 1u);
+    if (!r.lost.empty()) CHECK_EQ(r.lost[0], std::string(1, char(0x7c)) + "restarted");
 }
 
 TEST(peers_declared_by_address) {

@@ -228,10 +228,11 @@ void Peers::start() {
 
 void Peers::watch(Device& dev, tesser::DatagramEndpoint& endpoint) {
     // Set once, as the endpoint is created: no peer can be lost before.
-    endpoint.onPeerLost([&dev](const PeerAddress&, const PeerAddress& device) {
+    endpoint.onPeerLost([&dev](const PeerAddress&, const PeerAddress& device, tesser::PeerLoss reason) {
         if (!device.length) return;
         Event e;
         e.type = Event::Type::DeviceLost;
+        e.value = static_cast<int32_t>(reason);
         e.text.assign(reinterpret_cast<const char*>(device.bytes), device.length);
         dev.post(std::move(e));
     });
@@ -468,11 +469,16 @@ void Peers::event(const Event& e) {
     if (e.type != Event::Type::DeviceLost) return;
     PeerAddress device =
         PeerAddress::fromBytes(reinterpret_cast<const uint8_t*>(e.text.data()), static_cast<uint8_t>(e.text.size()));
-    // Gone from one transport, perhaps not from the others (a failover).
-    for (tesser::DatagramEndpoint* ep : endpoints()) {
-        if (ep->deviceOnline(device)) return;
+    auto reason = static_cast<tesser::PeerLoss>(e.value);
+    // Gone from one transport, perhaps not from the others (a failover). A
+    // restart counts even when the device is back at once: what it held is
+    // gone.
+    if (reason != tesser::PeerLoss::Restarted) {
+        for (tesser::DatagramEndpoint* ep : endpoints()) {
+            if (ep->deviceOnline(device)) return;
+        }
     }
-    if (lost_) lost_(device);
+    if (lost_) lost_(device, reason);
 }
 
 }  // namespace tesserkit
