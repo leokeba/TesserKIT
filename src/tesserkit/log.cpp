@@ -46,7 +46,7 @@ void Log::describe(tesser::Object& o) {
                       })
                       .persist()
                       .doc("What the firmware logs, on its console too");
-    line_ = &o.event("line").label("Lines");
+    line_ = &o.event("line").label("Lines").ui("widget", "log").ui("lines", 200);
     o.file("recent")
         .label("Recent lines")
         .contentType("text/plain")
