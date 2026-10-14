@@ -44,6 +44,22 @@ jobs:
         leokeba/TesserUI
         leokeba/NowTP
 
+  # TesserUI's bridge as a macOS executable for each architecture
+  # (tesserkit-bridge-macos-arm64.zip, -x64.zip), attached to the release: it
+  # finds the devices nearby and serves this launcher from localhost, with
+  # the flasher built in and the releases' images fetched from GitHub
+  # (TesserUI's DESIGN.md section 9.7). The launcher links to the latest
+  # release's, so they are missing there until this job is done.
+  bridge:
+    needs: firmware
+    permissions:
+      contents: write
+    uses: leokeba/TesserUI/.github/workflows/bridge.yml@main
+    with:
+      page: pages/index.html
+      name: tesserkit-bridge
+      tag: v${{ needs.firmware.outputs.version }}
+
   # The launcher (TesserUI's DESIGN.md section 9.7): devices reached over USB,
   # Bluetooth or the network, with no interface of their own needed, and
   # firmware installed over USB (section 9.7.1). After the release, which it
