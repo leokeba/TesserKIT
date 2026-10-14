@@ -109,16 +109,19 @@ if(NOT TARGET tesser_core)
         get_filename_component(TESSERAPI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../TesserAPI" ABSOLUTE)
         set(TESSERAPI_DIR "${TESSERAPI_DIR}" CACHE PATH "" FORCE)
     endif()
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/deps.cmake")
     if(TESSERAPI_DIR)
         message(STATUS "TesserAPI: ${TESSERAPI_DIR}")
+        tesserkit_check_sibling(TesserAPI "${TESSERAPI_DIR}")
         add_subdirectory("${TESSERAPI_DIR}" "${CMAKE_BINARY_DIR}/tesserapi")
     else()
-        message(STATUS "TesserAPI: fetching https://github.com/leokeba/TesserAPI.git")
+        # The commit deps.lock pins, as CI's releases use.
+        tesserkit_pinned(TesserAPI TESSERAPI_SHA)
+        message(STATUS "TesserAPI: fetching https://github.com/leokeba/TesserAPI.git at ${TESSERAPI_SHA}")
         include(FetchContent)
         FetchContent_Declare(tesserapi
             GIT_REPOSITORY https://github.com/leokeba/TesserAPI.git
-            GIT_TAG main
-            GIT_SHALLOW ON)
+            GIT_TAG ${TESSERAPI_SHA})
         FetchContent_MakeAvailable(tesserapi)
     endif()
 endif()

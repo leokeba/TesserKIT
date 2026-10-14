@@ -167,7 +167,11 @@ jobs:
         leokeba/TesserAPI
         leokeba/TesserUI
         leokeba/TesserKIT
+      # or pinned to commits, one owner/repo@sha per line, in a file:
+      # dependencies-file: deps.lock
 ```
+
+Each release's notes name the commits it was built with.
 
 and `firmware.github("owner/repo", "heliostat-{target}.bin")` in the firmware.
 

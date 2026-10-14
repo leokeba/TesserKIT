@@ -62,10 +62,21 @@ on:
         description: Repositories checked out next to this one, one per line (owner/repo or owner/repo@ref)
         type: string
         default: ''
+      dependencies-file:
+        description: A file in the repository listing more of them the same way (deps.lock), '#' starting a comment
+        type: string
+        default: ''
+      min-free:
+        description: Bytes an image must leave free in its app partition, or the release fails (0 checks nothing)
+        type: number
+        default: 0
     outputs:
       version:
         description: The version released
         value: ${{ jobs.version.outputs.version }}
+      dependencies:
+        description: 'The commits the dependencies were built at, as a JSON object {"owner/repo": "sha"}'
+        value: ${{ jobs.version.outputs.dependencies }}
 
 jobs:
   version:
@@ -73,6 +84,7 @@ jobs:
     outputs:
       version: ${{ steps.next.outputs.version }}
       firmware: ${{ steps.firmware.outputs.firmware }}
+      dependencies: ${{ steps.dependencies.outputs.dependencies }}
     steps:
       - id: firmware
         env:
@@ -124,6 +136,36 @@ jobs:
           fi
           echo "version=$next" >> "$GITHUB_OUTPUT"
           echo "Releasing v$next" >> "$GITHUB_STEP_SUMMARY"
+      # Each dependency's ref resolved to a commit once, here: every build
+      # uses the same ones, and the release notes name them.
+      - id: dependencies
+        env:
+          DEPENDENCIES: ${{ inputs.dependencies }}
+          DEPENDENCIES_FILE: ${{ inputs.dependencies-file }}
+        run: |
+          list=$DEPENDENCIES
+          if [ -n "$DEPENDENCIES_FILE" ]; then
+            list="$list $(sed 's/#.*//' "$DEPENDENCIES_FILE")"
+          fi
+          json='{}'
+          for dep in $list; do
+            repo=${dep%@*}
+            ref=main
+            [ "$repo" != "$dep" ] && ref=${dep#*@}
+            if grep -qE '^[0-9a-f]{40}$' <<< "$ref"; then
+              sha=$ref
+            else
+              # An annotated tag's commit is its peeled line (^{}), sorted last.
+              sha=$(git ls-remote "https://github.com/$repo" "$ref" "$ref^{}" | sort -k2 | tail -1 | cut -f1)
+              if [ -z "$sha" ]; then
+                echo "::error::$repo has no branch or tag $ref (give a commit as its 40 characters)"
+                exit 1
+              fi
+            fi
+            json=$(jq -c --arg r "$repo" --arg s "$sha" '. + {($r): $s}' <<< "$json")
+            echo "- $repo [${sha:0:7}](https://github.com/$repo/commit/$sha) ($ref)" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "dependencies=$json" >> "$GITHUB_OUTPUT"
 
   build:
     needs: version
@@ -145,17 +187,14 @@ jobs:
         with:
           path: ${{ github.event.repository.name }}
       - name: Check out the dependencies
-        if: inputs.dependencies != ''
+        if: needs.version.outputs.dependencies != '{}'
         env:
-          DEPENDENCIES: ${{ inputs.dependencies }}
+          DEPENDENCIES: ${{ needs.version.outputs.dependencies }}
         run: |
-          for dep in $DEPENDENCIES; do
-            repo=${dep%@*}
-            ref=main
-            [ "$repo" != "$dep" ] && ref=${dep#*@}
+          jq -r 'to_entries[] | "\(.key) \(.value)"' <<< "$DEPENDENCIES" | while read -r repo sha; do
             dir=${repo#*/}
             git init -q "$dir"
-            git -C "$dir" fetch -q --depth 1 "https://github.com/$repo" "$ref"
+            git -C "$dir" fetch -q --depth 1 "https://github.com/$repo" "$sha"
             git -C "$dir" checkout -q FETCH_HEAD
             echo "$repo $(git -C "$dir" rev-parse --short HEAD)"
           done
@@ -166,10 +205,25 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
           NAME: ${{ matrix.firmware.name }}
           BUILD_ARGS: ${{ matrix.firmware.build-args }}
+          MIN_FREE: ${{ inputs.min-free }}
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
           # BUILD_ARGS is split into words on purpose.
-          idf.py -B build -DPROJECT_VER="$VERSION" $BUILD_ARGS set-target "$TARGET" build
+          set -o pipefail
+          idf.py -B build -DPROJECT_VER="$VERSION" $BUILD_ARGS set-target "$TARGET" build 2>&1 | tee build.log
+          # Room left in the app partition: the next update must fit it.
+          sizes=$(grep -oE 'binary size 0x[0-9a-f]+ bytes. Smallest app partition is 0x[0-9a-f]+ bytes' build.log | tail -1 | grep -oE '0x[0-9a-f]+' | tr '\n' ' ')
+          if [ -n "$sizes" ]; then
+            read -r size slot <<< "$sizes"
+            size=$((size)); slot=$((slot)); free=$((slot - size))
+            echo "$NAME-$TARGET: $size bytes, $((free / 1024)) KB of the $((slot / 1024)) KB slot free" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$free" -lt "$MIN_FREE" ]; then
+              echo "::error::$NAME-$TARGET leaves $free bytes free in its slot, under min-free ($MIN_FREE)"
+              exit 1
+            elif [ $((free * 20)) -lt "$slot" ]; then
+              echo "::warning::$NAME-$TARGET leaves $((free / 1024)) KB free in its slot (under 5%)"
+            fi
+          fi
           cd build
           field() { python -c "import json; print(json.load(open('project_description.json'))['$1'])"; }
           built=$(field project_version)
@@ -202,7 +256,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ needs.version.outputs.version }}
+          DEPENDENCIES: ${{ needs.version.outputs.dependencies }}
         run: |
+          # The dependencies' commits, before GitHub's generated notes.
+          NOTES=""
+          if [ "$DEPENDENCIES" != '{}' ]; then
+            NOTES=$(jq -r '"Built with:\n" + (to_entries | map("- \(.key) [`\(.value[0:7])`](https://github.com/\(.key)/commit/\(.value))") | join("\n"))' <<< "$DEPENDENCIES")
+          fi
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$TAG" dist/*.bin --clobber --repo "$GITHUB_REPOSITORY"
           else
@@ -217,5 +277,5 @@ jobs:
               exit 0
             fi
             gh release create "$TAG" dist/*.bin --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "$TAG" --generate-notes
+              --title "$TAG" --notes "$NOTES" --generate-notes
           fi
