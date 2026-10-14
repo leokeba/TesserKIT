@@ -827,6 +827,7 @@ TEST(network_ethernet_switched_off) {
     r.run(2500);
     EthRig again;
     again.air("Home", "password1");
+    again.net.defaultNetwork("Home", "password1");  // the same firmware
     again.storage.records = r.storage.records;
     CHECK(again.dev.begin());
     CHECK(!again.fake.ethernet.on);

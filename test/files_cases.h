@@ -197,6 +197,7 @@ TEST(backup_store_and_restore) {
     FilesRig r;
     CHECK(r.dev.begin());
     CHECK_EQ(r.set("/sys/backup/restartAfter", "false").status, Status::Ok);
+    r.set("/app/level", "5");  // backups hold what differs from the defaults
     rig::Reply s = r.set("/sys/backup/save", "\"first\"");
     CHECK_EQ(s.status, Status::Ok);
     CHECK_EQ(s.body, "\"first\"");
@@ -205,12 +206,12 @@ TEST(backup_store_and_restore) {
     r.set("/app/level", "8");
     std::string name;
     rig::Reply d = r.download("/sys/backup/stored/first/content", true, &name);
-    CHECK_EQ(at(d.body, "app/level"), "3");
+    CHECK_EQ(at(d.body, "app/level"), "5");
     CHECK_EQ(name, "test-device-a67c-first.json");
     rig::Reply back = r.set("/sys/backup/stored/first/restore");
     CHECK_EQ(back.status, Status::Ok);
     CHECK_EQ(back.body, "{\"skipped\":[],\"restart\":false}");
-    CHECK_EQ(r.level, 3);
+    CHECK_EQ(r.level, 5);
     // What it replaced was stored first.
     std::string before;
     CHECK(r.files.read("backups/before-restore.json", before, 16384).isOk());
@@ -226,11 +227,12 @@ TEST(backup_store_and_restore) {
 TEST(backup_restore_upload_keeps_previous) {
     FilesRig r;
     CHECK(r.dev.begin());
+    r.set("/app/level", "4");
     CHECK_EQ(r.upload("/sys/backup/settings", "{\"app\":{\"level\":9}}").status, Status::Ok);
     CHECK_EQ(r.level, 9);
     std::string before;
     CHECK(r.files.read("backups/before-restore.json", before, 16384).isOk());
-    CHECK_EQ(at(before, "app/level"), "3");
+    CHECK_EQ(at(before, "app/level"), "4");
 }
 
 TEST(backup_default_names) {

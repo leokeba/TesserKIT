@@ -21,13 +21,18 @@ TEST(backup_download) {
     BackupRig r;
     r.net.defaultNetwork("Home", "hunter22");
     CHECK(r.dev.begin());
+    // What the user chose; factory defaults aren't stored (TesserAPI §12).
+    r.set("/app/level", "4");
+    r.set("/sys/time/tz", "\"EST5EDT\"");
+    r.set("/sys/network/wifi/networks", "[{\"ssid\":\"Cabin\",\"password\":\"woodstove\"}]");
     std::string name;
     rig::Reply d = r.download("/sys/backup/settings", true, &name);
     CHECK_EQ(d.status, Status::Ok);
     CHECK_EQ(name, "test-device-a67c-settings.json");
-    CHECK_EQ(at(d.body, "app/level"), "3");
-    CHECK_EQ(at(d.body, "sys/network/wifi/networks/0/password"), "\"hunter22\"");  // secrets included
-    CHECK_EQ(at(d.body, "sys/time/tz"), "\"UTC0\"");
+    CHECK_EQ(at(d.body, "app/level"), "4");
+    CHECK_EQ(at(d.body, "sys/network/wifi/networks/0/password"), "\"woodstove\"");  // secrets included
+    CHECK_EQ(at(d.body, "sys/time/tz"), "\"EST5EDT\"");
+    CHECK_EQ(at(d.body, "sys/backup/restartAfter"), "<missing>");  // at its default
     CHECK_EQ(r.download("/sys/backup/settings", false).status, Status::Unauthorized);
 }
 

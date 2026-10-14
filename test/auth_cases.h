@@ -156,15 +156,20 @@ TEST(auth_tokens_survive_restarts) {
         r.auth.defaultAdmin("admin", "pw");
         CHECK(r.dev.begin());
         token = r.login("admin", "pw");
+        r.set("/sys/auth/users/admin/password", "\"changed\"");
         r.run(2500);
         saved = r.storage.records;
     }
+    // The same firmware: the same default account, whose changed password
+    // was stored.
     AuthRig r;
+    r.auth.defaultAdmin("admin", "pw");
     r.storage.records = saved;
     CHECK(r.dev.begin());
     CHECK_EQ(r.dev.api().tokenAccess(token), Access::Admin);
-    CHECK(!r.auth.open());  // the stored account, not a default
-    CHECK_EQ(r.login("admin", "pw").empty(), false);
+    CHECK(!r.auth.open());
+    CHECK(r.login("admin", "pw").empty());  // the stored account, not the default
+    CHECK_EQ(r.login("admin", "changed").empty(), false);
 }
 
 TEST(auth_brute_force_delay) {
@@ -214,8 +219,8 @@ TEST(auth_backup_restores_hashes) {
     std::string saved;
     {
         R r;
-        r.auth.defaultAdmin("admin", "kept-password");
         CHECK(r.dev.begin());
+        r.set("/sys/auth/users", "[{\"name\":\"admin\",\"password\":\"kept-password\",\"role\":\"admin\"}]");
         saved = r.download("/sys/backup/settings").body;
     }
     R r;

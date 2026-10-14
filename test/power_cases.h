@@ -206,6 +206,7 @@ TEST(sleep_waits_for_an_update_and_saves) {
     r.run(600);
     CHECK_EQ(r.fake.power.sleeps, 1);
     SleepRig again;
+    again.sleep.wakePin(4);  // the same firmware
     again.storage.records = r.storage.records;
     CHECK(again.dev.begin());
     CHECK_EQ(again.value("/sys/sleep/wakeLevel"), "\"high\"");
