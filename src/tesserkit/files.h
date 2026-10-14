@@ -66,8 +66,10 @@ public:
     // Writes a whole file through a temporary one, so a power cut leaves the
     // old or the new file; creates the directories on the way.
     tesser::Check write(std::string_view rel, std::string_view data);
-    // Reads a whole file of at most `max` bytes.
-    tesser::Check read(std::string_view rel, std::string& out, size_t max);
+    // Reads a whole file of at most `max` bytes. Its buffer is reserved from
+    // TesserAPI's byte budget first (busy if refused), and held in `held`
+    // while the caller keeps it, if given.
+    tesser::Check read(std::string_view rel, std::string& out, size_t max, tesser::Reservation* held = nullptr);
     // Removes a file, or a directory with what it holds.
     tesser::Check remove(std::string_view rel);
     tesser::Check rename(std::string_view from, std::string_view to);

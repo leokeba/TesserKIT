@@ -213,15 +213,21 @@ Check Files::write(std::string_view rel, std::string_view data) {
     return Check::ok();
 }
 
-Check Files::read(std::string_view rel, std::string& out, size_t max) {
+Check Files::read(std::string_view rel, std::string& out, size_t max, tesser::Reservation* held) {
     if (!mounted_) return unmounted();
     std::string p = path(rel);
     struct stat st;
     if (p.empty() || stat(p.c_str(), &st) != 0 || S_ISDIR(st.st_mode)) return Check::fail(Status::NotFound, "no such file");
     if (static_cast<uint64_t>(st.st_size) > max) return Check::fail(Status::TooLarge, "the file is too large");
+    // One block, from TesserAPI's byte budget: a short heap refuses rather
+    // than aborts.
+    tesser::Reservation r = tesser::reserveBytes(static_cast<size_t>(st.st_size) + 1, true);
+    if (!r) return Check::fail(Status::Busy, "not enough free memory to read the file now");
     FILE* f = fopen(p.c_str(), "rb");
     if (!f) return Check::fail(Status::Internal, "the file couldn't be read");
     out.resize(static_cast<size_t>(st.st_size));
+    r.settle();
+    if (held) *held = std::move(r);
     size_t n = fread(&out[0], 1, out.size(), f);
     fclose(f);
     if (n != out.size()) return Check::fail(Status::Internal, "the file couldn't be read");

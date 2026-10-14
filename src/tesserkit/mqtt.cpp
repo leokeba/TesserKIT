@@ -264,6 +264,7 @@ void Mqtt::event(const Event& e) {
     switch (e.type) {
         case Event::Type::MqttConnected:
             if (e.value != session_) return;
+            tls_.settle();  // the session's buffers are allocated: the heap shows them
             connected_ = true;
             status_->changed();
             setError("");
@@ -273,6 +274,8 @@ void Mqtt::event(const Event& e) {
             return;
         case Event::Type::MqttDisconnected:
             if (e.value != session_) return;
+            // The attempt is over: what it took isn't about to be taken.
+            tls_.settle();
             if (!e.text.empty()) setError(e.text);
             if (connected_) {
                 connected_ = false;
@@ -310,15 +313,25 @@ void Mqtt::connect() {
         filter += "/+";
         c.subscriptions.push_back(filter + "/set");
     }
+    // A TLS session's memory, from the byte budget: refused, the client
+    // isn't started, and the next try comes after kRetryMs.
+    if (!reserveTls(uri_, tls_)) {
+        setError("not enough free memory for TLS now (about 44 KB needed)");
+        return;
+    }
     Device& dev = dev_;
     session_ = client_->start(c, [&dev](Event ev) { dev.post(std::move(ev)); });
-    if (!session_) setError("the MQTT client didn't start");
+    if (!session_) {
+        tls_.release();
+        setError("the MQTT client didn't start");
+    }
 }
 
 void Mqtt::disconnect() {
     unbridge();
     if (session_) client_->stop();
     session_ = 0;
+    tls_.release();
     if (connected_) {
         connected_ = false;
         status_->changed();

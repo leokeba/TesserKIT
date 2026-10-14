@@ -368,4 +368,37 @@ TEST(mqtt_discovery_is_off_by_default) {
     CHECK(r.fake.mqtt.retained.count("ha/x/switch/" + r.dev.hostname() + "/led_on/config") == 1);
 }
 
+TEST(mqtt_tls_waits_for_memory) {
+    // A TLS session's memory comes from TesserAPI's byte budget: refused, the
+    // client doesn't start, and it is tried again later.
+    MqttRig r;
+    r.mqtt.broker("mqtts://broker.local:8883", "device", "pw");
+    size_t before = tesser::memoryBudget().used();
+    {
+        rig::BudgetLimit low(20000);
+        CHECK(r.dev.begin());
+        r.settle();
+        CHECK(!r.fake.mqtt.running);
+        CHECK(r.value("/sys/mqtt/status/error").find("memory") != std::string::npos);
+    }
+    r.run(10100);
+    CHECK(r.fake.mqtt.running);
+    CHECK_EQ(tesser::memoryBudget().used(), before + tesserkit::kTlsBytes);  // held for the session
+    r.fake.mqtt.connect();
+    r.settle();
+    CHECK_EQ(r.value("/sys/mqtt/status/connected"), "true");
+    CHECK_EQ(r.set("/sys/mqtt/enabled", "false").status, Status::Ok);
+    r.run(1100);
+    CHECK(!r.fake.mqtt.running);
+    CHECK_EQ(tesser::memoryBudget().used(), before);
+    // Plain MQTT needs none.
+    {
+        rig::BudgetLimit low(20000);
+        CHECK_EQ(r.set("/sys/mqtt/uri", "\"mqtt://broker.local:1883\"").status, Status::Ok);
+        CHECK_EQ(r.set("/sys/mqtt/enabled", "true").status, Status::Ok);
+        r.run(1100);
+        CHECK(r.fake.mqtt.running);
+    }
+}
+
 }  // namespace mqtt_cases

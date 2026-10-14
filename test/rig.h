@@ -32,6 +32,15 @@ inline bool drainBackground() {
     return *done;
 }
 
+// A limit on TesserAPI's root byte budget while it lives: a reservation
+// above it is refused, as on a short heap.
+struct BudgetLimit {
+    explicit BudgetLimit(size_t bytes) { tesser::memoryBudget().setLimit(bytes); }
+    ~BudgetLimit() { tesser::memoryBudget().setLimit(0); }
+    BudgetLimit(const BudgetLimit&) = delete;
+    BudgetLimit& operator=(const BudgetLimit&) = delete;
+};
+
 struct Reply {
     Status status = Status::Internal;
     std::string body;

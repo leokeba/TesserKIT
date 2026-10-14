@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -33,11 +34,16 @@ private:
     friend class StoredBackups;
 
     // Applies a backup; the device restarts after it if restartAfter is set.
+    // Busy if the budget can't give its document.
     tesser::Check restore(std::string_view text, std::vector<std::string>& skipped, bool& restart);
     static void writeResult(tesser::JsonWriter& w, const std::vector<std::string>& skipped, bool restart);
+    // The persisted state, its bytes reserved from TesserAPI's byte budget
+    // in `held` while the caller keeps it; busy if refused.
+    tesser::Check state(std::string& out, tesser::Reservation& held);
 
     bool restartAfter_ = true;
     uint8_t keep_ = 10;
+    std::atomic<uint32_t> lastStateBytes_{0};  // the last state's size: the next one's estimate
 };
 
 }  // namespace tesserkit

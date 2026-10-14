@@ -224,6 +224,30 @@ TEST(backup_store_and_restore) {
     CHECK_EQ(r.as(tesser::Access::User, tesser::Op::Set, "/sys/backup/save", "\"x\"").status, Status::Unauthorized);
 }
 
+TEST(backup_stored_waits_for_memory) {
+    // Storing builds the settings' text, restoring reads the file whole:
+    // both from TesserAPI's byte budget, busy when it refuses.
+    FilesRig r;
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.set("/sys/backup/restartAfter", "false").status, Status::Ok);
+    r.set("/app/level", "7");
+    CHECK_EQ(r.set("/sys/backup/save", "\"kept\"").status, Status::Ok);
+    r.set("/app/level", "1");
+    std::string kept;
+    CHECK(r.files.read("backups/kept.json", kept, 16384).isOk());
+    {
+        rig::BudgetLimit low(kept.size() / 2);  // less than the text, or the file
+        rig::Reply s = r.set("/sys/backup/save", "\"other\"");
+        CHECK_EQ(s.status, Status::Busy);
+        CHECK(s.body.find("memory") != std::string::npos);
+        CHECK(!r.onDisk("backups/other.json"));
+        CHECK_EQ(r.set("/sys/backup/stored/kept/restore").status, Status::Busy);
+        CHECK_EQ(r.level, 1);
+    }
+    CHECK_EQ(r.set("/sys/backup/stored/kept/restore").status, Status::Ok);
+    CHECK_EQ(r.level, 7);
+}
+
 TEST(backup_restore_upload_keeps_previous) {
     FilesRig r;
     CHECK(r.dev.begin());

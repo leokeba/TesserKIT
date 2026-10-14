@@ -87,7 +87,11 @@ Check StoredBackups::save(const std::string& name, std::string* saved) {
     if (n.size() + kExtLen > Files::kMaxName) return Check::fail(Status::InvalidValue, "1 to 27 characters");
     Check c = Files::checkName(n);
     if (!c.isOk()) return c;
-    c = files_.write(path(n), dev_.api().persistedState());
+    std::string text;
+    tesser::Reservation held;
+    c = backup_.state(text, held);
+    if (!c.isOk()) return c;
+    c = files_.write(path(n), text);
     if (!c.isOk()) return c;
     if (saved) *saved = n;
     prune(n);
@@ -155,7 +159,8 @@ void StoredBackups::describe(tesser::Object& o) {
                             .label("Download");
                         e.action("restore", [this, file](tesser::Call& call) {
                              std::string text;
-                             Check c = files_.read(file, text, Backup::kMaxSize);
+                             tesser::Reservation held;
+                             Check c = files_.read(file, text, Backup::kMaxSize, &held);
                              if (!c.isOk()) return call.fail(c.status, c.message);
                              std::vector<std::string> skipped;
                              bool restart = false;

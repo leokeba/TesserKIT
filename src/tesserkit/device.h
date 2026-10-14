@@ -35,6 +35,18 @@ const tesser::Node* findNode(const tesser::Object& root, std::string_view path, 
 // a remote node or a `*`).
 bool resolves(const tesser::Object& root, std::string_view path);
 
+// What a TLS session (HTTPS, MQTT over TLS) takes from the heap at its peak,
+// its task included: about 34 KB measured on a classic ESP32 fetching a
+// GitHub release, with a margin. Reserved from TesserAPI's byte budget
+// before a session starts (docs/DESIGN.md section 11), which keeps its heap
+// floor (8 KB on target) on top: about 44 KB free, as before the budget.
+constexpr size_t kTlsBytes = 36 * 1024;
+// kTlsBytes held in `held` for a session to `uri` if it uses TLS
+// (https://, mqtts://, wss://); true without reserving for one that
+// doesn't. False if the budget refused them. Settle `held` once the
+// session's buffers are allocated, so they don't count twice.
+bool reserveTls(std::string_view uri, tesser::Reservation& held);
+
 // A service: a subtree of /sys with a platform side (docs/DESIGN.md section
 // 5). Constructing one registers it for its device; Device::begin() then
 // mounts it, loads the persisted state, and starts it. Registering doesn't

@@ -57,6 +57,14 @@ bool resolves(const tesser::Object& root, std::string_view path) {
     return opaque || (node && node != &root);
 }
 
+bool reserveTls(std::string_view uri, tesser::Reservation& held) {
+    held.release();
+    bool tls = uri.substr(0, 8) == "https://" || uri.substr(0, 8) == "mqtts://" || uri.substr(0, 6) == "wss://";
+    if (!tls) return true;
+    held = tesser::reserveBytes(kTlsBytes);
+    return static_cast<bool>(held);
+}
+
 namespace {
 // Services constructed and not yet taken by their device's begin(), in
 // construction order. Constant-initialized, so it is valid before any

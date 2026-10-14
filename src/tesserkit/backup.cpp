@@ -16,9 +16,10 @@ using tesser::Status;
 
 namespace {
 
+// A download of a text, holding its reservation until it is done.
 class StringSource : public tesser::FileSource {
 public:
-    explicit StringSource(std::string text) : text_(std::move(text)) {}
+    StringSource(std::string text, tesser::Reservation held) : text_(std::move(text)), held_(std::move(held)) {}
     int64_t size() const override { return static_cast<int64_t>(text_.size()); }
     int read(uint8_t* buf, size_t cap) override {
         size_t n = text_.size() - offset_;
@@ -30,10 +31,29 @@ public:
 
 private:
     std::string text_;
+    tesser::Reservation held_;
     size_t offset_ = 0;
 };
 
+// What a stored state is estimated at before one was taken.
+constexpr uint32_t kFirstEstimate = 4096;
+
 }  // namespace
+
+Check Backup::state(std::string& out, tesser::Reservation& held) {
+    // persistedState() grows its text by doubling: one block of up to twice
+    // the text at the end. Reserved before from the last state's size, then
+    // set to the block it took.
+    uint32_t last = lastStateBytes_.load();
+    size_t estimate = last ? last : kFirstEstimate;
+    held = tesser::reserveBytes(2 * estimate, true);
+    if (!held) return Check::fail(Status::Busy, "not enough free memory for the settings now");
+    out = dev_.api().persistedState();
+    lastStateBytes_ = static_cast<uint32_t>(out.size());
+    (void)held.resize(out.capacity());  // unchanged if the budget can't give more: it is allocated already
+    held.settle();
+    return Check::ok();
+}
 
 Backup& Backup::keep(uint8_t n) {
     keep_ = n;
@@ -45,6 +65,10 @@ Check Backup::restore(std::string_view text, std::vector<std::string>& skipped, 
     restart = restartAfter_;
     // Undoable: the settings it replaces are stored first.
     if (Files* files = dev_.files()) files->storeBackup(*this, Files::kBeforeRestore, nullptr);
+    // The parsed document: ArduinoJson's pools, about as large as the text
+    // or less, taken twice for safety, in pieces.
+    tesser::Reservation doc = tesser::reserveBytes(2 * text.size(), false);
+    if (!doc) return Check::fail(Status::Busy, "not enough free memory to restore the settings now");
     Status s = dev_.api().restore(text, &skipped);
     if (s == Status::BadRequest) return Check::fail(s, "not a settings file");
     if (s != Status::Ok) return Check::fail(s, "the settings couldn't be saved");
@@ -86,9 +110,16 @@ void Backup::describe(tesser::Object& o) {
                   if (c.isOk()) writeResult(reply, skipped, restart);
                   return c;
               })
-        .download([&dev](tesser::FileRequest& r) {
+        .download([this, &dev](tesser::FileRequest& r) {
+            std::string text;
+            tesser::Reservation held;
+            Check c = state(text, held);
+            if (!c.isOk()) {
+                r.refuse(c.status, c.message);
+                return std::unique_ptr<tesser::FileSource>();
+            }
             r.filename = dev.hostname() + "-settings.json";
-            return std::unique_ptr<tesser::FileSource>(new StringSource(dev.api().persistedState()));
+            return std::unique_ptr<tesser::FileSource>(new StringSource(std::move(text), std::move(held)));
         });
     o.value("restartAfter", restartAfter_).persist().label("Restart after restoring").ui("advanced");
     // Virtual: a firmware without Files doesn't link the stored backups.

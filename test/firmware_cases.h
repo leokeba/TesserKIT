@@ -353,9 +353,10 @@ TEST(firmware_https_waits_for_memory) {
     r.fake.http.files[kLatest] = releaseJson("v1.2.0", {"fw-esp32.bin"});
     r.fake.http.files["https://example.com/fw.bin"] = fake::image(0, 54321);
     CHECK(r.dev.begin());
-    // Too little heap for a TLS handshake: refused before anything starts,
-    // rather than leaving the firmware without memory.
-    r.fake.core.heap = 30000;
+    // Too little memory in TesserAPI's byte budget for a TLS handshake:
+    // refused before anything starts, rather than leaving the firmware
+    // without memory.
+    rig::BudgetLimit low(30000);
     rig::Reply c = r.check();
     CHECK_EQ(c.status, Status::Busy);
     CHECK(r.fake.http.requests.empty());
@@ -376,11 +377,26 @@ TEST(firmware_https_once_memory_is_back) {
     GithubRig r;
     r.fake.http.files[kLatest] = releaseJson("v1.2.0", {"fw-esp32.bin"});
     CHECK(r.dev.begin());
-    r.fake.core.heap = 30000;
-    CHECK_EQ(r.check().status, Status::Busy);
-    r.fake.core.heap = 180000;
+    {
+        rig::BudgetLimit low(30000);
+        CHECK_EQ(r.check().status, Status::Busy);
+    }
+    size_t before = tesser::memoryBudget().used();
     CHECK_EQ(r.check().status, Status::Ok);
     CHECK_EQ(r.value("/sys/firmware/github/error"), "\"\"");
+    CHECK_EQ(tesser::memoryBudget().used(), before);  // given back when the check ended
+}
+
+TEST(firmware_https_download_holds_its_memory) {
+    FwRig r;
+    r.fake.http.files["https://example.com/fw.bin"] = fake::image(0, 54321);
+    CHECK(r.dev.begin());
+    size_t before = tesser::memoryBudget().used();
+    CHECK_EQ(r.set("/sys/firmware/download", "\"https://example.com/fw.bin\"").status, Status::Ok);
+    CHECK_EQ(tesser::memoryBudget().used(), before + tesserkit::kTlsBytes);  // until the task is done
+    r.fake.core.runTasks();
+    CHECK_EQ(tesser::memoryBudget().used(), before);
+    CHECK_EQ(r.fw.state(), FirmwareState::Rebooting);
 }
 
 TEST(firmware_github_up_to_date) {

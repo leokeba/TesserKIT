@@ -17,22 +17,25 @@ using tesser::Status;
 
 namespace {
 
-// What an HTTPS connection takes from the heap at its peak, its task
-// included: about 34 KB measured on a classic ESP32 fetching a GitHub
-// release, with a margin. Below it the handshake would fail, or leave the
-// rest of the firmware without memory.
-constexpr uint32_t kTlsHeap = 44 * 1024;
+// kTlsBytes from the byte budget for an HTTPS URL, or kHttpBytes for plain
+// HTTP, held by the task that uses them: refused, the device is too short
+// of memory for the download, which would fail or leave the rest of the
+// firmware without memory.
 // A plain HTTP download: its 8 KB task, the client's buffers and the
 // socket. On a Gledopto with every service and Ethernet (18 KB free), one
-// took the heap down to 268 bytes, then failed for want of the client.
-constexpr uint32_t kHttpHeap = 24 * 1024;
+// took the heap down to 268 bytes, then failed for want of the client. With
+// the budget's 8 KB floor on top, about 24 KB must be free.
+constexpr size_t kHttpBytes = 16 * 1024;
 
-Check tlsRoom(Device& dev, const std::string& url) {
-    bool tls = url.compare(0, 8, "https://") == 0;
-    uint32_t need = tls ? kTlsHeap : kHttpHeap;
-    if (dev.core().freeHeap() >= need) return Check::ok();
-    return Check::fail(Status::Busy, tls ? "not enough free memory for HTTPS now (about 44 KB needed)"
-                                         : "not enough free memory for a download now (about 24 KB needed)");
+Check tlsRoom(const std::string& url, std::shared_ptr<tesser::Reservation>& held) {
+    held = std::make_shared<tesser::Reservation>();
+    if (url.compare(0, 8, "https://") == 0) {
+        if (reserveTls(url, *held)) return Check::ok();
+        return Check::fail(Status::Busy, "not enough free memory for HTTPS now (about 44 KB needed)");
+    }
+    *held = tesser::reserveBytes(kHttpBytes);
+    if (*held) return Check::ok();
+    return Check::fail(Status::Busy, "not enough free memory for a download now (about 24 KB needed)");
 }
 
 // An upload to /sys/firmware/image, streamed to the next OTA slot. It runs
@@ -229,8 +232,9 @@ private:
     };
     // Asks `url` for the latest release and finds its asset named after
     // `pattern`, in the check's task.
+    // `tls` is settled once the server answers.
     static Latest fetch(HttpClient& http, const std::string& url, const std::string& pattern,
-                        const std::string& target);
+                        const std::string& target, tesser::Reservation& tls);
     bool idle() const { return fw_.state_ == FirmwareState::Idle || fw_.state_ == FirmwareState::Failed; }
     // Starts a check in a task.
     void check();
@@ -291,7 +295,8 @@ void Firmware::GithubFeed::tick(uint32_t nowMs) {
 }
 
 Firmware::GithubFeed::Latest Firmware::GithubFeed::fetch(HttpClient& http, const std::string& url,
-                                                         const std::string& pattern, const std::string& target) {
+                                                         const std::string& pattern, const std::string& target,
+                                                         tesser::Reservation& tls) {
     Latest out;
     auto fail = [&out](Status s, std::string message) {
         out.status = s;
@@ -299,6 +304,7 @@ Firmware::GithubFeed::Latest Firmware::GithubFeed::fetch(HttpClient& http, const
         return Check::ok();  // the error is in `out`
     };
     Check c = http.get(url.c_str(), [&](HttpResponse& res) -> Check {
+        tls.settle();  // the session's buffers are allocated: the heap shows them
         int status = res.status();
         if (status == 404) return fail(Status::NotFound, "no release found");
         if (status == 403 || status == 429) return fail(Status::Busy, "GitHub's rate limit: try again later");
@@ -343,7 +349,8 @@ void Firmware::GithubFeed::check() {
                           ? repo_
                           : "https://api.github.com/repos/" + repo_ + "/releases/latest";
     setState(ReleaseState::Checking);
-    Check room = tlsRoom(dev, url);
+    std::shared_ptr<tesser::Reservation> tls;
+    Check room = tlsRoom(url, tls);
     if (!room.isOk()) {
         Latest r;
         r.status = room.status;
@@ -352,8 +359,10 @@ void Firmware::GithubFeed::check() {
         return;
     }
     bool spawned = http && dev.core().spawn("tk_release", 8192, [this, http, url, pattern = asset_,
-                                                                  target = dev.info().target] {
-        checked(fetch(*http, url, pattern, target));
+                                                                  target = dev.info().target, tls] {
+        Latest r = fetch(*http, url, pattern, target, *tls);
+        tls->release();
+        checked(r);
     });
     if (!spawned) {
         Latest r;
@@ -604,15 +613,17 @@ Check Firmware::download(const std::string& url) {
     }
     HttpClient* http = dev_.platform().http;
     if (!http) return Check::fail(Status::NotAllowed, "no HTTP client in this build");
-    Check room = tlsRoom(dev_, url);
+    std::shared_ptr<tesser::Reservation> tls;
+    Check room = tlsRoom(url, tls);
     if (!room.isOk()) return room;
     if (!begin(FirmwareState::Downloading)) return Check::fail(Status::Busy, "an update is in progress");
     Ota& ota = *ota_;
     uint16_t chipId = dev_.info().imageChipId;
     uint32_t slot = ota.nextSlotSize();
-    bool spawned = dev_.core().spawn("tk_download", 8192, [this, http, &ota, chipId, slot, url] {
+    bool spawned = dev_.core().spawn("tk_download", 8192, [this, http, &ota, chipId, slot, url, tls] {
         ImageWriter writer(ota, chipId);
-        Check c = http->get(url.c_str(), [this, &writer, slot](HttpResponse& res) {
+        Check c = http->get(url.c_str(), [this, &writer, slot, &tls](HttpResponse& res) {
+            tls->settle();  // the session's buffers are allocated: the heap shows them
             if (res.status() == 404) return Check::fail(Status::NotFound, "HTTP 404");
             if (res.status() != 200) return Check::fail(Status::NotFound, "the server refused the download");
             int64_t length = res.length();
@@ -632,6 +643,7 @@ Check Firmware::download(const std::string& url) {
             verifying();
             c = writer.finish();
         }
+        tls->release();
         if (c.isOk()) {
             installed();
         } else {

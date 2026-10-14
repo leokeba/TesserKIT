@@ -79,6 +79,31 @@ TEST(backup_restore_refuses_garbage) {
     CHECK_EQ(r.fake.core.restarts, 0);
 }
 
+TEST(backup_waits_for_memory) {
+    // The settings' text and a restore's document come from TesserAPI's byte
+    // budget: refused, busy, and nothing changes.
+    BackupRig r;
+    CHECK(r.dev.begin());
+    r.set("/app/level", "6");
+    std::string text = "{\"app\":{\"level\":2," + std::string("\"pad\":\"") + std::string(3000, 'x') + "\"}}";
+    {
+        rig::BudgetLimit low(4000);
+        rig::Reply d = r.download("/sys/backup/settings");
+        CHECK_EQ(d.status, Status::Busy);
+        CHECK(d.body.find("memory") != std::string::npos);
+        rig::Reply u = r.upload("/sys/backup/settings", text);
+        CHECK_EQ(u.status, Status::Busy);
+        CHECK_EQ(r.level, 6);
+    }
+    size_t before = tesser::memoryBudget().used();
+    rig::Reply d = r.download("/sys/backup/settings");
+    CHECK_EQ(d.status, Status::Ok);
+    CHECK_EQ(at(d.body, "app/level"), "6");
+    CHECK_EQ(tesser::memoryBudget().used(), before);  // given back with the download
+    CHECK_EQ(r.upload("/sys/backup/settings", text).status, Status::Ok);
+    CHECK_EQ(r.level, 2);
+}
+
 TEST(backup_round_trip) {
     std::string saved;
     {

@@ -103,6 +103,7 @@ private:
     uint32_t triedAtMs_ = 0;
     MqttClient* client_ = nullptr;
     int32_t session_ = 0;
+    tesser::Reservation tls_;  // a TLS session's heap, while one is up (kTlsBytes)
     std::vector<Bridge> bridges_;
     std::unique_ptr<tesser::LocalClient> commander_;
     // Discovery: the paths still to announce, the config topics still to
