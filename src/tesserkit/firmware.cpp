@@ -22,10 +22,17 @@ namespace {
 // release, with a margin. Below it the handshake would fail, or leave the
 // rest of the firmware without memory.
 constexpr uint32_t kTlsHeap = 44 * 1024;
+// A plain HTTP download: its 8 KB task, the client's buffers and the
+// socket. On a Gledopto with every service and Ethernet (18 KB free), one
+// took the heap down to 268 bytes, then failed for want of the client.
+constexpr uint32_t kHttpHeap = 24 * 1024;
 
 Check tlsRoom(Device& dev, const std::string& url) {
-    if (url.compare(0, 8, "https://") != 0 || dev.core().freeHeap() >= kTlsHeap) return Check::ok();
-    return Check::fail(Status::Busy, "not enough free memory for HTTPS now (about 44 KB needed)");
+    bool tls = url.compare(0, 8, "https://") == 0;
+    uint32_t need = tls ? kTlsHeap : kHttpHeap;
+    if (dev.core().freeHeap() >= need) return Check::ok();
+    return Check::fail(Status::Busy, tls ? "not enough free memory for HTTPS now (about 44 KB needed)"
+                                         : "not enough free memory for a download now (about 24 KB needed)");
 }
 
 // An upload to /sys/firmware/image, streamed to the next OTA slot. It runs
@@ -472,7 +479,7 @@ void Firmware::describe(tesser::Object& o) {
     if (ota_ && p.http && feed_) feed_->describe(o);
     pendingNode_ = &o.value("pending", static_cast<const bool&>(pending_)).ui("hidden");
     o.value("pendingNote", "This firmware rolls back at the next restart unless it is kept. It is kept automatically "
-                           "after a minute online.")
+                           "after a minute online, or with someone on its access point.")
         .label("New firmware")
         .ui("style", "warning")
         .ui("visibleWhen", "pending=true");

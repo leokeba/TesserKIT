@@ -363,8 +363,12 @@ TEST(firmware_https_waits_for_memory) {
     CHECK(r.value("/sys/firmware/github/error").find("memory") != std::string::npos);
     CHECK_EQ(r.set("/sys/firmware/download", "\"https://example.com/fw.bin\"").status, Status::Busy);
     CHECK_EQ(r.fw.state(), FirmwareState::Idle);
-    // Plain HTTP needs no handshake.
+    // Plain HTTP needs no handshake, but its task and buffers.
     r.fake.http.files["http://192.168.1.3/fw.bin"] = fake::image(0, 54321);
+    r.fake.core.heap = 20000;
+    CHECK_EQ(r.set("/sys/firmware/download", "\"http://192.168.1.3/fw.bin\"").status, Status::Busy);
+    CHECK_EQ(r.fw.state(), FirmwareState::Idle);
+    r.fake.core.heap = 30000;
     CHECK_EQ(r.set("/sys/firmware/download", "\"http://192.168.1.3/fw.bin\"").status, Status::Ok);
 }
 
