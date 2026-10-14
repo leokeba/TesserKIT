@@ -164,9 +164,9 @@ private:
     std::vector<tesser::Node*> ethIpNodes_;
     tesser::Node* ethStatus_ = nullptr;
     tesser::EventNode* ethJoined_ = nullptr;
-    uint16_t networksGen_ = 0, hostnameGen_ = 0, mdnsGen_ = 0;
+    uint32_t networksGen_ = 0, hostnameGen_ = 0, mdnsGen_ = 0;
     uint32_t apGen_ = 0, ethGen_ = 0;
-    uint16_t staModeGen_ = 0, ethEnabledGen_ = 0, powerSaveGen_ = 0;
+    uint32_t staModeGen_ = 0, ethEnabledGen_ = 0, powerSaveGen_ = 0;
 
     // Station.
     Sta sta_ = Sta::Idle;

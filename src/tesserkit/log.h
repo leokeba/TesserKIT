@@ -37,7 +37,7 @@ private:
     LogOutput* out_ = nullptr;
     LogLevel level_ = LogLevel::Warn;
     bool levelSet_ = false;
-    uint16_t levelGen_ = 0;
+    uint32_t levelGen_ = 0;
     size_t historyBytes_ = 4096;
     std::deque<std::string> lines_;
     size_t kept_ = 0;  // bytes in lines_, newlines included

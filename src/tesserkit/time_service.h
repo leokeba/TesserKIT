@@ -55,7 +55,7 @@ private:
     tesser::Node* serverNode_ = nullptr;
     tesser::Node* syncedNode_ = nullptr;
     tesser::Node* sourceNode_ = nullptr;
-    uint16_t tzGen_ = 0;
+    uint32_t tzGen_ = 0;
     uint32_t sntpGen_ = 0;
     bool online_ = false;
 };

@@ -191,7 +191,7 @@ void UdpApi::tick(uint32_t nowMs) {
         begun_ = true;  // once: a socket that won't open isn't retried every period
         begin();
     }
-    uint16_t gen = enabledNode_->generation();
+    uint32_t gen = enabledNode_->generation();
     if (gen != enabledGen_) {
         enabledGen_ = gen;
         if (enabled_) {

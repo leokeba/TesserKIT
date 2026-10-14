@@ -250,7 +250,7 @@ void NowTp::tick(uint32_t nowMs) {
         begun_ = true;  // once: a radio that won't start isn't retried every period
         begin();
     }
-    uint16_t gen = enabledNode_->generation();
+    uint32_t gen = enabledNode_->generation();
     if (gen != enabledGen_) {
         enabledGen_ = gen;
         if (enabled_ && !started_) {

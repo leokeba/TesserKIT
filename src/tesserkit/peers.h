@@ -134,7 +134,7 @@ private:
     tesser::Node* statusNode_ = nullptr;
     tesser::EventNode* lostEvent_ = nullptr;
     tesser::EventNode* reachedEvent_ = nullptr;
-    uint16_t orderGen_ = 0, settingsGen_ = 0, accountGen_ = 0;
+    uint32_t orderGen_ = 0, settingsGen_ = 0, accountGen_ = 0;
 };
 
 }  // namespace tesserkit

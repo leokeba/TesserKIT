@@ -39,7 +39,7 @@ private:
     tesser::Node* enabledNode_ = nullptr;
     tesser::Node* status_ = nullptr;
     tesser::Node* restartNode_ = nullptr;
-    uint16_t enabledGen_ = 0;
+    uint32_t enabledGen_ = 0;
     uint32_t polledAtMs_ = 0;
 };
 

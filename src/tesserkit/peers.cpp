@@ -424,7 +424,7 @@ void Peers::login(const std::string& nodeName, const std::string& id, const std:
 
 void Peers::tick(uint32_t nowMs) {
     if (client_) client_->process();
-    uint16_t gen = orderNode_->generation();
+    uint32_t gen = orderNode_->generation();
     if (gen != orderGen_) {
         orderGen_ = gen;
         applyDefaultOrder();

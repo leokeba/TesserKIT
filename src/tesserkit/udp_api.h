@@ -97,8 +97,8 @@ private:
     tesser::Node* mountNode_ = nullptr;
     tesser::Node* restartNode_ = nullptr;
     tesser::Node* statusNode_ = nullptr;
-    uint16_t interfacesGen_ = 0;
-    uint16_t enabledGen_ = 0, portGen_ = 0, accessGen_ = 0, mountGen_ = 0;
+    uint32_t interfacesGen_ = 0;
+    uint32_t enabledGen_ = 0, portGen_ = 0, accessGen_ = 0, mountGen_ = 0;
 };
 
 }  // namespace tesserkit

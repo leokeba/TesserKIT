@@ -68,7 +68,7 @@ void Bluetooth::apply() {
 
 void Bluetooth::tick(uint32_t nowMs) {
     if (!ble_) return;
-    uint16_t gen = enabledNode_->generation();
+    uint32_t gen = enabledNode_->generation();
     if (gen != enabledGen_) {
         enabledGen_ = gen;
         apply();
