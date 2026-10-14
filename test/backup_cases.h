@@ -32,7 +32,7 @@ TEST(backup_download) {
     CHECK_EQ(at(d.body, "app/level"), "4");
     CHECK_EQ(at(d.body, "sys/network/wifi/networks/0/password"), "\"woodstove\"");  // secrets included
     CHECK_EQ(at(d.body, "sys/time/tz"), "\"EST5EDT\"");
-    CHECK_EQ(at(d.body, "sys/backup/restartAfter"), "<missing>");  // at its default
+    CHECK_EQ(at(d.body, "sys/backup/restartAfter"), "true");  // defaults too: a restore is exact
     CHECK_EQ(r.download("/sys/backup/settings", false).status, Status::Unauthorized);
 }
 

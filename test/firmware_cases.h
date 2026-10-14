@@ -366,10 +366,10 @@ TEST(firmware_https_waits_for_memory) {
     CHECK_EQ(r.fw.state(), FirmwareState::Idle);
     // Plain HTTP needs no handshake, but its task and buffers.
     r.fake.http.files["http://192.168.1.3/fw.bin"] = fake::image(0, 54321);
-    r.fake.core.heap = 20000;
+    tesser::memoryBudget().setLimit(10000);  // under its 16 KB
     CHECK_EQ(r.set("/sys/firmware/download", "\"http://192.168.1.3/fw.bin\"").status, Status::Busy);
     CHECK_EQ(r.fw.state(), FirmwareState::Idle);
-    r.fake.core.heap = 30000;
+    tesser::memoryBudget().setLimit(30000);
     CHECK_EQ(r.set("/sys/firmware/download", "\"http://192.168.1.3/fw.bin\"").status, Status::Ok);
 }
 
