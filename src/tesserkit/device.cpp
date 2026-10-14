@@ -57,12 +57,29 @@ bool resolves(const tesser::Object& root, std::string_view path) {
     return opaque || (node && node != &root);
 }
 
+namespace {
+// Services constructed and not yet taken by their device's begin(), in
+// construction order. Constant-initialized, so it is valid before any
+// constructor runs: services are often globals, and so is their Device,
+// whose own members a constructor in another translation unit can't use.
+Service* g_registered = nullptr;
+}  // namespace
+
 Service::Service(Device& dev, const char* name) : dev_(dev), name_(name) {
-    // Registration order is mount order. Nothing here touches another
-    // translation unit's globals: services are often globals themselves.
-    Service** p = &dev.services_;
+    // Registration order is mount order.
+    Service** p = &g_registered;
     while (*p) p = &(*p)->next_;
     *p = this;
+}
+
+Service::~Service() {
+    // One never taken by a device (destroyed before begin()).
+    for (Service** p = &g_registered; *p; p = &(*p)->next_) {
+        if (*p == this) {
+            *p = next_;
+            break;
+        }
+    }
 }
 
 Device::Device(const char* label)
@@ -137,6 +154,21 @@ std::string Device::defaultHostname() const {
 
 bool Device::begin() {
     if (started_) return true;
+    // Take this device's services from the registered ones, in order.
+    Service** tail = &services_;
+    while (*tail) tail = &(*tail)->next_;
+    for (Service** p = &g_registered; *p;) {
+        Service* s = *p;
+        if (&s->dev_ != this) {
+            p = &s->next_;
+            continue;
+        }
+        *p = s->next_;
+        s->next_ = nullptr;
+        *tail = s;
+        tail = &s->next_;
+        if (Files* f = s->asFiles()) files_ = f;
+    }
     if (!platform_.core) platform_.core = espCore();
     if (!platform_.core) {
         tesser::logError("tesserkit: no platform (on the host, fill Device::platform() before begin())");

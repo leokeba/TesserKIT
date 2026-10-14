@@ -92,7 +92,7 @@ private:
 
 }  // namespace
 
-Files::Files(Device& dev) : Service(dev, "files") { dev.files_ = this; }
+Files::Files(Device& dev) : Service(dev, "files") {}
 
 Files& Files::partition(const char* label) {
     label_ = label;

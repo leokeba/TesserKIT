@@ -93,6 +93,7 @@ protected:
     void tick(uint32_t nowMs) override;
     // Stored backups hold the settings, secrets included: they go with them.
     void factoryReset() override;
+    Files* asFiles() override { return this; }
 
 private:
     void refresh();

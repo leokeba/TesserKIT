@@ -36,11 +36,13 @@ const tesser::Node* findNode(const tesser::Object& root, std::string_view path, 
 bool resolves(const tesser::Object& root, std::string_view path);
 
 // A service: a subtree of /sys with a platform side (docs/DESIGN.md section
-// 5). Constructing one registers it with its device; Device::begin() then
-// mounts it, loads the persisted state, and starts it.
+// 5). Constructing one registers it for its device; Device::begin() then
+// mounts it, loads the persisted state, and starts it. Registering doesn't
+// touch the device: a service that is a global may be constructed before a
+// Device that is a global of another translation unit.
 class Service {
 public:
-    virtual ~Service() = default;
+    virtual ~Service();
     Service(const Service&) = delete;
     Service& operator=(const Service&) = delete;
 
@@ -64,6 +66,8 @@ protected:
     // A factory reset, before the restart: erase what the service keeps
     // outside the device's storage (a radio's pairing key).
     virtual void factoryReset() {}
+    // The Files service, which Device::files() returns.
+    virtual Files* asFiles() { return nullptr; }
 
     Device& dev_;
 
@@ -244,7 +248,6 @@ private:
 #endif
 
     friend class Service;
-    friend class Files;
 };
 
 }  // namespace tesserkit

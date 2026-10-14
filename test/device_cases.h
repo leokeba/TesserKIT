@@ -13,6 +13,39 @@ struct SysRig : rig::Rig {
     explicit SysRig(bool coredump = true) : Rig(coredump) {}
 };
 
+// Globals of two translation units: a service constructed before its
+// Device's constructor runs is still mounted, in construction order, and
+// Files is found before the services that look for it attach.
+TEST(device_services_constructed_before_the_device) {
+    alignas(tesserkit::Device) unsigned char raw[sizeof(tesserkit::Device)] = {};  // zero, as static storage
+    tesserkit::Device& early = *reinterpret_cast<tesserkit::Device*>(raw);
+    auto system = std::make_unique<tesserkit::System>(early);
+    auto timers = std::make_unique<tesserkit::Timers>(early);
+    tesserkit::Device* dev = new (raw) tesserkit::Device("Test Device");
+    {
+        fake::Platform fake;
+        tesser::MemoryStorage storage;
+        tesserkit::Firmware late{*dev};
+        fake.install(*dev, false);
+        dev->task(false).storage(storage);
+        CHECK(dev->begin());
+        CHECK(tesserkit::resolves(dev->api(), "/sys/timers"));
+        CHECK(tesserkit::resolves(dev->api(), "/sys/firmware"));
+        const tesser::Node* sys = dev->api().first();
+        while (sys && std::string(sys->name()) != "sys") sys = sys->next();
+        std::vector<std::string> order;
+        if (sys) {
+            for (const tesser::Node* c = static_cast<const tesser::Object*>(sys)->first(); c; c = c->next())
+                order.push_back(c->name());
+        }
+        auto pos = [&order](const char* n) { return std::find(order.begin(), order.end(), n) - order.begin(); };
+        CHECK(pos("timers") < pos("firmware"));
+        system.reset();
+        timers.reset();
+    }
+    dev->~Device();
+}
+
 TEST(device_hostname_from_label_and_mac) {
     SysRig r;
     CHECK(r.dev.begin());
