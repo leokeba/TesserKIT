@@ -99,7 +99,14 @@ public:
             return false;
         }
         sink_ = std::move(sink);
-        esp_netif_config_t netifConfig = ESP_NETIF_DEFAULT_ETH();  // "ETH_DEF", which mDNS follows
+        // "ETH_DEF", which mDNS follows. Its default route priority (50) is
+        // below the station's (100): raised, so the default route (and the
+        // DNS servers that follow it) is Ethernet's while both have an
+        // address (DESIGN.md section 5.2).
+        static esp_netif_inherent_config_t inherent = ESP_NETIF_INHERENT_DEFAULT_ETH();
+        inherent.route_prio = 128;
+        esp_netif_config_t netifConfig = ESP_NETIF_DEFAULT_ETH();
+        netifConfig.base = &inherent;
         netif_ = esp_netif_new(&netifConfig);
         esp_netif_attach(netif_, esp_eth_new_netif_glue(handle_));
         esp_event_handler_instance_register(ETH_EVENT, ESP_EVENT_ANY_ID, &EspEthernet::onEvent, this, nullptr);

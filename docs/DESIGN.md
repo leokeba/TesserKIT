@@ -243,7 +243,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 
 **Channels and NowTP:** a station follows its router's channel, and ESP-NOW must share it (TesserAPI §14). NowTP follows by itself: a node whose station or access point fixes its channel is an anchor, and the nodes nearby follow it when it moves (§5.11). Network reports channel changes to `dev.onChannel(fn)` as well. Without a router, the AP's `channel` is the field's ESP-NOW channel. Network reports its state (provisioning, connecting) from its start, so services that wait for the network see it at once.
 
-**Two interfaces at once** (`always`, or a static or link-local address on the cable): `dev.address()` gives Ethernet's address, mDNS answers on each interface with its own, the default route is Ethernet's (esp_netif's priorities), and two addresses in one subnet confuse routing: give the cable its own subnet, or leave the station to `fallback`.
+**Two interfaces at once** (`always`, or a static or link-local address on the cable): `dev.address()` gives Ethernet's address, mDNS answers on each interface with its own, the default route is Ethernet's, and the DNS servers that follow it (esp_netif's priority for Ethernet, 50 by default, is raised above the station's 100), and two addresses in one subnet confuse routing: give the cable its own subnet, or leave the station to `fallback`.
 
 **Not in the first release:** Ethernet modules on SPI (W5500, *(later)*, same tree), WPA2-Enterprise, IPv6 configuration.
 
