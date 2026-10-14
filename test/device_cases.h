@@ -215,7 +215,7 @@ TEST(device_settings_persist_across_boots) {
         CHECK(r.dev.begin());
         CHECK_EQ(r.set("/sys/time/tz", "\"CET-1CEST,M3.5.0,M10.5.0/3\"").status, Status::Ok);
         r.run(1500);
-        CHECK(r.storage.records.empty());  // debounced
+        CHECK_EQ(r.storage.records.count("sys"), 0u);  // debounced (the version is written at once)
         r.run(1000);
         CHECK_EQ(r.storage.records.count("sys"), 1u);
         saved = r.storage.records;
@@ -242,7 +242,7 @@ TEST(device_factory_reset) {
     CHECK(r.dev.begin());
     r.set("/sys/time/tz", "\"EST5EDT\"");
     r.run(2500);
-    CHECK_EQ(r.storage.records.size(), 1u);
+    CHECK_EQ(r.storage.records.size(), 2u);  // sys and @version
     CHECK_EQ(r.set("/sys/factoryReset").status, Status::Ok);
     CHECK(r.storage.records.empty());
     r.set("/sys/time/tz", "\"PST8PDT\"");  // too late: nothing is saved any more
@@ -270,6 +270,132 @@ TEST(device_state_callbacks) {
     }
     CHECK_EQ(ticks, 2);
     CHECK_EQ(r.value("/sys/status/state"), "\"online\"");
+}
+
+// A service whose default changed in a later TesserKIT: speed was 3 before
+// settings version 1, 5 since. Its migrate() drops the old default.
+struct Demo : tesserkit::Service {
+    explicit Demo(tesserkit::Device& d) : Service(d, "demo") {}
+    int speed = 5;
+    std::vector<uint32_t> from;  // the versions migrate() saw
+    void describe(tesser::Object& o) override { o.value("speed", speed).persist(); }
+    void migrate(uint32_t v, JsonObject settings) override {
+        from.push_back(v);
+        if (v < 1 && settings["speed"] == 3) settings.remove("speed");
+    }
+};
+
+struct VersionRig : TimeRig {
+    tesserkit::Backup backup{dev};
+    Demo demo{dev};
+    int level = 3;
+    VersionRig() { dev.api().object("app").value("level", level).range(0, 10).persist(); }
+};
+
+TEST(device_settings_from_before_versions) {
+    // Stored by a TesserKIT before settings versions: every default frozen
+    // at first boot, an old default among them, and the user's choices.
+    VersionRig r;
+    r.storage.records["sys"] =
+        "{\"time\":{\"tz\":\"EST5EDT\",\"sntp\":{\"enabled\":true,\"server\":\"pool.ntp.org\"}},"
+        "\"backup\":{\"restartAfter\":true},\"demo\":{\"speed\":3}}";
+    r.storage.records["app"] = "{\"level\":3}";
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.demo.from.size(), 1u);
+    CHECK_EQ(r.demo.from.empty() ? 99u : r.demo.from[0], 0u);
+    CHECK_EQ(r.demo.speed, 5);                           // the new default
+    CHECK_EQ(r.value("/sys/time/tz"), "\"EST5EDT\"");    // the user's choice survives
+    // Saved again, sparse, under the version.
+    CHECK_EQ(r.storage.records["@version"], "1");
+    const std::string& sys = r.storage.records["sys"];
+    CHECK(sys.find("EST5EDT") != std::string::npos);
+    CHECK(sys.find("pool.ntp.org") == std::string::npos);
+    CHECK(sys.find("restartAfter") == std::string::npos);
+    CHECK(sys.find("speed") == std::string::npos);
+    CHECK_EQ(r.storage.records.count("app"), 0u);  // only defaults: no record
+
+    // A user's value equal to nothing old survives, and state already at
+    // this version isn't migrated again.
+    VersionRig again;
+    again.storage.records["sys"] = "{\"demo\":{\"speed\":7}}";
+    CHECK(again.dev.begin());
+    CHECK_EQ(again.demo.speed, 7);
+    VersionRig current;
+    current.storage.records = again.storage.records;
+    current.storage.records["sys"] = "{\"demo\":{\"speed\":3}}";
+    CHECK(current.dev.begin());
+    CHECK(current.demo.from.empty());
+    CHECK_EQ(current.demo.speed, 3);  // chosen under version 1: the user's
+}
+
+TEST(device_application_settings_version) {
+    // The application's migration runs after TesserKIT's, for every record,
+    // with the application's own stored version.
+    VersionRig r;
+    std::vector<std::string> seen;
+    r.dev.settingsVersion(2, [&seen](std::string_view record, uint32_t version, JsonVariant value) {
+        std::string s(record);
+        s += "@" + std::to_string(version) + ":" + (value["demo"]["speed"].isNull() ? "-" : "speed");
+        seen.push_back(s);
+        if (record == "app" && version < 2 && value["level"] == 4) value.remove("level");  // was 4, now 3
+        if (record == "old") return false;
+        return true;
+    });
+    r.storage.records["sys"] = "{\"demo\":{\"speed\":3}}";
+    r.storage.records["app"] = "{\"level\":4}";
+    CHECK(r.dev.begin());
+    std::sort(seen.begin(), seen.end());
+    CHECK_EQ(seen.size(), 2u);
+    seen.resize(2);
+    CHECK_EQ(seen[0], "app@0:-");
+    CHECK_EQ(seen[1], "sys@0:-");  // TesserKIT's migration came first
+    CHECK_EQ(r.level, 3);
+    CHECK_EQ(r.demo.speed, 5);
+    CHECK_EQ(r.storage.records["@version"], std::to_string((2u << 16) | 1u));
+
+    // Stored under version 1 of the application and TesserKIT's current one:
+    // only the application's migration runs.
+    VersionRig next;
+    std::vector<uint32_t> versions;
+    next.dev.settingsVersion(2, [&versions](std::string_view, uint32_t version, JsonVariant) {
+        versions.push_back(version);
+        return true;
+    });
+    next.storage.records["@version"] = std::to_string((1u << 16) | 1u);
+    next.storage.records["app"] = "{\"level\":6}";
+    CHECK(next.dev.begin());
+    CHECK_EQ(versions.size(), 1u);
+    CHECK_EQ(versions.empty() ? 99u : versions[0], 1u);
+    CHECK(next.demo.from.empty());
+    CHECK_EQ(next.level, 6);
+}
+
+TEST(device_backup_from_before_versions_migrates) {
+    // A backup without "@version" goes through the migrations as it is
+    // restored: the old default isn't taken as the user's choice.
+    VersionRig r;
+    r.dev.settingsVersion(1, [](std::string_view record, uint32_t version, JsonVariant value) {
+        if (record == "app" && version < 1 && value["lvl"].is<int>()) {  // renamed
+            value["level"] = value["lvl"];
+            value.remove("lvl");
+        }
+        return true;
+    });
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.set("/sys/backup/restartAfter", "false").status, Status::Ok);
+    rig::Reply u = r.upload("/sys/backup/settings",
+                            "{\"sys\":{\"demo\":{\"speed\":3},\"time\":{\"tz\":\"EST5EDT\"}},\"app\":{\"lvl\":8}}");
+    CHECK_EQ(u.status, Status::Ok);
+    CHECK_EQ(u.body, "{\"skipped\":[],\"restart\":false}");
+    CHECK_EQ(r.demo.speed, 5);
+    CHECK_EQ(r.level, 8);
+    CHECK_EQ(r.value("/sys/time/tz"), "\"EST5EDT\"");
+    CHECK_EQ(r.demo.from.size(), 1u);
+    // A backup taken now carries the version, and isn't migrated again.
+    rig::Reply d = r.download("/sys/backup/settings");
+    CHECK_EQ(at(d.body, "@version"), std::to_string((1u << 16) | 1u));
+    CHECK_EQ(r.upload("/sys/backup/settings", d.body).status, Status::Ok);
+    CHECK_EQ(r.demo.from.size(), 1u);
 }
 
 TEST(device_coredump) {

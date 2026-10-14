@@ -80,6 +80,16 @@ protected:
     virtual void factoryReset() {}
     // The Files service, which Device::files() returns.
     virtual Files* asFiles() { return nullptr; }
+    // Settings stored under an older TesserKIT settings version `from`
+    // (below Device::kSettingsVersion; 0: before versions), before they are
+    // loaded: the service's own object as stored (/sys/<name>, or /<name>
+    // for a service at the root), to change in place: rename keys, or drop
+    // a value equal to a default that has since changed (docs/DESIGN.md
+    // section 6.3).
+    virtual void migrate(uint32_t from, JsonObject settings) {
+        (void)from;
+        (void)settings;
+    }
 
     Device& dev_;
 
@@ -111,6 +121,18 @@ public:
     Device& storage(tesser::Storage& storage);  // default: NVS, namespace "tesserkit"
     // URI handler slots for the application's own routes (default 4).
     Device& extraHandlers(uint8_t n);
+    // The version of the application's own persisted state (default 0), and
+    // the migration that brings state stored under an older one up to it:
+    // `migrate(record, version, value)` sees each stored top-level record
+    // ("sys" included, after TesserKIT's own migration of it) with the
+    // application's version it was stored under, and changes it in place;
+    // false drops the record. Raise the version when a default changes
+    // (docs/DESIGN.md section 6.3).
+    using Migration = tesser::Api::Migration;
+    Device& settingsVersion(uint16_t version, Migration migrate = nullptr);
+    // TesserKIT's own settings version, for /sys. Stored with the
+    // application's as (application << 16) | TesserKIT's.
+    static constexpr uint16_t kSettingsVersion = 1;
 
     // Mounts the services, loads the persisted state, starts the services,
     // the HTTP server and the task. False if the platform is missing.
@@ -210,6 +232,8 @@ private:
     tesser::Storage* defaultStorage();
     void updateState(uint32_t nowMs);
     std::string defaultHostname() const;
+    // TesserAPI's migration: TesserKIT's services, then the application's.
+    bool migrate(std::string_view record, uint32_t version, JsonVariant value);
 
     const char* label_;
     tesser::Api api_;
@@ -217,6 +241,8 @@ private:
     Platform platform_;
     BootInfo info_;
     tesser::Storage* storage_ = nullptr;
+    uint16_t appVersion_ = 0;
+    Migration appMigrate_;
     Service* services_ = nullptr;
     Files* files_ = nullptr;
     std::string hostname_;

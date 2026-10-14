@@ -125,7 +125,7 @@ New mechanisms go to the lowest layer that can host them, generically. A service
 ### 4.1 Boot sequence
 
 1. `begin()` creates `/sys`, has every service describe itself, and sets the device label and the schema metadata.
-2. Opens NVS (namespace `tesserkit`, one record per top-level node, §6.1) and loads the persisted state (TesserAPI §12). An NVS partition NVS can't use (`no free pages` or `new version found`, as a firmware with another partition table leaves it) is erased and initialized again: nothing in it could be read, and Wi-Fi can't start without NVS. Values that don't fit any more are skipped with a warning: a firmware update never breaks a boot.
+2. Opens NVS (namespace `tesserkit`, one record per top-level node, §6.1) and loads the persisted state (TesserAPI §12), migrated first if it was stored under older settings versions (§6.3). An NVS partition NVS can't use (`no free pages` or `new version found`, as a firmware with another partition table leaves it) is erased and initialized again: nothing in it could be read, and Wi-Fi can't start without NVS. Values that don't fit any more are skipped with a warning: a firmware update never breaks a boot.
 3. Applies factory defaults (§6.2) to whatever the stored state didn't set.
 4. Starts each service's platform side: Network brings up Wi-Fi, Time starts SNTP, Firmware checks the rollback state.
 5. Starts the HTTP server: the API at `/api`, WebSocket at `/ws`, the UI at `/` and `/ui.js` (TesserUI §9.4), the captive portal's error handler (§5.2). The server's URI handler budget is computed from what's used, never set by hand: the API's, the UI's, plus `dev.extraHandlers(n)` (default 4) for the application's own routes and TesserUI assets.
@@ -664,6 +664,15 @@ clock.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");
 ```
 
 They apply only when the stored state doesn't set the value, so a user's change survives updates, and a factory reset returns to them. Storage holds only values that differ from them (TesserAPI §12), so a firmware that changes a default reaches every device whose user never changed it. ESP32-sveltekit's `factory_settings.ini` placeholders (`#{unique_id}`) become ordinary code (`dev.hostname()` already has the MAC).
+
+### 6.3 Versions and migration
+
+Storage holds only what differs from the defaults (§6.2), so a changed default reaches every device whose user never changed it, except where an older firmware stored the old default itself: TesserKIT before settings version 1 (v0.1.19 and earlier, on TesserAPI before 1a8c28e) froze every default into storage at first boot, and a backup holds whatever its firmware stored. Versions tell those values apart from a user's choice:
+
+- **TesserKIT's version** (`Device::kSettingsVersion`, 1) covers `/sys`. `begin()` gives TesserAPI the stored version and a migration (`api.persistVersion()`, TesserAPI §12) before loading. State stored under an older version goes through each service's `migrate(from, settings)`, with its own object as stored (`/sys/<name>`, or `/<name>` for a service at the root, the Sequencer), which drops a value equal to a default that has since changed, or renames a key. Every record is then saved again, sparse, under the new version, which drops the values equal to today's defaults.
+- **Version 1** made the records sparse. No persisted `/sys` default changed from TesserKIT's first release to it (v0.1.0 to v0.1.19, checked in the history on 2026-10-14), so its migration drops nothing itself: the values frozen before it equal today's defaults, and the sparse rewrite drops them. A later default change raises `kSettingsVersion`, and the service's `migrate()` drops its old value under the version before.
+- **The application's version:** `dev.settingsVersion(version, migrate)`, before `begin()`, for its own records. Its `migrate(record, version, value)` sees every stored record, `"sys"` included after TesserKIT's migration of it (an application that changes a factory default it sets, such as `defaultTz()`, drops the old one there), with the application's version the state was stored under (0 before it set one), and changes it in place; returning false drops the record. It runs only when that version differs.
+- **Stored:** one number, `(application << 16) | TesserKIT's`, TesserAPI's `@version` record, also in backups (`"@version"`). A backup without it (from before versions) is migrated from 0 as it is restored (§5.5).
 
 ## 7. Security
 

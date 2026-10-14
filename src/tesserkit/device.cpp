@@ -141,6 +141,36 @@ Device& Device::extraHandlers(uint8_t n) {
     return *this;
 }
 
+Device& Device::settingsVersion(uint16_t version, Migration migrate) {
+    appVersion_ = version;
+    appMigrate_ = std::move(migrate);
+    return *this;
+}
+
+bool Device::migrate(std::string_view record, uint32_t version, JsonVariant value) {
+    uint32_t kit = version & 0xFFFF, app = version >> 16;
+    if (kit < kSettingsVersion) {
+        // Version 1 (2026-10-14) made the records sparse. Every value stored
+        // before it, every default frozen at first boot, equals today's
+        // default: no persisted /sys default changed from TesserKIT's first
+        // release to then (v0.1.0 to v0.1.19). So no service drops anything
+        // yet, and TesserAPI drops those values as it rewrites the records.
+        // A later default change raises kSettingsVersion, and its service's
+        // migrate() drops the old default.
+        for (Service* s = services_; s; s = s->next_) {
+            JsonObject o;
+            if (record == "sys") {
+                o = value[s->name()].as<JsonObject>();
+            } else if (record == s->name() && !sys_->child(s->name())) {
+                o = value.as<JsonObject>();  // a service at the root (Sequencer)
+            }
+            if (!o.isNull()) s->migrate(kit, o);
+        }
+    }
+    if (appMigrate_ && app != appVersion_) return appMigrate_(record, app, value);
+    return true;
+}
+
 std::string Device::defaultHostname() const {
     // The label lowercased, other characters as single hyphens, then the
     // MAC's last two bytes: "Heliostat 3" → "heliostat-3-a67c".
@@ -196,6 +226,12 @@ bool Device::begin() {
 
     if (!storage_) storage_ = defaultStorage();
     if (storage_) {
+        // TesserKIT's version and the application's, so each migrates its own
+        // settings (docs/DESIGN.md section 6.3).
+        api_.persistVersion((static_cast<uint32_t>(appVersion_) << 16) | kSettingsVersion,
+                            [this](std::string_view record, uint32_t version, JsonVariant value) {
+                                return migrate(record, version, value);
+                            });
         api_.persistence(*storage_, 2000);
         api_.load();
     }
