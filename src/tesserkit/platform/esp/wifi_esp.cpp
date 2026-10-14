@@ -13,7 +13,11 @@
 
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_netif_net_stack.h"
 #include "esp_wifi.h"
+#include "lwip/dhcp.h"
+#include "lwip/dns.h"
+#include "lwip/netif.h"
 
 namespace tesserkit {
 
@@ -175,6 +179,9 @@ private:
         } else {
             return;
         }
+        // After esp_netif's own handler (registered first), which started
+        // the station's DHCP client.
+        if (e.type == Event::Type::StaAssociated) esp::dnsRefresh();
         if (self->sink_) self->sink_(std::move(e));
     }
 
@@ -185,6 +192,73 @@ private:
     volatile bool linked_ = false;
 };
 
+// lwIP has one list of DNS servers for all its interfaces. A lease's servers
+// come in its ACK, seconds before its address (the address check, ACD), and
+// esp_netif empties the list whenever an interface starts its DHCP client (a
+// station associating, a cable's link) or takes a static address. A station
+// trying to join in those seconds left a device on Ethernet without names
+// until the lease's renewal, hours later. So an empty list is filled again
+// (DESIGN.md section 5.2). Touched only in lwIP's task.
+struct StaticDns {
+    netif* interface = nullptr;
+    uint32_t server = 0;  // network byte order; 0: none
+};
+StaticDns g_staticDns[3];  // the station, Ethernet, a spare
+NETIF_DECLARE_EXT_CALLBACK(g_netifCallback)
+
+// From an interface with an address: its static server, or its lease renewed,
+// whose ACK brings the lease's servers back.
+bool fillDns(netif* n) {
+    if (!netif_is_up(n) || ip4_addr_isany_val(*netif_ip4_addr(n))) return false;
+    for (const StaticDns& s : g_staticDns) {
+        if (s.interface == n && s.server) {
+            ip_addr_t server;
+            ip_addr_set_ip4_u32_val(server, s.server);
+            dns_setserver(0, &server);
+            return true;
+        }
+    }
+    if (!dhcp_supplied_address(n)) return false;
+    dhcp_renew(n);
+    return true;
+}
+
+// The default interface first, which routes go through.
+void fillEmptyDns() {
+    if (!ip_addr_isany(dns_getserver(0))) return;
+    if (netif_default && fillDns(netif_default)) return;
+    netif* n;
+    NETIF_FOREACH(n) {
+        if (n != netif_default && fillDns(n)) return;
+    }
+}
+
+void onNetifChange(netif*, netif_nsc_reason_t, const netif_ext_callback_args_t*) { fillEmptyDns(); }
+
+struct StaticDnsChange {
+    esp_netif_t* netif;
+    uint32_t server;
+};
+
+// Before the address changes, whose callback fills the list.
+esp_err_t setStaticDns(void* arg) {
+    const StaticDnsChange* c = static_cast<const StaticDnsChange*>(arg);
+    netif* n = static_cast<netif*>(esp_netif_get_netif_impl(c->netif));
+    StaticDns* slot = nullptr;
+    for (StaticDns& s : g_staticDns) {
+        if (s.interface == n) {
+            slot = &s;
+            break;
+        }
+        if (!s.interface && !slot) slot = &s;
+    }
+    if (slot) {
+        slot->interface = n;
+        slot->server = c->server;
+    }
+    return ESP_OK;
+}
+
 }  // namespace
 
 namespace esp {
@@ -194,29 +268,48 @@ void netifInit() {
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) tesser::logError("tesserkit: esp_netif_init: %s", esp_err_to_name(err));
     err = esp_event_loop_create_default();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) tesser::logError("tesserkit: event loop: %s", esp_err_to_name(err));
+    esp_netif_tcpip_exec(
+        [](void*) {
+            if (!g_netifCallback.callback_fn) netif_add_ext_callback(&g_netifCallback, onNetifChange);
+            return ESP_OK;
+        },
+        nullptr);
+}
+
+void dnsRefresh() {
+    esp_netif_tcpip_exec(
+        [](void*) {
+            fillEmptyDns();
+            return ESP_OK;
+        },
+        nullptr);
 }
 
 void applyIp(esp_netif_t* netif, const IpConfig& c) {
     if (!c.staticIp) {
+        // Only a client a static address stopped is started here: esp_netif
+        // starts the others on a link or an association. Starting one
+        // empties the DNS servers' list, which an attempt to join shouldn't.
+        StaticDnsChange dns = {netif, 0};
+        esp_netif_tcpip_exec(setStaticDns, &dns);
         esp_netif_dhcp_status_t dhcp;
-        if (esp_netif_dhcpc_get_status(netif, &dhcp) == ESP_OK && dhcp != ESP_NETIF_DHCP_STARTED) {
-            // A static address stays until DHCP replaces it, if it ever does.
+        if (esp_netif_dhcpc_get_status(netif, &dhcp) == ESP_OK && dhcp == ESP_NETIF_DHCP_STOPPED) {
             esp_netif_ip_info_t none = {};
-            esp_netif_set_ip_info(netif, &none);
+            esp_netif_set_ip_info(netif, &none);  // the static address goes
+            esp_netif_dhcpc_start(netif);
+            dnsRefresh();
         }
-        esp_netif_dhcpc_start(netif);  // already started is fine
         return;
     }
+    StaticDnsChange dns = {netif, toNetwork(c.dns)};
+    esp_netif_tcpip_exec(setStaticDns, &dns);
     esp_netif_dhcpc_stop(netif);
     esp_netif_ip_info_t ip = {};
     ip.ip.addr = toNetwork(c.ip);
     ip.netmask.addr = toNetwork(c.mask);
     ip.gw.addr = toNetwork(c.gateway);
-    esp_netif_set_ip_info(netif, &ip);
-    esp_netif_dns_info_t dns = {};
-    dns.ip.type = ESP_IPADDR_TYPE_V4;
-    dns.ip.u_addr.ip4.addr = toNetwork(c.dns);
-    esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns);
+    esp_netif_set_ip_info(netif, &ip);  // empties the DNS servers' list
+    dnsRefresh();
 }
 
 }  // namespace esp

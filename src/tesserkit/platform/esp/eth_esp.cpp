@@ -164,6 +164,9 @@ private:
         } else {
             return;
         }
+        // After esp_netif's own handler (registered first), which started
+        // the cable's DHCP client.
+        if (e.type == Event::Type::EthLink && e.value) esp::dnsRefresh();
         if (self->sink_) self->sink_(std::move(e));
     }
 
