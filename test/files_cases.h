@@ -1,6 +1,8 @@
 // Files (docs/DESIGN.md section 5.12) and the backups stored in it (5.5).
 #pragma once
 
+#include <errno.h>
+
 #include <stdio.h>
 #include <sys/stat.h>
 
@@ -35,6 +37,13 @@ struct FilesRig : rig::Rig {
         return out;
     }
 };
+
+// A failed write says why: a full filesystem, or memory to try again for.
+TEST(files_write_errors_say_why) {
+    CHECK_EQ(tesserkit::fileWriteError(ENOSPC).status, rig::Status::TooLarge);
+    CHECK_EQ(tesserkit::fileWriteError(ENOMEM).status, rig::Status::Busy);
+    CHECK_EQ(tesserkit::fileWriteError(EIO).status, rig::Status::Internal);
+}
 
 TEST(files_mount) {
     FilesRig r;

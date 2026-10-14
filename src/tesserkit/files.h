@@ -10,6 +10,11 @@
 
 namespace tesserkit {
 
+// Why a write to the filesystem failed, from its errno: ENOSPC is a full
+// filesystem, ENOMEM a heap too short for the filesystem's buffers (busy:
+// try again), anything else an error of its own.
+tesser::Check fileWriteError(int err);
+
 class Backup;
 class StoredBackups;
 

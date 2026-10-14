@@ -1,6 +1,7 @@
 #include "tesserkit/files.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -49,14 +50,14 @@ public:
         if (!done_) ::remove(temp_.c_str());
     }
     Check write(const uint8_t* data, size_t len) override {
-        if (fwrite(data, 1, len, f_) != len) return Check::fail(Status::TooLarge, "the filesystem is full");
+        if (fwrite(data, 1, len, f_) != len) return fileWriteError(errno);
         return Check::ok();
     }
     Check finish(tesser::JsonWriter& reply) override {
         (void)reply;
         bool flushed = fclose(f_) == 0;
         f_ = nullptr;
-        if (!flushed) return Check::fail(Status::TooLarge, "the filesystem is full");
+        if (!flushed) return fileWriteError(errno);
         // Some VFS drivers don't rename over an existing file.
         if (::rename(temp_.c_str(), target_.c_str()) != 0 &&
             (::remove(target_.c_str()) != 0 || ::rename(temp_.c_str(), target_.c_str()) != 0)) {
@@ -91,6 +92,13 @@ private:
 };
 
 }  // namespace
+
+Check fileWriteError(int err) {
+    if (err == ENOSPC) return Check::fail(Status::TooLarge, "the filesystem is full");
+    // LittleFS allocates its caches as it writes: a short heap fails it.
+    if (err == ENOMEM) return Check::fail(Status::Busy, "not enough free memory to write the file now");
+    return Check::fail(Status::Internal, "the file couldn't be written");
+}
 
 Files::Files(Device& dev) : Service(dev, "files") {}
 
@@ -201,13 +209,18 @@ Check Files::write(std::string_view rel, std::string_view data) {
     FILE* f = fopen(temp.c_str(), "wb");
     if (!f) return Check::fail(Status::Internal, "the file couldn't be written");
     bool ok = fwrite(data.data(), 1, data.size(), f) == data.size();
-    ok = fclose(f) == 0 && ok;
+    int err = ok ? 0 : errno;
+    if (fclose(f) != 0 && ok) {
+        ok = false;
+        err = errno;
+    }
     if (ok && ::rename(temp.c_str(), target.c_str()) != 0) {
         ok = ::remove(target.c_str()) == 0 && ::rename(temp.c_str(), target.c_str()) == 0;
     }
     if (!ok) {
+        if (!err) err = errno;
         ::remove(temp.c_str());
-        return Check::fail(Status::TooLarge, "the filesystem is full");
+        return fileWriteError(err);
     }
     changed();
     return Check::ok();

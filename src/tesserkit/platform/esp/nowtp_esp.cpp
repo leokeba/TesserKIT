@@ -42,6 +42,11 @@ public:
         c.enableDiscovery = true;
         c.discovery.name = config.name.substr(0, nowtp::Discovery::kMaxName);
         c.security.pairingCode = config.pairingCode;
+        // Received frames waiting for NowTP's task: 4 of ESP-NOW v2's
+        // largest. NowTP's default (8, about 12 KB) cost a classic ESP32
+        // gateway 4 KB more heap than before NowTP 764a3d2, which a device
+        // with every service can't spare (DESIGN.md section 5.11).
+        c.eventBufferSize = 6 * 1024;
         // The transport outlives a stop: nodes mounted under `peers` keep
         // pointing at its endpoint.
         if (!transport_) {
