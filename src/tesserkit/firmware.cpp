@@ -515,11 +515,15 @@ void Firmware::start() {
 }
 
 void Firmware::tick(uint32_t nowMs) {
-    (void)nowMs;
-    if (pending_ && dev_.onlineMs() >= kConfirmAfterMs) {
-        if (ota_->confirm()) tesser::logWarning("tesserkit: new image confirmed");
-        pending_ = false;
-        pendingNode_->changed();
+    if (pending_ && dev_.reachableMs() >= kConfirmAfterMs && static_cast<int32_t>(nowMs - confirmAtMs_) >= 0) {
+        if (ota_->confirm()) {
+            tesser::logWarning("tesserkit: new image confirmed");
+            pending_ = false;
+            pendingNode_->changed();
+        } else {
+            tesser::logError("tesserkit: couldn't confirm the new image; trying again");
+            confirmAtMs_ = nowMs + kConfirmRetryMs;
+        }
     }
     if (feed_) feed_->tick(nowMs);
 }

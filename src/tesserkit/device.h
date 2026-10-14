@@ -153,6 +153,9 @@ public:
     bool factoryReset();
     // Milliseconds the device has been online (0 if it isn't).
     uint32_t onlineMs() const;
+    // Milliseconds the device has been within clients' reach: online, or with
+    // a station joined to its access point (0 if neither).
+    uint32_t reachableMs() const;
     // The IPv4 address the device is reached at, a.b.c.d as (a << 24) | ...:
     // Ethernet's, the station's, else the access point's; 0 if none (Network).
     uint32_t address() const { return address_; }
@@ -170,6 +173,8 @@ public:
     void timeSynced();
     void channel(uint8_t ch);
     void address(uint32_t ip, const uint8_t* mac);
+    // Stations joined to the access point (Network).
+    void apClients(int32_t n) { apClients_ = n; }
     // The device is about to sleep: runs the onSleep() callbacks, then saves
     // what the persistence's debounce holds.
     void sleeping();
@@ -212,6 +217,9 @@ private:
     tesser::Node* stateNode_ = nullptr;
     uint32_t onlineSinceMs_ = 0;
     bool online_ = false;
+    int32_t apClients_ = 0;
+    uint32_t reachableSinceMs_ = 0;
+    bool reachable_ = false;
     uint32_t lastNowMs_ = 0;
     static constexpr uint32_t kNoRestart = 0xFFFFFFFF;
     std::atomic<uint32_t> restartDelayMs_{kNoRestart};  // set by restartIn()

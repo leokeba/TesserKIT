@@ -43,8 +43,11 @@ public:
 
     ReleaseState release() const;
 
-    // A new image is confirmed once the device has been online this long.
+    // A new image is confirmed once the device has been within clients'
+    // reach this long (Device::reachableMs()), and retried this often if the
+    // confirmation fails.
     static constexpr uint32_t kConfirmAfterMs = 60000;
+    static constexpr uint32_t kConfirmRetryMs = 10000;
     // Automatic release checks: the first once the device has been online
     // this long, then one a day, or an hour after one that failed.
     static constexpr uint32_t kFirstCheckMs = 60000;
@@ -75,6 +78,7 @@ private:
     int32_t progress_ = 0;
     std::string error_;
     bool pending_ = false;
+    uint32_t confirmAtMs_ = 0;  // no attempt before this (after a failed one)
     tesser::Node* stateNode_ = nullptr;
     tesser::Node* progressNode_ = nullptr;
     tesser::Node* errorNode_ = nullptr;

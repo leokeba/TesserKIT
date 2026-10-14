@@ -158,6 +158,52 @@ TEST(firmware_confirmed_after_a_minute_online) {
     CHECK_EQ(r.value("/sys/firmware/pending"), "false");
 }
 
+TEST(firmware_confirm_retried_after_a_failure) {
+    FwRig r;
+    r.fake.ota.pendingImage = true;
+    r.fake.ota.confirmFails = true;
+    CHECK(r.dev.begin());
+    r.run(60500);
+    CHECK_EQ(r.fake.ota.confirms, 1);
+    CHECK_EQ(r.value("/sys/firmware/pending"), "true");
+    r.fake.ota.confirmFails = false;
+    r.run(5000);
+    CHECK_EQ(r.fake.ota.confirms, 1);  // not every tick
+    r.run(6000);
+    CHECK_EQ(r.fake.ota.confirms, 2);
+    CHECK_EQ(r.value("/sys/firmware/pending"), "false");
+}
+
+// A device out of its router's reach, used through its access point: the
+// image is confirmed once a station has been on the access point for a
+// minute, and not while nobody can reach it (DESIGN.md section 5.4).
+TEST(firmware_confirmed_through_the_access_point) {
+    FwRig r;
+    tesserkit::Network net{r.dev};
+    net.defaultNetwork("Home", "password1");  // not in range
+    r.fake.ota.pendingImage = true;
+    CHECK(r.dev.begin());
+    r.run(120000);
+    CHECK(r.fake.wifi.apUp);
+    CHECK_EQ(r.dev.state(), State::Connecting);
+    CHECK_EQ(r.fake.ota.confirms, 0);
+    tesserkit::Event joined;
+    joined.type = tesserkit::Event::Type::ApClients;
+    joined.value = 1;
+    r.dev.post(joined);
+    r.run(30000);
+    tesserkit::Event left = joined;
+    left.value = 0;
+    r.dev.post(left);  // the phone leaves: the minute starts again
+    r.run(1000);
+    r.dev.post(joined);
+    r.run(59000);
+    CHECK_EQ(r.fake.ota.confirms, 0);
+    r.run(1500);
+    CHECK_EQ(r.fake.ota.confirms, 1);
+    CHECK_EQ(r.value("/sys/firmware/pending"), "false");
+}
+
 TEST(firmware_update_confirms_the_running_image) {
     FwRig r;
     r.fake.ota.pendingImage = true;

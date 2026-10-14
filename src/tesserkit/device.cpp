@@ -269,10 +269,15 @@ const uint8_t* Device::addressMac() const { return addressMacSet_ ? addressMac_ 
 
 uint32_t Device::onlineMs() const { return online_ ? lastNowMs_ - onlineSinceMs_ : 0; }
 
+uint32_t Device::reachableMs() const { return reachable_ ? lastNowMs_ - reachableSinceMs_ : 0; }
+
 void Device::updateState(uint32_t nowMs) {
     bool online = started_ && netState_ == State::Online;
     if (online && !online_) onlineSinceMs_ = nowMs;
     online_ = online;
+    bool reachable = online || (started_ && apClients_ > 0);
+    if (reachable && !reachable_) reachableSinceMs_ = nowMs;
+    reachable_ = reachable;
     State s = !started_ ? State::Booting
               : updating_ ? State::Updating
               : failed_   ? State::Error

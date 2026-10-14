@@ -726,6 +726,7 @@ void Network::event(const Event& e) {
             break;
         case Event::Type::ApClients:
             apClients_ = e.value;
+            dev_.apClients(e.value);
             apStatus_->changed();
             break;
         default:
@@ -839,6 +840,7 @@ void Network::updateAp(uint32_t nowMs) {
             apAddr_ = wifi_->apIp();
             apIp_ = formatIpv4(apAddr_);
             apClients_ = 0;
+            dev_.apClients(0);
             apStatus_->changed();
             tesser::logWarning("tesserkit: access point \"%s\" at %s", c.ssid.c_str(), apIp_.c_str());
         }
@@ -848,6 +850,7 @@ void Network::updateAp(uint32_t nowMs) {
         apAddr_ = 0;
         apIp_.clear();
         apClients_ = 0;
+        dev_.apClients(0);
         apStatus_->changed();
     }
     bool captive = apUp_ && !online();

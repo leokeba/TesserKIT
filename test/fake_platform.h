@@ -221,8 +221,10 @@ struct Ota : tesserkit::Ota {
         aborts++;
     }
     bool pending() override { return pendingImage; }
+    bool confirmFails = false;
     bool confirm() override {
         confirms++;
+        if (confirmFails) return false;
         pendingImage = false;
         return true;
     }
