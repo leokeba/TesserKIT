@@ -85,6 +85,7 @@ jobs:
       version: ${{ steps.next.outputs.version }}
       firmware: ${{ steps.firmware.outputs.firmware }}
       dependencies: ${{ steps.dependencies.outputs.dependencies }}
+      checkouts: ${{ steps.dependencies.outputs.checkouts }}
     steps:
       - id: firmware
         env:
@@ -148,6 +149,7 @@ jobs:
             list="$list $(sed 's/#.*//' "$DEPENDENCIES_FILE")"
           fi
           json='{}'
+          checkouts=''
           for dep in $list; do
             repo=${dep%@*}
             ref=main
@@ -163,9 +165,13 @@ jobs:
               fi
             fi
             json=$(jq -c --arg r "$repo" --arg s "$sha" '. + {($r): $s}' <<< "$json")
+            checkouts="$checkouts $repo@$sha"
             echo "- $repo [${sha:0:7}](https://github.com/$repo/commit/$sha) ($ref)" >> "$GITHUB_STEP_SUMMARY"
           done
           echo "dependencies=$json" >> "$GITHUB_OUTPUT"
+          # The same as owner/repo@sha words, for the build's container,
+          # which has no jq.
+          echo "checkouts=${checkouts# }" >> "$GITHUB_OUTPUT"
 
   build:
     needs: version
@@ -187,11 +193,13 @@ jobs:
         with:
           path: ${{ github.event.repository.name }}
       - name: Check out the dependencies
-        if: needs.version.outputs.dependencies != '{}'
+        if: needs.version.outputs.checkouts != ''
         env:
-          DEPENDENCIES: ${{ needs.version.outputs.dependencies }}
+          CHECKOUTS: ${{ needs.version.outputs.checkouts }}
         run: |
-          jq -r 'to_entries[] | "\(.key) \(.value)"' <<< "$DEPENDENCIES" | while read -r repo sha; do
+          for dep in $CHECKOUTS; do
+            repo=${dep%@*}
+            sha=${dep#*@}
             dir=${repo#*/}
             git init -q "$dir"
             git -C "$dir" fetch -q --depth 1 "https://github.com/$repo" "$sha"
