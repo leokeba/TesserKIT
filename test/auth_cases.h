@@ -66,9 +66,24 @@ struct AuthRig : rig::Rig {
     tesserkit::System system{dev};
     tesserkit::Time time{dev};
     tesserkit::Auth auth{dev};
-    std::string login(const char* name, const char* password, Status* status = nullptr) {
+    // Signs in, and waits for the background task's answer.
+    rig::Reply loginReply(const char* name, const char* password, bool* deferred = nullptr) {
         std::string body = std::string("{\"name\":\"") + name + "\",\"password\":\"" + password + "\"}";
-        rig::Reply r = request(anon, Op::Set, "/sys/auth/login", body);
+        auto r = std::make_shared<rig::Reply>();
+        anon.request(Op::Set, "/sys/auth/login", body, [r](Status s, JsonVariantConst b) {
+            r->status = s;
+            r->body.clear();
+            serializeJson(b, r->body);
+            r->done = true;
+        });
+        anon.process();
+        if (deferred) *deferred = !r->done;
+        CHECK(rig::drainBackground());
+        anon.process();
+        return *r;
+    }
+    std::string login(const char* name, const char* password, Status* status = nullptr) {
+        rig::Reply r = loginReply(name, password);
         if (status) *status = r.status;
         return r.status == Status::Ok ? at(r.body, "token").substr(1, at(r.body, "token").size() - 2) : "";
     }
@@ -191,6 +206,89 @@ TEST(auth_brute_force_delay) {
     CHECK_EQ(s, Status::Ok);
     r.login("nobody", "x", &s);
     CHECK_EQ(s, Status::Unauthorized);
+}
+
+// Holds TesserAPI's background task until release(), so the sign-ins queued
+// behind it wait, deterministically.
+struct Gate {
+    std::shared_ptr<std::atomic<bool>> open = std::make_shared<std::atomic<bool>>(false);
+    Gate() {
+        auto o = open;
+        CHECK(tesser::background([o] {
+            for (int i = 0; i < 5000 && !*o; i++) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }));
+    }
+    void release() { *open = true; }
+    ~Gate() { release(); }
+};
+
+TEST(auth_login_is_answered_off_the_lock) {
+    AuthRig r;
+    r.fake.clock.epoch = 1782907200000;
+    r.auth.defaultAdmin("admin", "hunter22");
+    CHECK(r.dev.begin());
+    auto send = [&r](const char* name, const char* password) {
+        auto out = std::make_shared<rig::Reply>();
+        std::string body = std::string("{\"name\":\"") + name + "\",\"password\":\"" + password + "\"}";
+        r.anon.request(Op::Set, "/sys/auth/login", body, [out](Status s, JsonVariantConst b) {
+            out->status = s;
+            serializeJson(b, out->body);
+            out->done = true;
+        });
+        r.anon.process();
+        return out;
+    };
+    {
+        Gate gate;
+        auto wrong = send("admin", "nope");
+        auto nobody = send("nobody", "x");
+        auto right = send("admin", "hunter22");  // checked last: failures start again from 0
+        // Deferred: the API answers others meanwhile.
+        CHECK(!right->done && !wrong->done && !nobody->done);
+        CHECK_EQ(r.get("/sys/auth/open").body, "false");
+        gate.release();
+        CHECK(rig::drainBackground());
+        r.anon.process();
+        CHECK_EQ(right->status, Status::Ok);
+        CHECK_EQ(at(right->body, "access"), "\"admin\"");
+        std::string token = at(right->body, "token");
+        CHECK_EQ(r.dev.api().tokenAccess(token.substr(1, token.size() - 2)), Access::Admin);
+        CHECK_EQ(wrong->status, Status::Unauthorized);
+        CHECK_EQ(nobody->status, Status::Unauthorized);
+    }
+    {
+        // Sign-ins being checked count toward the lockout: no more than five
+        // are tried before it.
+        r.dev.api().config().maxPending = 8;
+        Gate gate;
+        std::vector<std::shared_ptr<rig::Reply>> tries;
+        for (int i = 0; i < 5; i++) tries.push_back(send("admin", "wrong"));
+        auto sixth = send("admin", "hunter22");
+        CHECK(sixth->done);
+        CHECK_EQ(sixth->status, Status::Busy);
+        gate.release();
+        CHECK(rig::drainBackground());
+        r.anon.process();
+        for (auto& t : tries) CHECK_EQ(t->status, Status::Unauthorized);
+        Status s;
+        r.login("admin", "hunter22", &s);
+        CHECK_EQ(s, Status::Busy);  // locked out
+    }
+    {
+        // An account changed while its password was being checked: refused.
+        r.run(31000);  // past the lockout
+        Gate gate;
+        auto stale = send("admin", "hunter22");
+        CHECK(!stale->done);
+        CHECK_EQ(r.set("/sys/auth/users/admin/password", "\"other-pw\"").status, Status::Ok);
+        gate.release();
+        CHECK(rig::drainBackground());
+        r.anon.process();
+        CHECK_EQ(stale->status, Status::Unauthorized);
+        Status s;
+        r.login("admin", "other-pw", &s);
+        CHECK_EQ(s, Status::Ok);
+    }
 }
 
 TEST(auth_whoami_and_schema) {

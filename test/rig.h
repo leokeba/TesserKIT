@@ -1,9 +1,12 @@
 // A device on the fake platform, and request helpers, for the host tests.
 #pragma once
 
+#include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include <ArduinoJson.h>
@@ -16,6 +19,18 @@ namespace rig {
 
 using tesser::Op;
 using tesser::Status;
+
+// Waits, up to 5 s, until TesserAPI's background task (a thread on the host)
+// has run every job queued before: then none still holds a service or the
+// API, and a rig can be destroyed. False if it didn't.
+inline bool drainBackground() {
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    for (int i = 0; i < 5000 && !tesser::background([done] { *done = true; }); i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));  // its 8 places are taken
+    }
+    for (int i = 0; i < 5000 && !*done; i++) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    return *done;
+}
 
 struct Reply {
     Status status = Status::Internal;

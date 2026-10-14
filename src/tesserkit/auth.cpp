@@ -19,6 +19,11 @@ constexpr const char* kHashPrefix = "$pbkdf2-sha256$";
 constexpr size_t kSaltBytes = 16;
 constexpr size_t kHashBytes = 32;
 constexpr size_t kMacBytes = 16;  // of a token's signature
+// What a sign-in with an unknown name is checked against: as slow as an
+// account's hash, and matched by no password.
+constexpr const char* kDummyHash =
+    "$pbkdf2-sha256$2000$00000000000000000000000000000000$"
+    "0000000000000000000000000000000000000000000000000000000000000000";
 
 }  // namespace
 
@@ -216,34 +221,59 @@ Access Auth::check(std::string_view token) {
 }
 
 void Auth::login(const Credentials& c, tesser::Call& call) {
+    // Under the API lock: the lockout, and a copy of what the check needs.
+    // The key derivation (about 280 ms on a classic ESP32) runs on
+    // TesserAPI's background task without the lock, so every transport goes
+    // on meanwhile (docs/DESIGN.md section 5.7).
     uint32_t now = static_cast<uint32_t>(dev_.core().uptimeMs());
     if (lockedUntilMs_ && static_cast<int32_t>(now - lockedUntilMs_) < 0) {
         return call.fail(Status::Busy, "too many failed sign-ins: wait 30 s");
     }
     lockedUntilMs_ = 0;
+    // Sign-ins being checked count as failures to come, so no more than
+    // kMaxFailures are tried before the lockout.
+    if (failures_ + checking_ >= kMaxFailures) return call.fail(Status::Busy, "sign-ins being checked: try again");
     const User* u = find(c.name);
-    // The hash is computed even for an unknown name, so timing doesn't tell
-    // which names exist.
-    bool ok = verify(c.password, u ? u->password : hash(""));
-    if (!u || !ok) {
-        if (++failures_ >= kMaxFailures) {
-            failures_ = 0;
-            lockedUntilMs_ = now + kLockoutMs;
-            if (!lockedUntilMs_) lockedUntilMs_ = 1;
+    std::string stored = u ? u->password : std::string();
+    tesser::Pending p = call.defer();
+    if (!p) return;  // refused (too many pending, or a transport that can't wait): the call says why
+    checking_++;
+    bool queued = tesser::background([this, p, name = c.name, password = c.password, stored, now]() mutable {
+        // The hash is computed even for an unknown name, so timing doesn't
+        // tell which names exist.
+        bool ok = verify(password, stored.empty() ? std::string(kDummyHash) : stored) && !stored.empty();
+        std::string t;
+        const char* level = "user";
+        {
+            tesser::Lock lock(dev_.api());
+            checking_--;
+            const User* user = find(name);
+            ok = ok && user && user->password == stored;  // the account didn't change meanwhile
+            if (ok) {
+                failures_ = 0;
+                t = token(user->name);
+                if (user->role == Role::Admin) level = "admin";
+            } else if (++failures_ >= kMaxFailures) {
+                failures_ = 0;
+                lockedUntilMs_ = now + kLockoutMs;
+                if (!lockedUntilMs_) lockedUntilMs_ = 1;
+            }
         }
-        return call.fail(Status::Unauthorized, "wrong name or password");
-    }
-    failures_ = 0;
-    std::string t = token(u->name);
-    const char* level = u->role == Role::Admin ? "admin" : "user";
-    call.replyWith([&t, level](tesser::JsonWriter& w) {
-        w.beginObject();
-        w.key("token");
-        w.string(t);
-        w.key("access");
-        w.string(level);
-        w.endObject();
+        // Answered without the lock: a Pending may be answered from any task.
+        if (!ok) return p.fail(Status::Unauthorized, "wrong name or password");
+        p.replyWith([&t, level](tesser::JsonWriter& w) {
+            w.beginObject();
+            w.key("token");
+            w.string(t);
+            w.key("access");
+            w.string(level);
+            w.endObject();
+        });
     });
+    if (!queued) {
+        checking_--;
+        p.fail(Status::Busy, "busy");
+    }
 }
 
 }  // namespace tesserkit

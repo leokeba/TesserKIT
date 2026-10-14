@@ -74,6 +74,7 @@ private:
     tesser::Node* openNode_ = nullptr;
     bool wasOpen_ = true;
     int failures_ = 0;
+    int checking_ = 0;  // sign-ins on TesserAPI's background task
     uint32_t lockedUntilMs_ = 0;
     const char* defaultName_ = nullptr;
     const char* defaultPassword_ = nullptr;
