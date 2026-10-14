@@ -145,6 +145,11 @@ public:
         return esp_netif_get_ip_info(ap_, &ip) == ESP_OK ? esp::fromNetwork(ip.ip.addr) : 0;
     }
 
+    int32_t apClients() override {
+        wifi_sta_list_t list;
+        return esp_wifi_ap_get_sta_list(&list) == ESP_OK ? list.num : 0;
+    }
+
     void captivePortal(bool on) override {
         uint32_t ip = apIp();
         if (on) {
@@ -173,9 +178,8 @@ private:
             e.type = Event::Type::StaDisconnected;
             e.value = static_cast<const wifi_event_sta_disconnected_t*>(data)->reason;
         } else if (id == WIFI_EVENT_AP_STACONNECTED || id == WIFI_EVENT_AP_STADISCONNECTED) {
-            wifi_sta_list_t list;
             e.type = Event::Type::ApClients;
-            e.value = esp_wifi_ap_get_sta_list(&list) == ESP_OK ? list.num : 0;
+            e.value = self->apClients();
         } else {
             return;
         }
@@ -189,6 +193,8 @@ private:
     esp_netif_t* sta_ = nullptr;
     esp_netif_t* ap_ = nullptr;
     std::string hostname_;
+    // Joined with an address: set by the events themselves, so it holds
+    // whether or not the device's queue took them (staInfo()).
     volatile bool linked_ = false;
 };
 

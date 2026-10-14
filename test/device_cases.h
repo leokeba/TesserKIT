@@ -46,6 +46,72 @@ TEST(device_services_constructed_before_the_device) {
     dev->~Device();
 }
 
+// Records the platform events the device hands its services.
+struct Recorder : tesserkit::Service {
+    std::vector<tesserkit::Event> got;
+    explicit Recorder(tesserkit::Device& d) : Service(d, "recorder") {}
+    void describe(tesser::Object&) override {}
+    size_t count(tesserkit::Event::Type t) const {
+        size_t n = 0;
+        for (const tesserkit::Event& e : got) n += e.type == t ? 1 : 0;
+        return n;
+    }
+
+protected:
+    void event(const tesserkit::Event& e) override { got.push_back(e); }
+};
+
+tesserkit::Event event(tesserkit::Event::Type type, int32_t value = 0, std::string text = {}) {
+    tesserkit::Event e;
+    e.type = type;
+    e.value = value;
+    e.text = std::move(text);
+    return e;
+}
+
+// A burst of MQTT messages while the task stalls (an OTA chunk, a sign-in):
+// they keep a share of the queue, the latest ones, and every other event
+// still gets through.
+TEST(device_event_queue_bounds_mqtt_messages) {
+    using T = tesserkit::Event::Type;
+    rig::Rig r;
+    Recorder rec{r.dev};
+    CHECK(r.dev.begin());
+    r.step();
+    rec.got.clear();
+    for (int i = 0; i < 40; i++) r.dev.post(event(T::MqttMessage, 1, "t" + std::to_string(i)));
+    r.dev.post(event(T::StaDisconnected, 200));
+    for (int i = 0; i < 5; i++) r.dev.post(event(T::PeersChanged));
+    for (int i = 0; i < 5; i++) r.dev.post(event(T::NowTpPeers));
+    r.dev.post(event(T::EthLink, 0));
+    r.step();
+    CHECK_EQ(rec.count(T::MqttMessage), size_t(8));
+    CHECK_EQ(rec.count(T::StaDisconnected), size_t(1));
+    CHECK_EQ(rec.count(T::EthLink), size_t(1));
+    CHECK_EQ(rec.count(T::PeersChanged), size_t(1));  // one pending says it all
+    CHECK_EQ(rec.count(T::NowTpPeers), size_t(1));
+    if (!rec.got.empty()) CHECK_EQ(rec.got[0].text, "t32");  // the latest eight, in order
+    CHECK_EQ(r.dev.mqttMessagesDropped(), 32u);
+
+    // Full of other events: MQTT's messages give way to them, and the queue
+    // still holds 32.
+    rec.got.clear();
+    for (int i = 0; i < 8; i++) r.dev.post(event(T::MqttMessage, 1, "m" + std::to_string(i)));
+    for (int i = 0; i < 30; i++) r.dev.post(event(T::ApClients, i));
+    r.dev.post(event(T::MqttMessage, 1, "late"));
+    r.step();
+    CHECK_EQ(rec.got.size(), size_t(32));
+    CHECK_EQ(rec.count(T::ApClients), size_t(30));
+    CHECK_EQ(rec.count(T::MqttMessage), size_t(2));
+    if (!rec.got.empty()) CHECK_EQ(rec.got.back().text, "late");
+    CHECK_EQ(r.dev.mqttMessagesDropped(), 39u);
+    // Beyond 32 of them, other events are dropped as before.
+    rec.got.clear();
+    for (int i = 0; i < 40; i++) r.dev.post(event(T::ApClients, i));
+    r.step();
+    CHECK_EQ(rec.got.size(), size_t(32));
+}
+
 TEST(device_hostname_from_label_and_mac) {
     SysRig r;
     CHECK(r.dev.begin());

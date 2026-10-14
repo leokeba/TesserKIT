@@ -28,7 +28,10 @@ class UdpLink;
 namespace tesserkit {
 
 // Something a platform task reports (Wi-Fi, SNTP, MQTT). Posted to the device,
-// which hands it to every service in its own task, under the API lock.
+// which hands it to every service in its own task, under the API lock. The
+// device's queue is bounded (Device::post()), so an event can be lost: a
+// service keeps no state that only an edge would correct, and reads the
+// platform's state back instead (Network's link and addresses).
 struct Event {
     enum class Type : uint8_t {
         ScanDone,         // Wifi::scan() finished
@@ -39,13 +42,13 @@ struct Event {
         TimeSynced,       // SNTP set the clock
         MqttConnected,    // value: the session
         MqttDisconnected, // value: the session; text: why
-        MqttMessage,      // value: the session; text: the topic; data: the payload
-        NowTpPeers,       // nodes were found or lost
+        MqttMessage,      // value: the session; text: the topic; data: the payload (at most 8 queued)
+        NowTpPeers,       // nodes were found or lost (one queued at most)
         NowTpChannel,     // value: the channel ESP-NOW moved to
         NowTpPairing,     // value: 0 if the pairing succeeded; text: the other node, or why not
         EthLink,          // value: 1 when the cable's link came up, 0 when it went down
         EthGotIp,         // Ethernet has an address
-        PeersChanged,     // a node under /peers was mounted, got a route, or changed state or route
+        PeersChanged,     // a node under /peers was mounted, got a route, or changed state or route (one queued at most)
         DeviceLost,       // text: the MAC of a device an endpoint lost (Peers::watch()); value: tesser::PeerLoss
         PeerRefused,      // text: the MAC of a device that refused this device's token
     };
@@ -162,11 +165,14 @@ public:
     // Event::StaDisconnected.
     virtual bool connect(const StaConfig& config) = 0;
     virtual void disconnect() = 0;
-    // False while not connected.
+    // False while not connected: the station's state as the platform keeps
+    // it, whatever events the device's queue lost.
     virtual bool staInfo(StaInfo& out) = 0;
     virtual bool startAp(const ApConfig& config) = 0;
     virtual void stopAp() = 0;
     virtual uint32_t apIp() = 0;
+    // Stations joined to the access point now (0 while it is down).
+    virtual int32_t apClients() = 0;
     // A DNS server answering every name with the access point's address, and
     // the HTTP server's 404 handler redirecting to the interface.
     virtual void captivePortal(bool on) = 0;
@@ -213,7 +219,8 @@ public:
     virtual void address(const IpConfig& ip) = 0;
     // Stops the MAC and the PHY (no link), or starts them again.
     virtual void enabled(bool on) = 0;
-    // False before begin().
+    // False before begin(). The link and the address as they are now,
+    // whatever events the device's queue lost.
     virtual bool info(EthInfo& out) = 0;
 };
 

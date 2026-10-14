@@ -8,6 +8,7 @@ namespace network_cases {
 
 using rig::at;
 using rig::Status;
+using tesserkit::Event;
 using tesserkit::State;
 
 struct NetRig : rig::Rig {
@@ -850,7 +851,7 @@ TEST(network_ethernet_link_local_without_dhcp) {
     CHECK(r.dev.begin());
     rig::Events ev(r, "/sys/network/ethernet/joined");
     r.fake.ethernet.plug();  // the address comes without an event
-    r.run(tesserkit::Network::kEthPollMs + 100);
+    r.run(tesserkit::Network::kPollMs + 100);
     CHECK(r.net.ethernetConnected());
     CHECK_EQ(r.value("/sys/network/ethernet/status/ip"), "\"169.254.10.11\"");
     CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"connected, link-local address (no DHCP server)\"");
@@ -919,6 +920,121 @@ TEST(network_station_waits_for_ethernet_in_words) {
     r.fake.ethernet.plug();
     r.settle();
     CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"waiting for DHCP\"");
+}
+
+// Events lost by the device's queue (full during a burst and a stall): the
+// interfaces' state is read back from the platform.
+
+// Loses the events `lose` matches, from now on.
+inline void lossy(tesserkit::EventSink& sink, std::function<bool(const tesserkit::Event&)> lose) {
+    tesserkit::EventSink real = sink;
+    sink = [real, lose](tesserkit::Event e) {
+        if (!lose(e)) real(std::move(e));
+    };
+}
+
+TEST(network_lost_unplug_still_brings_the_station) {
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    r.run(10000);
+    CHECK(r.net.ethernetConnected());
+    CHECK(!r.net.connected());  // fallback: kept away by the lease
+    lossy(r.fake.ethernet.sink, [](const tesserkit::Event& e) { return e.type == Event::Type::EthLink; });
+    r.fake.ethernet.unplug();  // EthLink(0) lost
+    r.run(tesserkit::Network::kPollMs + 500);
+    CHECK(!r.net.ethernetConnected());
+    CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"no cable\"");
+    CHECK(r.net.connected());
+    CHECK_EQ(r.dev.address(), 0xC0A80132u);
+    // Plugged again, its events lost too: the lease is found, and the
+    // station leaves.
+    lossy(r.fake.ethernet.sink, [](const tesserkit::Event&) { return true; });
+    r.fake.ethernet.plug();
+    r.run(tesserkit::Network::kPollMs + 500);
+    CHECK(r.net.ethernetConnected());
+    CHECK(!r.net.connected());
+    CHECK_EQ(r.dev.address(), 0xC0A8013Cu);
+}
+
+TEST(network_lost_disconnection_is_caught_up) {
+    NetRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK(r.net.connected());
+    int connects = r.fake.wifi.connects;
+    tesserkit::EventSink sink = r.fake.wifi.sink;
+    lossy(r.fake.wifi.sink, [](const tesserkit::Event& e) { return e.type == Event::Type::StaDisconnected; });
+    r.fake.wifi.air.clear();  // the router goes
+    r.fake.wifi.drop();       // its StaDisconnected lost
+    r.fake.wifi.sink = sink;
+    r.run(tesserkit::Network::kPollMs + 500);
+    CHECK(!r.net.connected());
+    CHECK_EQ(r.value("/sys/network/wifi/status/connected"), "false");
+    CHECK_EQ(r.dev.state(), State::Connecting);
+    CHECK(r.fake.wifi.connects > connects);  // trying again
+    r.air("Home", "password1");  // back: joined at a retry
+    r.run(10000);
+    CHECK(r.net.connected());
+    CHECK_EQ(r.dev.state(), State::Online);
+}
+
+TEST(network_lost_address_event_is_caught_up) {
+    NetRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    r.fake.wifi.dhcpSilent = true;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK(!r.net.connected());
+    lossy(r.fake.wifi.sink, [](const tesserkit::Event& e) { return e.type == Event::Type::StaGotIp; });
+    r.fake.wifi.giveAddress();  // StaGotIp lost
+    r.run(tesserkit::Network::kPollMs + 100);
+    CHECK(r.net.connected());
+    CHECK_EQ(r.value("/sys/network/wifi/status/ip"), "\"192.168.1.50\"");
+}
+
+TEST(network_access_point_clients_are_read_back) {
+    NetRig r;  // no network saved: the access point is up
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK(r.fake.wifi.apUp);
+    lossy(r.fake.wifi.sink, [](const tesserkit::Event& e) { return e.type == Event::Type::ApClients; });
+    r.fake.wifi.apStations(1);
+    r.run(tesserkit::Network::kPollMs + 100);
+    CHECK_EQ(r.value("/sys/network/ap/status/clients"), "1");
+    r.fake.wifi.apStations(0);
+    r.run(tesserkit::Network::kPollMs + 100);
+    CHECK_EQ(r.value("/sys/network/ap/status/clients"), "0");
+}
+
+// A burst of MQTT messages fills the queue while the task stalls: the
+// station's disconnection still gets through at once, not at the next poll.
+TEST(network_event_gets_through_an_mqtt_flood) {
+    NetRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK(r.net.connected());
+    for (int i = 0; i < 64; i++) {
+        tesserkit::Event m;
+        m.type = Event::Type::MqttMessage;
+        m.value = 1;
+        m.text = "tesser/x/led/on/set";
+        m.data = "true";
+        r.dev.post(m);
+    }
+    // The platform still says joined (linked): only the event can tell.
+    r.fake.wifi.post(Event::Type::StaDisconnected, 200);
+    r.step();
+    CHECK(!r.net.connected());
+    r.settle();
+    CHECK(r.net.connected());  // joined again
 }
 
 }  // namespace network_cases

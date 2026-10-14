@@ -89,9 +89,11 @@ public:
     // The station waits this long for Ethernet at start and after its link
     // comes up (time for DHCP), before joining a network.
     static constexpr uint32_t kEthWaitMs = 5000;
-    // How often an address that came without an event is looked for
-    // (link-local, from AutoIP).
-    static constexpr uint32_t kEthPollMs = 1000;
+    // How often the interfaces' state is read back from the platform: the
+    // link, the addresses and the access point's clients. Events only make
+    // a change known sooner: one the device's queue lost (or an address that
+    // came without one, link-local from AutoIP) is caught up within this.
+    static constexpr uint32_t kPollMs = 1000;
 
 protected:
     void start() override;
@@ -115,6 +117,8 @@ private:
     void ethGotIp(uint32_t nowMs);
     void ethDown(uint32_t nowMs, uint32_t waitMs = 0);
     void ethReaddress(uint32_t nowMs);
+    void poll(uint32_t nowMs);
+    void setApClients(int32_t n);
     bool stationKeptAway() const;
     bool ethWaits(uint32_t nowMs) const;
     void applyStation(uint32_t nowMs);
@@ -199,11 +203,12 @@ private:
     bool ethOnline_ = false;  // with an address
     bool ethLease_ = false;   // from DHCP (not static, not link-local)
     bool ethStaticOn_ = false;  // a static address is applied
-    uint32_t ethPollAtMs_ = 0;
     std::string ethState_;      // ethernet/status/state
     uint32_t ethWaitUntilMs_ = 0;  // the station waits for Ethernet until then
     std::string ethIp_, ethMac_;
     uint16_t ethMbps_ = 0;
+
+    uint32_t polledAtMs_ = 0;  // poll()
 
     // Addresses, for Device::address().
     uint32_t staAddr_ = 0, ethAddr_ = 0, apAddr_ = 0;

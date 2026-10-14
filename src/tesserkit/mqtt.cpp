@@ -188,6 +188,11 @@ void Mqtt::describe(tesser::Object& o) {
     s.value("error", static_cast<const std::string&>(error_)).label("Last error");
     s.value("published", static_cast<const uint32_t&>(published_)).label("Messages published").watch();
     s.value("dropped", static_cast<const uint32_t&>(dropped_)).label("Messages dropped").watch().ui("advanced");
+    s.value("missed", static_cast<const uint32_t&>(missed_))
+        .label("Commands missed")
+        .doc("Received while the device's queue was full, and dropped")
+        .watch()
+        .ui("advanced");
 #if !defined(TESSERKIT_NO_HOME_ASSISTANT)
     entitiesNode_ = &s.value("entities", static_cast<const uint32_t&>(entities_))
                          .label("Home Assistant entities")
@@ -217,6 +222,7 @@ void Mqtt::start() {
 }
 
 void Mqtt::tick(uint32_t nowMs) {
+    missed_ = dev_.mqttMessagesDropped();
     if (commander_) commander_->process();
     for (Bridge& b : bridges_) b.client->process();
     uint32_t gen = settingsGen();

@@ -725,13 +725,57 @@ void Network::event(const Event& e) {
             }
             break;
         case Event::Type::ApClients:
-            apClients_ = e.value;
-            dev_.apClients(e.value);
-            apStatus_->changed();
+            if (apUp_) setApClients(e.value);
             break;
         default:
             break;
     }
+}
+
+// The interfaces' state as the platform keeps it. The events that report
+// it pass through the device's bounded queue, which a burst (MQTT's retained
+// commands, peers flapping) during a long stall of the device's task (an OTA
+// chunk, a sign-in) can fill: a lost edge is caught up here, so a dead cable
+// or a lost access point can't keep the station away or the device online.
+void Network::poll(uint32_t nowMs) {
+    if (eth_) {
+        EthInfo i;
+        if (eth_->info(i)) {
+            if (!i.link) {
+                if (ethLink_) ethLink(false, nowMs);
+            } else {
+                if (!ethLink_) ethLink(true, nowMs);
+                if (i.ip && (!ethOnline_ || i.ip != ethAddr_)) {
+                    ethGotIp(nowMs);  // a new address: link-local (AutoIP posts no event), or a lost EthGotIp
+                } else if (!i.ip && ethOnline_) {
+                    tesser::logWarning("tesserkit: Ethernet lost its address");
+                    ethDown(nowMs, kEthWaitMs);  // DHCP may give it back
+                }
+            }
+        }
+    }
+    StaInfo info;
+    if (sta_ == Sta::Connected) {
+        if (!wifi_->staInfo(info)) {
+            tesser::logWarning("tesserkit: lost \"%s\"", linkSsid_.c_str());
+            lost(nowMs);
+            join(nowMs);
+        } else if (info.ip && info.ip != staAddr_) {
+            staAddr_ = info.ip;
+            linkIp_ = formatIpv4(info.ip);
+            staStatus_->changed();
+        }
+    } else if (sta_ == Sta::Connecting && associated_ && wifi_->staInfo(info) && info.ip) {
+        connected(nowMs);  // its address came, though the event didn't
+    }
+    if (apUp_) setApClients(wifi_->apClients());
+}
+
+void Network::setApClients(int32_t n) {
+    if (n == apClients_) return;
+    apClients_ = n;
+    dev_.apClients(n);
+    apStatus_->changed();
 }
 
 void Network::checkSettings(uint32_t nowMs) {
@@ -883,10 +927,9 @@ void Network::tick(uint32_t nowMs) {
             scanWaiters_.clear();
         }
     }
-    // An address without an event: link-local, while DHCP keeps asking.
-    if (eth_ && ethLink_ && !ethOnline_ && nowMs - ethPollAtMs_ >= kEthPollMs) {
-        ethPollAtMs_ = nowMs;
-        ethGotIp(nowMs);
+    if (nowMs - polledAtMs_ >= kPollMs) {
+        polledAtMs_ = nowMs;
+        poll(nowMs);
     }
     updateAp(nowMs);
     reportState();

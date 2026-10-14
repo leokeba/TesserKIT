@@ -208,9 +208,23 @@ void Device::loop() {
     uint32_t now = static_cast<uint32_t>(core().uptimeMs());
     lastNowMs_ = now;
     std::vector<Event> events;
+    uint32_t dropped, mqttDropped;
     {
         tesser::MutexGuard guard(eventsMutex_);
         events.swap(events_);
+        mqttQueued_ = 0;
+        dropped = dropped_;
+        mqttDropped = mqttDropped_;
+    }
+    // Told here rather than in post(), which runs in the platform's tasks.
+    if (dropped != droppedLogged_) {
+        tesser::logWarning("tesserkit: event queue full: %u events dropped", static_cast<unsigned>(dropped - droppedLogged_));
+        droppedLogged_ = dropped;
+    }
+    if (mqttDropped != mqttDroppedSeen_) {
+        tesser::logWarning("tesserkit: event queue full: %u MQTT messages dropped",
+                           static_cast<unsigned>(mqttDropped - mqttDroppedSeen_));
+        mqttDroppedSeen_ = mqttDropped;
     }
     State before = state_;
     {
@@ -246,10 +260,37 @@ void Device::poll() {
 
 void Device::post(Event e) {
     tesser::MutexGuard guard(eventsMutex_);
-    if (events_.size() >= 32) {
-        tesser::logWarning("tesserkit: event queue full, dropping one");
+    // A flag: one pending says it all.
+    if (e.type == Event::Type::PeersChanged || e.type == Event::Type::NowTpPeers) {
+        for (const Event& q : events_) {
+            if (q.type == e.type) return;
+        }
+    }
+    // MQTT's messages can come in bursts (a broker's retained commands at
+    // each connection): they have a share of the queue, and give way to
+    // every other event. The oldest goes: the latest command for a topic
+    // is the one that counts.
+    bool mqtt = e.type == Event::Type::MqttMessage;
+    if (mqttQueued_ > 0 && ((mqtt && mqttQueued_ >= kMaxMqttMessages) || events_.size() >= kMaxEvents)) {
+        for (auto it = events_.begin(); it != events_.end(); ++it) {
+            if (it->type != Event::Type::MqttMessage) continue;
+            events_.erase(it);
+            mqttQueued_--;
+            mqttDropped_++;
+            break;
+        }
+    }
+    if (events_.size() >= kMaxEvents) {
+        // Full of other events: what keeps state reads it back from the
+        // platform (Network), so a lost edge is late, not lost.
+        if (mqtt) {
+            mqttDropped_++;
+        } else {
+            dropped_++;
+        }
         return;
     }
+    if (mqtt) mqttQueued_++;
     events_.push_back(std::move(e));
 }
 

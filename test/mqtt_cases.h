@@ -146,6 +146,19 @@ TEST(mqtt_commands_write_with_user_access) {
     CHECK(r.on);
 }
 
+// The broker's retained commands, all at once while the device's task is
+// busy: the latest eight are kept, the others counted in status/missed.
+TEST(mqtt_burst_of_commands_keeps_the_latest) {
+    MqttRig r;
+    r.online();
+    std::string p = r.pre();
+    CHECK_EQ(r.value("/sys/mqtt/status/missed"), "0");
+    for (int i = 1; i <= 40; i++) r.fake.mqtt.message(p + "/led/brightness/set", std::to_string(i));
+    r.settle();
+    CHECK_EQ(r.brightness, 40);
+    CHECK_EQ(r.value("/sys/mqtt/status/missed"), "32");
+}
+
 TEST(mqtt_follows_the_connection) {
     MqttRig r;
     r.online();

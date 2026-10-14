@@ -181,6 +181,8 @@ private:
     esp_eth_handle_t handle_ = nullptr;
     esp_netif_t* netif_ = nullptr;
     std::string hostname_;
+    // Set by the link's events themselves, so it holds whether or not the
+    // device's queue took them (info()).
     volatile bool link_ = false;
     bool running_ = false;
 };

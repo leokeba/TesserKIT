@@ -88,6 +88,7 @@ private:
     bool connected_ = false;
     std::string error_;
     uint32_t published_ = 0, dropped_ = 0;
+    uint32_t missed_ = 0;  // Device::mqttMessagesDropped()
     uint32_t entities_ = 0;
     tesser::Node* entitiesNode_ = nullptr;
     tesser::Node* status_ = nullptr;

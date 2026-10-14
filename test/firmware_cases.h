@@ -187,16 +187,11 @@ TEST(firmware_confirmed_through_the_access_point) {
     CHECK(r.fake.wifi.apUp);
     CHECK_EQ(r.dev.state(), State::Connecting);
     CHECK_EQ(r.fake.ota.confirms, 0);
-    tesserkit::Event joined;
-    joined.type = tesserkit::Event::Type::ApClients;
-    joined.value = 1;
-    r.dev.post(joined);
+    r.fake.wifi.apStations(1);
     r.run(30000);
-    tesserkit::Event left = joined;
-    left.value = 0;
-    r.dev.post(left);  // the phone leaves: the minute starts again
+    r.fake.wifi.apStations(0);  // the phone leaves: the minute starts again
     r.run(1000);
-    r.dev.post(joined);
+    r.fake.wifi.apStations(1);
     r.run(59000);
     CHECK_EQ(r.fake.ota.confirms, 0);
     r.run(1500);

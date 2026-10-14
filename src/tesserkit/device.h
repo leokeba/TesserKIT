@@ -168,8 +168,14 @@ public:
     const uint8_t* addressMac() const;
 
     // Used by services.
-    // Queues a platform event for the device's task. Thread-safe.
+    // Queues a platform event for the device's task. Thread-safe. The queue
+    // holds 32 events, at most 8 of them MqttMessage (the oldest is dropped
+    // for a newer one, and for any other event when the queue is full), and
+    // one PeersChanged and one NowTpPeers. Drops are logged by the task.
     void post(Event e);
+    // MQTT messages dropped so far because the queue was full, as of the
+    // task's last period (Mqtt's status/missed).
+    uint32_t mqttMessagesDropped() const { return mqttDroppedSeen_; }
     // The network's part of the state: Provisioning, Connecting or Online.
     // Without a Network service, a started device is Online.
     void networkState(State s);
@@ -231,8 +237,13 @@ private:
     uint32_t restartAtMs_ = 0;
     tesser::MemoryStorage* erased_ = nullptr;  // after factoryReset(): saves go nowhere
 
+    static constexpr size_t kMaxEvents = 32;
+    static constexpr size_t kMaxMqttMessages = 8;
     tesser::Mutex eventsMutex_;  // never held with the API lock
-    std::vector<Event> events_;
+    std::vector<Event> events_;  // and the counters below, under eventsMutex_
+    size_t mqttQueued_ = 0;      // MqttMessage events in events_
+    uint32_t dropped_ = 0, mqttDropped_ = 0;
+    uint32_t droppedLogged_ = 0, mqttDroppedSeen_ = 0;  // the device's task's copies
 
     std::vector<std::function<void(State)>> onState_;
     std::vector<std::function<void(uint32_t)>> onTick_;

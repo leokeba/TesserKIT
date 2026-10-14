@@ -76,6 +76,7 @@ struct Wifi : tesserkit::Wifi {
     bool apUp = false;
     tesserkit::ApConfig ap;
     int apStarts = 0;
+    int32_t clients = 0;  // stations on the access point
     bool captive = false;
 
     void begin(const char* hostname, EventSink s) override {
@@ -102,9 +103,18 @@ struct Wifi : tesserkit::Wifi {
         apStarts++;
         return true;
     }
-    void stopAp() override { apUp = false; }
+    void stopAp() override {
+        apUp = false;
+        clients = 0;
+    }
     uint32_t apIp() override { return 0xC0A80401; }  // 192.168.4.1
+    int32_t apClients() override { return apUp ? clients : 0; }
     void captivePortal(bool on) override { captive = on; }
+    // Phones joined to the access point, or left it.
+    void apStations(int32_t n) {
+        clients = n;
+        post(Event::Type::ApClients, n);
+    }
     // The router went away.
     void drop();
     // DHCP answers, late.
