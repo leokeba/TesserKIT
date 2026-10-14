@@ -464,6 +464,17 @@ void Peers::event(const Event& e) {
     PeerAddress device =
         PeerAddress::fromBytes(reinterpret_cast<const uint8_t*>(e.text.data()), static_cast<uint8_t>(e.text.size()));
     auto reason = static_cast<tesser::PeerLoss>(e.value);
+    // Its frames don't authenticate: another pairing key, or none. Told
+    // even when another route reaches it, since it is a setting to fix;
+    // TesserAPI tells it once until the device is heard again.
+    if (reason == tesser::PeerLoss::AuthFailed) {
+        std::string id = idOf(device), name = id;
+        for (const State& st : states_) {
+            if (st.id == id) name = st.name;
+        }
+        tesser::logWarning("tesserkit: %s: wrong pairing key", name.c_str());
+        lostEvent_->emit(name + ": wrong pairing key");
+    }
     // Gone from one transport, perhaps not from the others (a failover). A
     // restart counts even when the device is back at once: what it held is
     // gone.

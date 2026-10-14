@@ -219,6 +219,21 @@ TEST(peers_device_lost_from_every_transport) {
     if (!r.lost.empty()) CHECK_EQ(r.lost[0], std::string(1, char(0x7c)) + "lost");
 }
 
+// NowTP can't authenticate the node (another pairing key): a toast that says
+// so, though UDP still reaches it, and the device isn't counted as gone.
+TEST(peers_wrong_pairing_key_is_told) {
+    PeersRig r;
+    r.start();
+    r.discoverOverNowTp();
+    r.run(1000);
+    Heard lost(r, "/sys/peers/lost");
+    r.now()->forgetPeer(PeersRig::mac(kPeerMac), tesser::PeerLoss::AuthFailed);
+    r.run(500);
+    CHECK(lost.has("\"lamp-f37c: wrong pairing key\""));
+    CHECK_EQ(r.status("online"), "true");  // over UDP
+    CHECK(r.lost.empty());
+}
+
 TEST(peers_device_restarted_counts_as_lost) {
     PeersRig r;
     r.start();
