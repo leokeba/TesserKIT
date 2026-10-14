@@ -15,6 +15,11 @@ CONFIG_LWIP_MAX_SOCKETS=16
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
 # Size over debuggability, as shipped firmware is built.
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+# Asserts without their file and line strings: about 59 KB of flash on the
+# classic ESP32, which this example needs to keep room for its next update.
+# A failed assert still panics with a backtrace, and the core dump's address
+# gives the file and line (DESIGN.md section 11).
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT=y
 # The console's UART also carries the API (the launcher's USB way): the
 # launcher skips log lines, but one written in the middle of a reply breaks it.
 CONFIG_LOG_DEFAULT_LEVEL_WARN=y
