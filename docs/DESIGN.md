@@ -756,7 +756,7 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 | Item | Budget |
 |---|---|
 | Flash: Device + System + Network + Time + Firmware + Backup, above TesserAPI + TesserUI | ≤ 60 KB (mDNS and the DNS server included; ESP-IDF's Wi-Fi stack excluded, it is in every baseline) |
-| Flash: the UI | TesserUI's bundle, ≤ 50 KB |
+| Flash: the UI | TesserUI's `ui.js`, ≤ 65 KB gzipped (Leo raised it from 60 KB on 2026-10-14; the launcher's `launcher.js` isn't served by devices) |
 | Flash: an application with every first-release service, Wi-Fi and HTTP | ≤ 1.25 MB, to fit Arduino's default partition table |
 | RAM at rest, above Wi-Fi and `esp_http_server` | ≤ 12 KB, the task's stack included |
 | Stack | TesserKIT's task: 6 KB, the HTTP server's 6 KB (Mqtt adds esp-mqtt's task, 6 KB, and its publishing task, 4 KB) |
