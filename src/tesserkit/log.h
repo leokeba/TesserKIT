@@ -1,6 +1,5 @@
 #pragma once
 
-#include <deque>
 #include <string>
 
 #include "tesserkit/device.h"
@@ -23,6 +22,7 @@ public:
     Log& level(LogLevel l);
 
     void describe(tesser::Object& o) override;
+    ~Log() override;
 
     // The recent lines, oldest first, each ending with a newline.
     std::string recent() const;
@@ -33,14 +33,20 @@ protected:
 
 private:
     void keep(const std::string& line);
+    // The ring's bytes from its oldest, into `out` (kept_ bytes).
+    void copyRing(char* out) const;
 
     LogOutput* out_ = nullptr;
     LogLevel level_ = LogLevel::Warn;
     bool levelSet_ = false;
     uint32_t levelGen_ = 0;
     size_t historyBytes_ = 4096;
-    std::deque<std::string> lines_;
-    size_t kept_ = 0;  // bytes in lines_, newlines included
+    // Recent lines in a ring allocated once at start, so keeping a line never
+    // allocates: on a short heap, a log line (often about that very
+    // shortage) must not be what aborts the device.
+    char* ring_ = nullptr;
+    size_t head_ = 0;  // the oldest byte
+    size_t kept_ = 0;  // bytes in the ring, newlines included
     uint32_t dropped_ = 0;
     tesser::Node* levelNode_ = nullptr;
     tesser::Node* droppedNode_ = nullptr;

@@ -1,6 +1,7 @@
 // Log, Battery and Sleep (docs/DESIGN.md section 5.14).
 #pragma once
 
+#include "alloc_cap.h"
 #include "rig.h"
 
 namespace power_cases {
@@ -44,6 +45,35 @@ TEST(log_keeps_recent_lines_for_download) {
     CHECK_EQ(d.body, "I (6) app: line\nI (7) app: line\nI (8) app: line\nI (9) app: line\n");
     CHECK_EQ(r.download("/sys/log/recent", false).status, Status::Unauthorized);
     CHECK_EQ(r.as(tesser::Access::User, Op::Get, "/sys/log/level").status, Status::Unauthorized);
+}
+
+// Keeping lines allocates nothing: on a short heap, a log line (often about
+// that very shortage) mustn't be what aborts the device (a Gledopto did,
+// 2026-10-15, in Log::keep's copy). And the ring wraps, line by line.
+TEST(log_keeps_lines_without_allocating) {
+    LogRig r;
+    r.log.history(256);
+    CHECK(r.dev.begin());
+    r.step();
+    // The lines wait in the fake's queue first: only the device's keeping
+    // of them runs under the cap.
+    for (int i = 0; i < 50; i++) r.fake.log.write("W (" + std::to_string(i) + ") app: a line of some length");
+    {
+        alloccap::Heap h(1024, 0);
+        for (int round = 0; round < 5; round++) r.step();
+        CHECK(h.overruns().empty());
+        if (!h.overruns().empty()) printf("%s\n", h.report().c_str());
+    }
+    std::string recent = r.log.recent();
+    CHECK(recent.size() <= 256);
+    CHECK(recent.size() > 200);
+    CHECK_EQ(recent.substr(recent.size() - 34), "W (49) app: a line of some length\n");
+    CHECK_EQ(recent.find("W (0) "), std::string::npos);
+    CHECK_EQ(recent.substr(0, 3), "W (");  // whole lines only
+    // A line longer than the history is cut to fit.
+    r.fake.log.write(std::string(400, 'x'));
+    r.step();
+    CHECK_EQ(r.log.recent(), std::string(255, 'x') + "\n");
 }
 
 TEST(log_level_applies_and_persists) {

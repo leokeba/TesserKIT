@@ -553,6 +553,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
   recent                file, download only (text/plain, log.txt): the last lines
   dropped               integer: lines lost (advanced)
 ```
+- **Recent lines without allocating:** they are kept in a ring of `history` bytes (default 4096) allocated once at start, so keeping a line never allocates: on a short heap, a log line (often about that very shortage) mustn't be what aborts the device, as it did on a Gledopto with every service and Ethernet during a file upload (2026-10-15, `Log::keep`'s copy). The oldest lines go whole to make room; a line longer than the ring is cut. The download takes a copy reserved from the byte budget, answered `busy` without room.
 
 - **Capture:** the platform's `LogOutput` (§3.3) hooks ESP-IDF's log output (`esp_log_set_vprintf`), which TesserAPI's warnings and errors go through too. Each line still goes to the console; a copy, without its colour codes or newline and cut at 160 characters, waits in a 2 KB ring for TesserKIT's task, which emits up to 16 lines a period as `line` events and keeps the last 4 KB (`log.history(bytes)`) for `recent`. Lines that find the ring full are counted in `dropped`. Lines are assembled from what each call prints, so ESP-IDF's log v2, which prints a line in pieces, works too.
 - **No feedback:** while the service emits, the lines its own task logs aren't captured, so a transport that warns per event can't feed itself.

@@ -1,5 +1,13 @@
 #include "tesserkit/log.h"
 
+#include <stdlib.h>
+#include <string.h>
+
+#include <algorithm>
+#include <memory>
+
+#include "tesser/budget.h"
+
 namespace tesserkit {
 
 using tesser::Access;
@@ -10,6 +18,26 @@ namespace {
 
 constexpr size_t kCaptureBytes = 2048;  // lines waiting for the task
 constexpr int kLinesPerTick = 16;        // the rest wait for the next period
+
+// The recent lines' download: a copy, freed with the transfer.
+class Snapshot : public tesser::FileSource {
+public:
+    Snapshot(char* data, size_t size, tesser::Reservation held) : data_(data), size_(size), held_(std::move(held)) {}
+    ~Snapshot() override { free(data_); }
+    int64_t size() const override { return static_cast<int64_t>(size_); }
+    int read(uint8_t* buf, size_t cap) override {
+        size_t n = std::min(cap, size_ - pos_);
+        memcpy(buf, data_ + pos_, n);
+        pos_ += n;
+        return static_cast<int>(n);
+    }
+
+private:
+    char* data_;
+    size_t size_;
+    size_t pos_ = 0;
+    tesser::Reservation held_;
+};
 const char* const kLevels[] = {"none", "error", "warn", "info", "debug", "verbose"};
 
 }  // namespace
@@ -50,7 +78,19 @@ void Log::describe(tesser::Object& o) {
     o.file("recent")
         .label("Recent lines")
         .contentType("text/plain")
-        .text([this] { return recent(); }, nullptr)
+        .download([this](tesser::FileRequest& r) -> std::unique_ptr<tesser::FileSource> {
+            // A copy taken under the API lock: the ring goes on filling
+            // while the download is sent. Refused when the heap can't hold it.
+            tesser::Reservation held = tesser::reserveBytes(kept_ + 1, true);
+            char* copy = held ? static_cast<char*>(malloc(kept_ + 1)) : nullptr;
+            if (!copy) {
+                r.refuse(Status::Busy, "not enough free memory for the log now");
+                return nullptr;
+            }
+            copyRing(copy);
+            held.settle();
+            return std::unique_ptr<tesser::FileSource>(new Snapshot(copy, kept_, std::move(held)));
+        })
         .ui("filename", "log.txt");
     droppedNode_ = &o.value("dropped", static_cast<const uint32_t&>(dropped_))
                         .label("Lines dropped")
@@ -58,7 +98,13 @@ void Log::describe(tesser::Object& o) {
                         .ui("advanced");
 }
 
+Log::~Log() { free(ring_); }
+
 void Log::start() {
+    if (historyBytes_ && !ring_) {
+        ring_ = static_cast<char*>(malloc(historyBytes_));
+        if (!ring_) tesser::logError("tesserkit: Log couldn't keep recent lines (no memory)");
+    }
     if (!out_) {
         tesser::logError("tesserkit: Log has no log output in this build");
         return;
@@ -93,19 +139,29 @@ void Log::tick(uint32_t nowMs) {
 }
 
 void Log::keep(const std::string& line) {
-    if (!historyBytes_) return;
-    lines_.push_back(line);
-    kept_ += line.size() + 1;
-    while (kept_ > historyBytes_ && !lines_.empty()) {
-        kept_ -= lines_.front().size() + 1;
-        lines_.pop_front();
+    if (!ring_) return;
+    size_t n = std::min(line.size(), historyBytes_ - 1) + 1;  // with its newline
+    // Room by dropping the oldest lines whole.
+    while (kept_ + n > historyBytes_) {
+        size_t i = 0;
+        while (i < kept_ && ring_[(head_ + i) % historyBytes_] != '\n') i++;
+        i = std::min(i + 1, kept_);
+        head_ = (head_ + i) % historyBytes_;
+        kept_ -= i;
     }
+    size_t at = (head_ + kept_) % historyBytes_;
+    for (size_t i = 0; i + 1 < n; i++) ring_[(at + i) % historyBytes_] = line[i];
+    ring_[(at + n - 1) % historyBytes_] = '\n';
+    kept_ += n;
+}
+
+void Log::copyRing(char* out) const {
+    for (size_t i = 0; i < kept_; i++) out[i] = ring_[(head_ + i) % historyBytes_];
 }
 
 std::string Log::recent() const {
-    std::string s;
-    s.reserve(kept_);
-    for (const std::string& l : lines_) s.append(l).push_back('\n');
+    std::string s(kept_, '\0');
+    if (kept_) copyRing(&s[0]);
     return s;
 }
 
