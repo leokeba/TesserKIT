@@ -261,6 +261,30 @@ TEST(peers_status_waits_for_memory) {
     CHECK_EQ(r.status("online"), "false");
 }
 
+// Each device's Peers hooks its own Api: a second one started (and gone)
+// in the same process doesn't take the first's node events.
+TEST(peers_hooks_are_per_device) {
+    PeersRig r;
+    r.peers.order("udp, nowtp");
+    r.start();
+    r.discoverOverNowTp();
+    r.run(1000);
+    {
+        PeersRig other;
+        other.start();
+        other.run(200);
+    }
+    Heard lost(r, "/sys/peers/lost");
+    r.udpUp = false;
+    auto g = r.fetch("/peers/lamp-f37c/lamp/on");
+    r.run(5000);
+    r.nowUp = false;
+    r.now()->forgetPeer(PeersRig::mac(kPeerMac));
+    r.run(1500);
+    CHECK_EQ(r.status("online"), "false");
+    CHECK(lost.has("\"lamp-f37c\""));
+}
+
 TEST(peers_device_restarted_counts_as_lost) {
     PeersRig r;
     r.start();

@@ -129,7 +129,11 @@ void describe(tesser::Object& o, PeerAccount& a) {
 
 Peers::Peers(Device& dev) : Service(dev, "peers") {}
 
-Peers::~Peers() = default;
+Peers::~Peers() {
+    tesser::RemoteHooks& hooks = dev_.api().remoteHooks();
+    if (stateHook_) hooks.remove(stateHook_);
+    if (accessHook_) hooks.remove(accessHook_);
+}
 
 Peers& Peers::order(const char* order) {
     order_ = order ? order : "";
@@ -205,13 +209,16 @@ void Peers::start() {
     Device& dev = dev_;
     // One hook for every node: wakes refresh() rather than touching the tree
     // from the endpoint's task.
-    RemoteNode::onStateChange([&dev](RemoteNode&) {
+    // This device's Api's hooks, not the process-wide ones: a second Device
+    // or Peers (a simulator, two-device tests) keeps its own.
+    tesser::RemoteHooks& hooks = dev_.api().remoteHooks();
+    stateHook_ = hooks.onStateChange([&dev](RemoteNode&) {
         Event e;
         e.type = Event::Type::PeersChanged;
         dev.post(std::move(e));
     });
     // A token refused (expired, revoked): sign in again.
-    RemoteNode::onAccess([&dev](RemoteNode& n, Status s, Access level) {
+    accessHook_ = hooks.onAccess([&dev](RemoteNode& n, Status s, Access level) {
         if (s != Status::Ok || level != Access::Public) return;
         PeerAddress device = n.device();
         Event e;
@@ -247,7 +254,7 @@ std::vector<tesser::DatagramEndpoint*> Peers::endpoints() const {
 void Peers::applyDefaultOrder() {
     std::vector<RouteKind> order;
     if (!parseOrder(order_, order)) order.clear();  // a bad factory default: the order found
-    RemoteNode::setDefaultRouteOrder(order);
+    dev_.api().remoteHooks().setRouteOrder(order);
 }
 
 const PeerSettings* Peers::settingsFor(const PeerAddress& device) const {

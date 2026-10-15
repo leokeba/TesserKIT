@@ -128,6 +128,7 @@ private:
     std::vector<std::string> declared_; // "id address" pairs done (nodes are never removed)
     tesser::Object* peers_ = nullptr;
     bool dirty_ = false;
+    uint32_t stateHook_ = 0, accessHook_ = 0;  // ids in the Api's RemoteHooks
     uint32_t refreshedMs_ = 0;
 
     tesser::Node* orderNode_ = nullptr;
