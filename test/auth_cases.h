@@ -110,6 +110,7 @@ TEST(auth_passwords_are_hashed) {
     CHECK(r.dev.begin());
     r.set("/sys/auth/users", "[{\"name\":\"ann\",\"password\":\"s3cret\",\"role\":\"admin\"}]");
     CHECK_EQ(r.value("/sys/auth/users/ann/password"), "null");  // never readable
+    CHECK(rig::drainBackground());  // the hash
     r.run(2500);
     const std::string& saved = r.storage.records["sys"];
     CHECK(saved.find("s3cret") == std::string::npos);
@@ -172,6 +173,7 @@ TEST(auth_tokens_survive_restarts) {
         CHECK(r.dev.begin());
         token = r.login("admin", "pw");
         r.set("/sys/auth/users/admin/password", "\"changed\"");
+        CHECK(rig::drainBackground());
         r.run(2500);
         saved = r.storage.records;
     }
@@ -291,6 +293,88 @@ TEST(auth_login_is_answered_off_the_lock) {
     }
 }
 
+// The hash a stored record holds for `name` (secrets don't read back).
+std::string storedHash(AuthRig& r, const char* name) {
+    JsonDocument doc;
+    deserializeJson(doc, r.storage.records["sys"]);
+    for (JsonVariantConst u : doc["auth"]["users"].as<JsonArrayConst>()) {
+        if (std::string(u["name"] | "") == name) return u["password"] | "";
+    }
+    return "";
+}
+
+// Writing a password hashes it on the background task, as a sign-in does:
+// not under the API lock. Until the hash lands, the new password is the
+// account's, and the old hash is what's stored.
+TEST(auth_password_writes_hash_off_the_lock) {
+    AuthRig r;
+    r.auth.defaultAdmin("admin", "pw");
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.set("/sys/auth/users/admin/password", "\"old-pw\"").status, Status::Ok);
+    CHECK(rig::drainBackground());
+    r.run(2500);
+    CHECK(r.auth.verify("old-pw", storedHash(r, "admin")));
+    std::shared_ptr<rig::Reply> during;
+    {
+        Gate gate;  // the background task is busy
+        CHECK_EQ(r.set("/sys/auth/users/admin/password", "\"new-pw\"").status, Status::Ok);
+        r.run(2500);  // saved meanwhile: never the plain text
+        CHECK(r.storage.records["sys"].find("new-pw") == std::string::npos);
+        CHECK(r.auth.verify("old-pw", storedHash(r, "admin")));
+        during = std::make_shared<rig::Reply>();
+        r.anon.request(Op::Set, "/sys/auth/login", "{\"name\":\"admin\",\"password\":\"new-pw\"}",
+                       [during](Status s, JsonVariantConst) {
+                           during->status = s;
+                           during->done = true;
+                       });
+        r.anon.process();
+        CHECK(!during->done);
+    }
+    CHECK(rig::drainBackground());
+    r.anon.process();
+    CHECK_EQ(during->status, Status::Ok);  // the pending password was the account's
+    r.run(2500);
+    CHECK(r.auth.verify("new-pw", storedHash(r, "admin")));
+    Status s;
+    r.login("admin", "old-pw", &s);
+    CHECK_EQ(s, Status::Unauthorized);
+    r.login("admin", "new-pw", &s);
+    CHECK_EQ(s, Status::Ok);
+
+    // A new account whose password comes before its name in the patch.
+    CHECK_EQ(r.set("/sys/auth/users", "[{\"name\":\"admin\"},{\"password\":\"carl-pw\",\"name\":\"carl\"}]").status,
+             Status::Ok);
+    CHECK(rig::drainBackground());
+    r.run(2500);
+    CHECK(r.auth.verify("carl-pw", storedHash(r, "carl")));
+    r.login("carl", "carl-pw", &s);
+    CHECK_EQ(s, Status::Ok);
+
+    // A refused patch changes nothing, the pending password included.
+    CHECK_EQ(r.set("/sys/auth/users/carl", "{\"password\":\"x\",\"role\":\"boss\"}").status, Status::InvalidValue);
+    r.login("carl", "x", &s);
+    CHECK_EQ(s, Status::Unauthorized);
+    r.login("carl", "carl-pw", &s);
+    CHECK_EQ(s, Status::Ok);
+}
+
+// With the background queue full, a password is hashed at once, as before.
+TEST(auth_password_write_with_a_full_queue) {
+    AuthRig r;
+    r.auth.defaultAdmin("admin", "old-pw");
+    CHECK(r.dev.begin());
+    {
+        Gate gate;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));  // the gate runs: 8 places left
+        int queued = 0;
+        while (queued < 16 && tesser::background([] {})) queued++;
+        CHECK_EQ(r.set("/sys/auth/users/admin/password", "\"new-pw\"").status, Status::Ok);
+        r.run(2500);
+        CHECK(r.auth.verify("new-pw", storedHash(r, "admin")));
+    }
+    CHECK(rig::drainBackground());
+}
+
 TEST(auth_whoami_and_schema) {
     AuthRig r;
     r.auth.defaultAdmin("admin", "pw");
@@ -319,6 +403,7 @@ TEST(auth_backup_restores_hashes) {
         R r;
         CHECK(r.dev.begin());
         r.set("/sys/auth/users", "[{\"name\":\"admin\",\"password\":\"kept-password\",\"role\":\"admin\"}]");
+        CHECK(rig::drainBackground());
         saved = r.download("/sys/backup/settings").body;
     }
     R r;

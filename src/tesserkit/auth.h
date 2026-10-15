@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -17,6 +18,11 @@ struct User {
     char name[25] = "";
     std::string password;
     Role role = Role::User;
+    // Not described (so not persisted): a new password whose hash is being
+    // computed on TesserAPI's background task, which is the account's
+    // password meanwhile, and the write `password` or `pending` came from.
+    std::string pending;
+    uint32_t write = 0;
 };
 
 // What /sys/auth/login takes.
@@ -32,6 +38,8 @@ void describe(tesser::Object& o, Credentials& c);
 class Auth : public Service {
 public:
     explicit Auth(Device& dev) : Service(dev, "auth") {}
+    // Waits for its jobs on TesserAPI's background task.
+    ~Auth() override;
 
     // A factory default account (role admin), so a device shipped to others
     // has no open window. Before Device::begin().
@@ -62,6 +70,8 @@ protected:
 
 private:
     void login(const Credentials& c, tesser::Call& call);
+    void setPassword(User& u, const std::string& v);
+    std::string hashWith(std::string_view password, const uint8_t* salt) const;
     std::string sign(std::string_view payload) const;
     void newKey();
     const User* find(std::string_view name) const;
@@ -71,6 +81,9 @@ private:
     std::string key_;  // hex, signs tokens
     int32_t sessionHours_ = 168;
     tesser::Node* keyNode_ = nullptr;
+    tesser::Node* usersNode_ = nullptr;
+    uint32_t writes_ = 0;           // password writes, under the API lock
+    std::atomic<int> jobs_{0};      // on the background task
     tesser::Node* openNode_ = nullptr;
     bool wasOpen_ = true;
     int failures_ = 0;

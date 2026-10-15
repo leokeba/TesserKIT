@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <array>
+#include <chrono>
+#include <thread>
+
 #include "tesserkit/crypto.h"
 #include "tesserkit/time_service.h"
 
@@ -54,15 +58,66 @@ bool Auth::isHash(std::string_view s) {
            crypto::fromHex(s.substr(b + 1), h, kHashBytes);
 }
 
+Auth::~Auth() {
+    // A job holds `this` (and takes the device's API lock) until its very
+    // end. Only tests destroy services; 5 s is far beyond a hash.
+    for (int i = 0; i < 5000 && jobs_.load() > 0; i++) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+}
+
 std::string Auth::hash(std::string_view password) {
     uint8_t salt[kSaltBytes];
     dev_.core().random(salt, sizeof(salt));
+    return hashWith(password, salt);
+}
+
+std::string Auth::hashWith(std::string_view password, const uint8_t* salt) const {
     uint8_t h[kHashBytes];
-    crypto::pbkdf2Sha256(password, salt, sizeof(salt), kIterations, h, sizeof(h));
+    crypto::pbkdf2Sha256(password, salt, kSaltBytes, kIterations, h, sizeof(h));
     char iterations[12];
     snprintf(iterations, sizeof(iterations), "%u", static_cast<unsigned>(kIterations));
-    return std::string(kHashPrefix) + iterations + "$" + crypto::toHex(salt, sizeof(salt)) + "$" +
+    return std::string(kHashPrefix) + iterations + "$" + crypto::toHex(salt, kSaltBytes) + "$" +
            crypto::toHex(h, sizeof(h));
+}
+
+void Auth::setPassword(User& u, const std::string& v) {
+    // Under the API lock, in a patch's second pass: the validator has
+    // accepted `v`, and the write can't be refused any more.
+    u.write = ++writes_;
+    if (isHash(v)) {  // a restored backup's: kept as it is
+        u.password = v;
+        u.pending.clear();
+        return;
+    }
+    // The key derivation (about 280 ms on a classic ESP32) runs on TesserAPI's
+    // background task, as a sign-in's does. Until its hash lands, `pending`
+    // is the account's password (login() checks it), and what is persisted
+    // and backed up is the previous hash: plain text is never stored.
+    std::array<uint8_t, kSaltBytes> salt;
+    dev_.core().random(salt.data(), salt.size());
+    u.pending = v;
+    uint32_t write = u.write;
+    jobs_++;
+    bool queued = tesser::background([this, salt, v, write] {
+        std::string h = hashWith(v, salt.data());
+        {
+            tesser::Lock lock(dev_.api());
+            // By the write, not the name: a new account's name may come
+            // after its password in the patch, or change meanwhile.
+            for (User& user : users_) {
+                if (user.write != write) continue;
+                user.password = std::move(h);
+                user.pending.clear();
+                usersNode_->changed();  // saved, with the hash
+                break;
+            }
+        }
+        jobs_--;
+    });
+    if (!queued) {  // a full queue (8 jobs): the old way, under the lock
+        jobs_--;
+        u.password = hashWith(v, salt.data());
+        u.pending.clear();
+    }
 }
 
 bool Auth::verify(std::string_view password, const std::string& stored) const {
@@ -81,12 +136,11 @@ bool Auth::verify(std::string_view password, const std::string& stored) const {
 
 void Auth::describe(tesser::Object& o) {
     o.label("Users").ui("icon", "lock");
-    o.list("users", users_,
+    usersNode_ = &o.list("users", users_,
            [this](tesser::Object& u, User& user) {
                u.value("name", user.name);
                u.value("password", [&user] { return user.password; },
-                       // A stored hash (a restored backup) is kept as it is.
-                       [this, &user](const std::string& v) { user.password = isHash(v) ? v : hash(v); })
+                       [this, &user](const std::string& v) { setPassword(user, v); })
                    .validate([](const std::string& v) {
                        return isHash(v) || (!v.empty() && v.size() <= 64)
                                   ? Check::ok()
@@ -235,20 +289,30 @@ void Auth::login(const Credentials& c, tesser::Call& call) {
     if (failures_ + checking_ >= kMaxFailures) return call.fail(Status::Busy, "sign-ins being checked: try again");
     const User* u = find(c.name);
     std::string stored = u ? u->password : std::string();
+    std::string pending = u ? u->pending : std::string();  // a new password not hashed yet
+    uint32_t write = u ? u->write : 0;
     tesser::Pending p = call.defer();
     if (!p) return;  // refused (too many pending, or a transport that can't wait): the call says why
     checking_++;
-    bool queued = tesser::background([this, p, name = c.name, password = c.password, stored, now]() mutable {
-        // The hash is computed even for an unknown name, so timing doesn't
-        // tell which names exist.
-        bool ok = verify(password, stored.empty() ? std::string(kDummyHash) : stored) && !stored.empty();
+    jobs_++;
+    bool queued = tesser::background([this, p, name = c.name, password = c.password, stored, pending, write,
+                                      now]() mutable {
+        // A hash is computed even for an unknown name, or a password not
+        // hashed yet, so timing doesn't tell which names exist.
+        bool ok;
+        if (!pending.empty()) {
+            verify(password, kDummyHash);
+            ok = crypto::equal(password, pending);
+        } else {
+            ok = verify(password, stored.empty() ? std::string(kDummyHash) : stored) && !stored.empty();
+        }
         std::string t;
         const char* level = "user";
         {
             tesser::Lock lock(dev_.api());
             checking_--;
             const User* user = find(name);
-            ok = ok && user && user->password == stored;  // the account didn't change meanwhile
+            ok = ok && user && user->write == write;  // the password wasn't written meanwhile
             if (ok) {
                 failures_ = 0;
                 t = token(user->name);
@@ -260,18 +324,23 @@ void Auth::login(const Credentials& c, tesser::Call& call) {
             }
         }
         // Answered without the lock: a Pending may be answered from any task.
-        if (!ok) return p.fail(Status::Unauthorized, "wrong name or password");
-        p.replyWith([&t, level](tesser::JsonWriter& w) {
-            w.beginObject();
-            w.key("token");
-            w.string(t);
-            w.key("access");
-            w.string(level);
-            w.endObject();
-        });
+        if (!ok) {
+            p.fail(Status::Unauthorized, "wrong name or password");
+        } else {
+            p.replyWith([&t, level](tesser::JsonWriter& w) {
+                w.beginObject();
+                w.key("token");
+                w.string(t);
+                w.key("access");
+                w.string(level);
+                w.endObject();
+            });
+        }
+        jobs_--;
     });
     if (!queued) {
         checking_--;
+        jobs_--;
         p.fail(Status::Busy, "busy");
     }
 }
