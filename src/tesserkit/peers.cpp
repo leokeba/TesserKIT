@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 
+#include "tesser/budget.h"
 #include "tesser/client.h"
 #include "tesser/remote.h"
 #include "tesser/udp_link.h"
@@ -295,7 +296,19 @@ void Peers::refresh(uint32_t nowMs) {
     refreshedMs_ = nowMs;
     dirty_ = false;
     declare();
+    // The status is rebuilt from the heap: reserved first, so a short heap
+    // skips it (the previous one stands, tried again at the next period)
+    // rather than aborting in the device's task (DEVKIT-V3 as a gateway,
+    // 2026-10-15). Routes and sign-ins below go on regardless.
+    size_t count = 0;
+    for (tesser::Node* c = peers_->first(); c && count < kMaxNodes; c = c->next()) {
+        if (c->type() == tesser::NodeType::Remote) count++;
+    }
+    tesser::Reservation held = tesser::reserveBytes(count * kStateBytes);
+    bool status = static_cast<bool>(held);
     std::vector<State> states;
+    if (status) states.reserve(count);
+    size_t shown = 0;
     for (tesser::Node* c = peers_->first(); c; c = c->next()) {
         if (c->type() != tesser::NodeType::Remote) continue;
         auto* n = static_cast<RemoteNode*>(c);
@@ -306,7 +319,8 @@ void Peers::refresh(uint32_t nowMs) {
         const PeerSettings* s = settingsFor(device);
         if (s && !parseOrder(s->order, order)) order.clear();
         if (n->routeOrder() != order) n->routeOrder(order);
-        if (states.size() >= kMaxNodes) continue;
+        if (shown >= kMaxNodes) continue;
+        shown++;
         State st;
         st.id = idOf(device);
         st.name = n->name();
@@ -324,8 +338,9 @@ void Peers::refresh(uint32_t nowMs) {
             if (st.heard < 0 || ago < st.heard) st.heard = ago;
         }
         if (device.length) signIn(*n, s, nowMs, st);
-        states.push_back(st);
+        if (status) states.push_back(std::move(st));
     }
+    if (!status) return;
     // Toasts: a node lost, or reached again or another way. A node seen for
     // the first time isn't news.
     for (const State& st : states) {
@@ -349,6 +364,7 @@ void Peers::refresh(uint32_t nowMs) {
         states_ = std::move(states);
         statusNode_->changed();
     }
+    held.settle();
 }
 
 Peers::SignIn& Peers::signInFor(const std::string& id) {

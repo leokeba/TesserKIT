@@ -46,6 +46,8 @@ class Peers : public Service {
 public:
     static constexpr size_t kMaxNodes = 16;  // settings, and nodes shown
     static constexpr uint32_t kRefreshMs = 1000;
+    // A node's status with its text (names, routes, sign-in), reserved per node.
+    static constexpr size_t kStateBytes = sizeof(void*) * 32 + 192;
     // A sign-in that failed for a passing reason (no answer, too many
     // attempts) is tried again after this; so is one whose token is refused
     // soon after it was given.

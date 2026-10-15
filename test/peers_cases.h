@@ -236,6 +236,31 @@ TEST(peers_wrong_pairing_key_is_told) {
     CHECK(r.lost.empty());
 }
 
+// A short heap skips rebuilding the status rather than aborting in the
+// device's task (DEVKIT-V3 as a gateway, 2026-10-15): the last one stands,
+// and the next period catches up once there is room.
+TEST(peers_status_waits_for_memory) {
+    PeersRig r;
+    r.peers.order("udp, nowtp");
+    r.start();
+    r.discoverOverNowTp();
+    r.run(1000);
+    // UDP goes silent: a request times out, NowTP carries on.
+    r.udpUp = false;
+    auto g = r.fetch("/peers/lamp-f37c/lamp/on");
+    r.run(5000);
+    CHECK_EQ(r.status("route"), "\"nowtp\"");
+    {
+        rig::BudgetLimit low(64);
+        r.nowUp = false;
+        r.now()->forgetPeer(PeersRig::mac(kPeerMac));  // offline on every route
+        r.run(3000);
+        CHECK_EQ(r.status("online"), "true");  // not rebuilt
+    }
+    r.run(1500);
+    CHECK_EQ(r.status("online"), "false");
+}
+
 TEST(peers_device_restarted_counts_as_lost) {
     PeersRig r;
     r.start();
