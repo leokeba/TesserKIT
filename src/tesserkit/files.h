@@ -47,8 +47,34 @@ public:
     // The mount point (default "/files"). An application that mounts the
     // partition itself (Arduino's LittleFS.begin()) gives its own.
     Files& root(const char* path);
+    // The free space kept for the settings when they live here: uploads and
+    // writes that would leave less are refused (default kSettingsReserve).
+    Files& settingsReserve(size_t bytes);
 
     void describe(tesser::Object& o) override;
+
+    // Mounts the partition, once: before the settings load if they live
+    // here (settingsStorage()), else as the service starts. True if it is
+    // mounted.
+    bool mount();
+    // The settings' storage on this filesystem (docs/DESIGN.md section 6.1):
+    // mounts it, moves the records named `keys` there from `nvs` (null if
+    // there is none) at the first boot, and keeps them in kSettingsDir from
+    // then on, with room kept for them and `format` sparing them. Null if
+    // they can't live here, `why` saying why ("the filesystem didn't
+    // mount"). Virtual, so a firmware without Files doesn't link it.
+    virtual tesser::Storage* settingsStorage(tesser::Storage* nvs, const std::vector<std::string>& keys,
+                                             std::string& why);
+    bool holdsSettings() const { return settings_; }
+    // The settings' directory at the root: hidden, so no name Files accepts
+    // reaches it (names can't start with a dot), and no upload's temporary
+    // file is named so (theirs end in ".part").
+    static constexpr const char* kSettingsDir = ".settings";
+    // The worst case of TesserKIT's records in 4 KB LittleFS blocks: sys
+    // (16.7 KB: 5 blocks) and sequencer (10.3 KB: 3), the temporary copy of
+    // sys while it is rewritten (5), the directory's metadata pair (2), and
+    // one block for LittleFS to move metadata to (docs/DESIGN.md section 6.1).
+    static constexpr size_t kSettingsReserve = 64 * 1024;
 
     bool mounted() const { return mounted_; }
     const std::string& root() const { return root_; }
@@ -81,6 +107,9 @@ public:
     tesser::Check mkdir(std::string_view rel);
     // Free bytes (0 if not mounted).
     uint64_t freeBytes() const;
+    // What a file may take: the free bytes, less the settings' reserve when
+    // they live here.
+    uint64_t roomBytes() const;
     // An upload's sink (written to a temporary file, renamed by finish()),
     // and a download's source; null after `request.refuse()`.
     std::unique_ptr<tesser::FileSink> sink(std::string_view rel, tesser::FileRequest& request);
@@ -110,8 +139,15 @@ private:
 
     const char* label_ = nullptr;
     std::string root_ = "/files";
+    // Erases every file and directory but the settings'.
+    bool eraseFiles();
+
     Filesystem* fs_ = nullptr;
+    bool mountTried_ = false;
     bool mounted_ = false;
+    bool settings_ = false;  // the settings live here
+    size_t reserve_ = kSettingsReserve;
+    std::unique_ptr<tesser::FileStorage> settingsFiles_;
     uint64_t total_ = 0, used_ = 0;
     std::string dir_ = "/";
     std::vector<FileEntry> entries_;

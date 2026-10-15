@@ -16,6 +16,7 @@
 #include "udp_cases.h"
 #include "peers_cases.h"
 #include "record_cases.h"
+#include "settings_cases.h"
 #include "chaos_cases.h"
 #include "heap_cases.h"
 

@@ -124,20 +124,24 @@ bool Device::startTask() {
     return true;
 }
 
-tesser::Storage* Device::defaultStorage() {
+tesser::Storage* Device::nvsStorage() {
+    if (platform_.nvs) return platform_.nvs;
     // Arduino initializes NVS at boot; ESP-IDF applications may not have.
     // Readable settings are never erased here: that is a factory reset's
     // decision.
     esp_err_t err = esp::nvsInit();
     if (err != ESP_OK) {
-        tesser::logError("tesserkit: NVS unavailable (%s): settings won't persist", esp_err_to_name(err));
+        tesser::logError("tesserkit: NVS unavailable (%s)", esp_err_to_name(err));
         return nullptr;
     }
+    // Only TesserAPI's records live in this namespace: one per top-level
+    // node, and "@version".
     static tesser::NvsStorage storage("tesserkit");
     if (!capacitySet_) {
         const esp_partition_t* p = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, "nvs");
         settingsCapacity_ = p ? static_cast<uint32_t>(p->size) : 0;
     }
+    platform_.nvs = &storage;
     return &storage;
 }
 

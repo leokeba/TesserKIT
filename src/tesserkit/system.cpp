@@ -48,9 +48,10 @@ void System::describe(tesser::Object& o) {
         .unit("B")
         .doc("The largest allocation the heap can serve now; far below the free heap, it is fragmented")
         .ui("advanced");
-    // A settings record too large for NVS (docs/DESIGN.md section 11).
-    s.value("settings", [&dev] { return dev.settingsRefused(); })
-        .label("Settings not saved")
+    // Settings kept in NVS although the application has Files, or a record too
+    // large for NVS (docs/DESIGN.md sections 6.1 and 11).
+    s.value("settings", [&dev] { return dev.settingsStatus(); })
+        .label("Settings")
         .watch()
         .ui("style", "warning")
         .ui("visibleWhen", "settings!=");

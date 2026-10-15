@@ -22,6 +22,7 @@ namespace tesser {
 class Api;
 class DatagramEndpoint;
 class Object;
+class Storage;
 class UdpLink;
 }  // namespace tesser
 
@@ -550,6 +551,10 @@ struct Platform {
     Power* power = nullptr;
     Pins* pins = nullptr;
     UdpApiTransport* udpApi = nullptr;
+    // NVS, where the settings are kept without a filesystem (docs/DESIGN.md
+    // section 6.1): on ESP, TesserAPI's NvsStorage in the "tesserkit"
+    // namespace; on the host, none unless a test gives one.
+    tesser::Storage* nvs = nullptr;
 };
 
 // The ESP implementations (null on the host).

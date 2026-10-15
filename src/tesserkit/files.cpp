@@ -39,18 +39,30 @@ std::pair<std::string, std::string> split(const std::string& rel) {
     return {rel.substr(0, slash), rel.substr(slash + 1)};
 }
 
+// The hidden temporary file a write of `rel` ("dir/name", split) goes to
+// before it is renamed over it: ".name.part", so no valid name gives the
+// settings' directory (".settings").
+std::string tempPath(const std::string& root, const std::pair<std::string, std::string>& parts) {
+    return root + "/" + (parts.first.empty() ? "" : parts.first + "/") + "." + parts.second + ".part";
+}
+
+Check noRoom() { return Check::fail(Status::TooLarge, "not enough space: the rest is kept for the settings"); }
+
 // A file being uploaded, written to a hidden temporary file beside it and
-// renamed over it once complete.
+// renamed over it once complete. `room`: the bytes it may take.
 class PathSink : public tesser::FileSink {
 public:
-    PathSink(Files& files, std::string target, std::string temp, FILE* f)
-        : files_(files), target_(std::move(target)), temp_(std::move(temp)), f_(f) {}
+    PathSink(Files& files, std::string target, std::string temp, FILE* f, uint64_t room)
+        : files_(files), target_(std::move(target)), temp_(std::move(temp)), f_(f), room_(room) {}
     ~PathSink() override {
         if (f_) fclose(f_);
         if (!done_) ::remove(temp_.c_str());
     }
     Check write(const uint8_t* data, size_t len) override {
+        // An upload that announced less than it sends, or nothing.
+        if (len > room_ - written_) return noRoom();
         if (fwrite(data, 1, len, f_) != len) return fileWriteError(errno);
+        written_ += len;
         return Check::ok();
     }
     Check finish(tesser::JsonWriter& reply) override {
@@ -72,6 +84,7 @@ private:
     Files& files_;
     std::string target_, temp_;
     FILE* f_;
+    uint64_t room_, written_ = 0;
     bool done_ = false;
 };
 
@@ -205,7 +218,8 @@ Check Files::write(std::string_view rel, std::string_view data) {
     }
     std::string target = root_ + "/" + n;
     if (isDir(target)) return Check::fail(Status::InvalidValue, "a directory has that name");
-    std::string temp = root_ + "/" + (parts.first.empty() ? "" : parts.first + "/") + "." + parts.second;
+    if (settings_ && data.size() > roomBytes()) return noRoom();
+    std::string temp = tempPath(root_, parts);
     FILE* f = fopen(temp.c_str(), "wb");
     if (!f) return Check::fail(Status::Internal, "the file couldn't be written");
     bool ok = fwrite(data.data(), 1, data.size(), f) == data.size();
@@ -295,6 +309,12 @@ uint64_t Files::freeBytes() const {
     return used < total ? total - used : 0;
 }
 
+uint64_t Files::roomBytes() const {
+    uint64_t free = freeBytes();
+    if (!settings_) return free;
+    return free > reserve_ ? free - reserve_ : 0;
+}
+
 std::unique_ptr<tesser::FileSink> Files::sink(std::string_view rel, tesser::FileRequest& request) {
     std::string n;
     if (!mounted_) {
@@ -313,8 +333,9 @@ std::unique_ptr<tesser::FileSink> Files::sink(std::string_view rel, tesser::File
         return nullptr;
     }
     // The old file is there until the new one is complete.
-    if (request.size > freeBytes()) {
-        request.refuse(Status::TooLarge, "not enough space");
+    uint64_t room = roomBytes();
+    if (request.size > room) {
+        request.refuse(Status::TooLarge, settings_ && request.size <= freeBytes() ? noRoom().message : "not enough space");
         return nullptr;
     }
     auto parts = split(n);
@@ -322,13 +343,15 @@ std::unique_ptr<tesser::FileSink> Files::sink(std::string_view rel, tesser::File
         request.refuse(Status::NotFound, "no such directory");
         return nullptr;
     }
-    std::string temp = root_ + "/" + (parts.first.empty() ? "" : parts.first + "/") + "." + parts.second;
+    std::string temp = tempPath(root_, parts);
     FILE* f = fopen(temp.c_str(), "wb");
     if (!f) {
         request.refuse(Status::Internal, "the file couldn't be written");
         return nullptr;
     }
-    return std::unique_ptr<tesser::FileSink>(new PathSink(*this, std::move(target), std::move(temp), f));
+    // Checked as it is written, too, when the settings need their room.
+    return std::unique_ptr<tesser::FileSink>(
+        new PathSink(*this, std::move(target), std::move(temp), f, settings_ ? room : UINT64_MAX));
 }
 
 std::unique_ptr<tesser::FileSource> Files::source(std::string_view rel, tesser::FileRequest& request) {
@@ -465,7 +488,10 @@ void Files::describe(tesser::Object& o) {
     o.action("refresh", [this] { refresh(); }).label("Refresh");
     o.action("format", [this] {
          if (!mounted_) return unmounted();
-         bool ok = fs_->format();
+         // With the settings here, every file but theirs: a format would
+         // leave them only in memory until written again, so a power cut
+         // or a short heap then would lose them all, Wi-Fi's included.
+         bool ok = settings_ ? eraseFiles() : fs_->format();
          dir_ = "/";
          if (dirNode_) dirNode_->changed();
          changed();
@@ -477,12 +503,55 @@ void Files::describe(tesser::Object& o) {
         .ui("advanced");
 }
 
-void Files::start() {
+bool Files::mount() {
+    if (mountTried_) return mounted_;
+    mountTried_ = true;
     Platform& p = dev_.platform();
     if (!p.fs) p.fs = espFilesystem();
     fs_ = p.fs;
     mounted_ = fs_ && fs_->mount(label_, root_.c_str());
     if (!mounted_) tesser::logError("tesserkit: no filesystem (a \"files\" or \"spiffs\" partition, and LittleFS)");
+    return mounted_;
+}
+
+tesser::Storage* Files::settingsStorage(tesser::Storage* nvs, const std::vector<std::string>& keys, std::string& why) {
+    if (!mount()) {
+        why = "the filesystem didn't mount";
+        return nullptr;
+    }
+    settingsFiles_.reset(new tesser::FileStorage(root_ + "/" + kSettingsDir));
+    std::string failed;
+    if (!moveSettings(nvs, *settingsFiles_, keys, failed)) {
+        settingsFiles_.reset();
+        why = "moving them to the filesystem failed (" + failed + ")";
+        return nullptr;
+    }
+    settings_ = true;
+    return settingsFiles_.get();
+}
+
+Files& Files::settingsReserve(size_t bytes) {
+    reserve_ = bytes;
+    return *this;
+}
+
+bool Files::eraseFiles() {
+    DIR* d = opendir(root_.c_str());
+    if (!d) return false;
+    std::vector<std::string> names;
+    while (struct dirent* e = readdir(d)) {
+        if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0 && strcmp(e->d_name, kSettingsDir) != 0) {
+            names.push_back(e->d_name);
+        }
+    }
+    closedir(d);
+    bool ok = true;
+    for (const std::string& n : names) ok = removeAll(root_ + "/" + n) && ok;
+    return ok;
+}
+
+void Files::start() {
+    mount();  // done already if the settings are here
     changed();
     refresh();
     // A file larger than the partition is refused before it is sent.

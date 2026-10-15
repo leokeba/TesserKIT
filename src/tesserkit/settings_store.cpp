@@ -55,6 +55,13 @@ bool SettingsStore::load(std::string_view key, std::string& out) {
     return true;
 }
 
+bool SettingsStore::reserve(tesser::Reservation& held) {
+    if (!writeBytes_) return true;
+    // One block: the stdio buffer is the largest piece.
+    held = tesser::reserveBytes(writeBytes_, true);
+    return static_cast<bool>(held);
+}
+
 bool SettingsStore::save(std::string_view key, const std::string& data) {
     if (!inner_) return false;
     size_t others = othersThan(key);
@@ -69,6 +76,10 @@ bool SettingsStore::save(std::string_view key, const std::string& data) {
         refused_ = why;
         return true;  // the stored record stays; tried again at its next change
     }
+    // Without the heap for the write, TesserAPI tries again: a filesystem
+    // short of memory fails its write, or takes what the rest needs.
+    tesser::Reservation held;
+    if (!reserve(held)) return false;
     if (!inner_->save(key, data)) return false;
     sizes_[std::string(key)] = data.size();
     auto it = refusals_.find(key);
@@ -81,7 +92,8 @@ bool SettingsStore::save(std::string_view key, const std::string& data) {
 
 bool SettingsStore::remove(std::string_view key) {
     if (!inner_) return false;
-    if (!inner_->remove(key)) return false;
+    tesser::Reservation held;
+    if (!reserve(held) || !inner_->remove(key)) return false;
     auto s = sizes_.find(key);
     if (s != sizes_.end()) sizes_.erase(s);
     auto it = refusals_.find(key);
@@ -97,6 +109,55 @@ bool SettingsStore::erase() {
     refusals_.clear();
     refused_.clear();
     return inner_ ? inner_->erase() : false;
+}
+
+bool moveSettings(tesser::Storage* from, tesser::Storage& to, const std::vector<std::string>& keys, std::string& why) {
+    std::string data, back;
+    if (to.load(SettingsStore::kMoved, data)) {
+        // Moved before. What NVS still holds of them, as a move cut short
+        // after its marker leaves it: the filesystem's copy is the one in use.
+        size_t left = 0;
+        for (const std::string& key : keys) {
+            if (from && from->load(key, data) && from->remove(key)) left++;
+        }
+        if (left) tesser::logWarning("tesserkit: settings: removed what NVS still held of them (%u records)", static_cast<unsigned>(left));
+        return true;
+    }
+    // Not moved yet, or a move cut short before its marker: from an empty
+    // directory, so nothing of a cut move comes back.
+    auto fail = [&to, &why](std::string reason) {
+        why = std::move(reason);
+        to.erase();
+        tesser::logError("tesserkit: settings stay in NVS: %s", why.c_str());
+        return false;
+    };
+    if (!to.erase()) return fail("the directory couldn't be emptied");
+    std::vector<const std::string*> moved;
+    for (const std::string& key : keys) {
+        if (!from || !from->load(key, data)) continue;
+        // The write's buffers and the copy read back: a short heap stops the
+        // move rather than aborts it.
+        tesser::Reservation held = tesser::reserveBytes(kFileWriteBytes + data.size() + 1, true);
+        if (!held) return fail("no memory to move \"" + key + "\"");
+        if (!to.save(key, data)) return fail("\"" + key + "\" couldn't be written");
+        back.clear();
+        if (!to.load(key, back) || back != data) return fail("\"" + key + "\" read back differently");
+        moved.push_back(&key);
+    }
+    if (!to.save(SettingsStore::kMoved, "1") || !to.load(SettingsStore::kMoved, back) || back != "1") {
+        return fail("the filesystem couldn't be written");
+    }
+    // Only now, with every record on the filesystem and read back.
+    if (!moved.empty()) {
+        tesser::logWarning("tesserkit: settings moved from NVS to the filesystem (%u records)",
+                           static_cast<unsigned>(moved.size()));
+    }
+    for (const std::string* key : moved) {
+        if (!from->remove(*key)) {
+            tesser::logWarning("tesserkit: settings: \"%s\" left in NVS, removed at the next boot", key->c_str());
+        }
+    }
+    return true;
 }
 
 }  // namespace tesserkit

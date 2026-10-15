@@ -1,4 +1,5 @@
 #include "tesserkit/device.h"
+#include "tesserkit/files.h"
 
 #include <string.h>
 
@@ -230,7 +231,11 @@ bool Device::begin() {
     sys_->label("System").doc("Network, time, firmware, backups and accounts").ui("page").ui("icon", "settings");
     for (Service* s = services_; s; s = s->next_) s->attach(*sys_);
 
-    if (!storage_) storage_ = defaultStorage();
+    if (storage_) {
+        settings_.wrap(storage_, settingsCapacity_);  // the application's own
+    } else {
+        storage_ = defaultStorage();
+    }
     if (storage_) {
         // TesserKIT's version and the application's, so each migrates its own
         // settings (docs/DESIGN.md section 6.3).
@@ -238,7 +243,6 @@ bool Device::begin() {
                             [this](std::string_view record, uint32_t version, JsonVariant value) {
                                 return migrate(record, version, value);
                             });
-        settings_.wrap(storage_, settingsCapacity_);
         api_.persistence(settings_, 2000);
         api_.load();
     }
@@ -252,6 +256,37 @@ bool Device::begin() {
     if (httpPort_ && !startServer()) return false;
     if (ownTask_ && !startTask()) return false;
     return true;
+}
+
+tesser::Storage* Device::defaultStorage() {
+    tesser::Storage* nvs = nvsStorage();
+    if (files_) {
+        // On the filesystem when there is one (docs/DESIGN.md section 6.1),
+        // mounted now rather than as Files starts: the settings load first.
+        // The records TesserAPI keeps: one per top-level node, and the
+        // version. NVS can't list its keys; the tree names them.
+        std::vector<std::string> keys = {"@version"};
+        for (const tesser::Node* c = api_.first(); c; c = c->next()) keys.emplace_back(c->name());
+        std::string why;
+        if (tesser::Storage* fs = files_->settingsStorage(nvs, keys, why)) {
+            settingsOnFiles_ = true;
+            settings_.wrap(fs, 0, kFileWriteBytes);  // its capacity: Files' reserve
+            return fs;
+        }
+        settingsWhere_ = "in NVS: " + why;
+    }
+    if (!nvs) {
+        tesser::logError("tesserkit: no storage: settings won't persist");
+        return nullptr;
+    }
+    settings_.wrap(nvs, settingsCapacity_);
+    return nvs;
+}
+
+std::string Device::settingsStatus() const {
+    const std::string& refused = settings_.refused();
+    if (settingsWhere_.empty()) return refused;
+    return refused.empty() ? settingsWhere_ : settingsWhere_ + "; " + refused;
 }
 
 void Device::loop() {
@@ -356,6 +391,10 @@ void Device::factoryReset() {
 
 void Device::resetNow() {
     if (storage_ && !settings_.erase()) tesser::logError("tesserkit: factory reset: the settings couldn't be erased");
+    // On the filesystem, NVS may still hold a copy a move couldn't remove.
+    if (settingsOnFiles_ && platform_.nvs && !platform_.nvs->erase()) {
+        tesser::logError("tesserkit: factory reset: the settings in NVS couldn't be erased");
+    }
     for (Service* sv = services_; sv; sv = sv->next_) sv->factoryReset();
     // Nothing is saved any more: the running state would be written back.
     if (!erased_) erased_ = new tesser::MemoryStorage();
@@ -427,7 +466,7 @@ bool Device::startTask() {
     return true;
 }
 void Device::wake() {}
-tesser::Storage* Device::defaultStorage() { return nullptr; }
+tesser::Storage* Device::nvsStorage() { return platform_.nvs; }
 Core* espCore() { return nullptr; }
 Wifi* espWifi() { return nullptr; }
 Ethernet* espEthernet() { return nullptr; }

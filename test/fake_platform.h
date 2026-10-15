@@ -712,6 +712,7 @@ struct Platform {
     Pins pins;
     UdpApi udpApi;
     Chaos chaos;
+    tesser::MemoryStorage nvs;  // NVS, where the settings go without a filesystem
     void install(tesserkit::Device& dev, bool withCoredump = true) {
         tesserkit::Platform& p = dev.platform();
         p.core = &core;
@@ -735,6 +736,7 @@ struct Platform {
         wifi.chaos = ethernet.chaos = clock.chaos = mqtt.chaos = nowtp.chaos = &chaos;
         nowtp.clock = &core.now;
         p.udpApi = &udpApi;
+        p.nvs = &nvs;
     }
 };
 

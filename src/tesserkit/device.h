@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -119,7 +120,11 @@ public:
     uint16_t httpPort() const { return httpPort_; }
     Device& cors(const char* origin);      // CORS headers for other origins
     Device& task(bool own);  // false: the application calls loop() itself
-    Device& storage(tesser::Storage& storage);  // default: NVS, namespace "tesserkit"
+    // Where the settings are kept. Default: with a Files service whose
+    // partition mounts, files in its hidden directory /.settings (moved
+    // there from NVS at the first boot); else NVS, namespace "tesserkit"
+    // (docs/DESIGN.md section 6.1).
+    Device& storage(tesser::Storage& storage);
     // The NVS partition's size, for refusing a record it couldn't rewrite
     // (docs/DESIGN.md section 11). Default: the "nvs" partition's with the
     // default storage, else none (0).
@@ -127,6 +132,12 @@ public:
     // Why a settings record wasn't saved ("" when all were): too large for
     // NVS. The stored one stays, so the change is lost at the next boot.
     const std::string& settingsRefused() const { return settings_.refused(); }
+    // What /sys/status/settings shows ("" when all is well): the settings
+    // kept in NVS although the application has Files, and why; a record
+    // refused (settingsRefused()).
+    std::string settingsStatus() const;
+    // Whether the settings are kept on the Files service's filesystem.
+    bool settingsOnFiles() const { return settingsOnFiles_; }
     // URI handler slots for the application's own routes (default 4).
     Device& extraHandlers(uint8_t n);
     // The version of the application's own persisted state (default 0), and
@@ -239,6 +250,10 @@ public:
 private:
     bool startServer();  // platform/esp/device_esp.cpp; nothing on the host
     bool startTask();
+    // NVS (Platform::nvs, which the ESP side fills), or null.
+    tesser::Storage* nvsStorage();
+    // The default storage: the filesystem's, or NVS (docs/DESIGN.md section
+    // 6.1). Wraps it in settings_.
     tesser::Storage* defaultStorage();
     void updateState(uint32_t nowMs);
     void resetNow();  // factoryReset()'s work, in the device's task under the API lock
@@ -253,6 +268,8 @@ private:
     BootInfo info_;
     tesser::Storage* storage_ = nullptr;
     SettingsStore settings_;  // in front of storage_
+    bool settingsOnFiles_ = false;
+    std::string settingsWhere_;  // why they aren't, when the application has Files
     uint32_t settingsCapacity_ = 0;
     bool capacitySet_ = false;
     uint16_t appVersion_ = 0;

@@ -38,7 +38,8 @@ struct FullRig : rig::Rig {
     std::string longName = std::string(limits::kPath - 4, 'n');  // "/" + it + "/on": limits::kPath
     std::string longPath = "/" + longName + "/on";
 
-    FullRig() {
+    // `appStorage` false: the device's default storage (the filesystem).
+    explicit FullRig(bool appStorage = true) : rig::Rig(true, appStorage) {
         files.root(fake.fs.dir.c_str());
         firmware.github("leokeba/TesserKIT", "tesserkit-minimal-{target}.bin");
         network.ethernet(tesserkit::boards::gledopto());
@@ -260,6 +261,54 @@ TEST(record_too_large_for_nvs_is_refused) {
     CHECK(r.storage.records["sys"] != stored);
     CHECK(r.storage.records["sys"].find("EST5EDT") == std::string::npos);
     CHECK_EQ(r.value("/sys/status/settings"), "\"\"");
+}
+
+// On the filesystem (docs/DESIGN.md section 6.1), the worst case NVS refuses
+// is saved, and loaded at the next boot.
+TEST(record_worst_case_on_the_filesystem) {
+    std::string sys, sequencer;
+    {
+        FullRig nvs;
+        nvs.dev.settingsCapacity(20480);
+        CHECK(nvs.dev.begin());
+        std::string failed;
+        CHECK(fill(nvs, failed));
+        nvs.run(2500);
+        CHECK(nvs.value("/sys/status/settings").find("not saved") != std::string::npos);
+    }
+    FullRig r(false);
+    r.dev.settingsCapacity(20480);  // NVS's: not the filesystem's
+    CHECK(r.dev.begin());
+    CHECK(r.dev.settingsOnFiles());
+    std::string failed;
+    CHECK(fill(r, failed));
+    r.run(2500);
+    CHECK_EQ(r.value("/sys/status/settings"), "\"\"");
+    auto read = [&r](const char* rel) {
+        std::string out;
+        if (FILE* f = fopen((r.fake.fs.dir + "/.settings/" + rel).c_str(), "rb")) {
+            char buf[512];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), f)) > 0) out.append(buf, n);
+            fclose(f);
+        }
+        return out;
+    };
+    sys = read("sys.json");
+    sequencer = read("sequencer.json");
+    CHECK(sys.size() > tesserkit::SettingsStore::largest(20480, 0));
+    CHECK(sys.size() <= kWorstSys);
+    CHECK(sequencer.size() > 8000);
+    CHECK(r.fake.nvs.records.empty());
+    // Read back whole.
+    tesser::MemoryStorage copy;
+    copy.records["sys"] = sys;
+    copy.records["sequencer"] = sequencer;
+    FullRig again;
+    again.storage.records = copy.records;
+    CHECK(again.dev.begin());
+    CHECK_EQ(again.value("/sys/network/hostname"), r.value("/sys/network/hostname"));
+    CHECK_EQ(again.value("/sequencer/steps"), r.value("/sequencer/steps"));
 }
 
 // What makes the worst case the worst: one character more than each limit is

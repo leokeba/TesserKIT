@@ -76,7 +76,7 @@ TEST(files_upload_list_download) {
     std::string data(5000, 'x');
     CHECK_EQ(r.uploadNamed("/sys/files/upload", "notes.txt", data).status, Status::Ok);
     CHECK(r.onDisk("notes.txt"));
-    CHECK(!r.onDisk(".notes.txt"));  // the temporary file was renamed
+    CHECK(!r.onDisk(".notes.txt.part"));  // the temporary file was renamed
     r.step();
     CHECK_EQ(r.names("/sys/files/entries"), "notes.txt");
     CHECK_EQ(r.value("/sys/files/entries/notes.txt/size"), "5000");
@@ -121,7 +121,7 @@ TEST(files_space) {
     rig::Reply u = r.upload("/sys/files/upload", std::string(3000, 'c'), true, 1000, 2000, "cut.bin");
     CHECK(!u.done);
     CHECK(!r.onDisk("cut.bin"));
-    CHECK(!r.onDisk(".cut.bin"));
+    CHECK(!r.onDisk(".cut.bin.part"));
 }
 
 TEST(files_directories) {

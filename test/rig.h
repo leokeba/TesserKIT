@@ -55,9 +55,13 @@ struct Rig {
     tesser::LocalClient admin{dev.api()};
     tesser::LocalClient anon{dev.api()};
 
-    explicit Rig(bool coredump = true) {
+    // `appStorage`: the settings in `storage`, as an application's own;
+    // false: the device's default (the filesystem with Files, else NVS:
+    // fake.nvs).
+    explicit Rig(bool coredump = true, bool appStorage = true) {
         fake.install(dev, coredump);
-        dev.task(false).storage(storage);
+        dev.task(false);
+        if (appStorage) dev.storage(storage);
         anon.setAuthenticated(false);
     }
 

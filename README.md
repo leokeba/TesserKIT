@@ -46,7 +46,7 @@ It aims at most of [ESP32-sveltekit](https://github.com/theelims/ESP32-sveltekit
 - a library rather than a template;
 - every service is a subtree reachable over HTTP, WebSocket, serial, Bluetooth, ESP-NOW, UDP and MQTT. Firmware, backups and files are included: they transfer in chunks where there is no HTTP;
 - the whole interface fits in a 50 KB bundle;
-- settings live in NVS, with a filesystem partition only for the optional Files service.
+- settings live in NVS, or on the optional Files service's filesystem when there is one: no partition is needed for them.
 
 ## Getting started
 
