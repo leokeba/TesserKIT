@@ -18,15 +18,23 @@ namespace tesserkit {
 
 namespace {
 
+// Set by the device task, read by the HTTP server's: the address as one
+// atomic word, formatted by the reader, so a redirect never reads a URL
+// being rewritten.
 std::atomic<bool> g_captive{false};
-char g_portalUrl[32] = "http://192.168.4.1/";
+std::atomic<uint32_t> g_portalIp{0xC0A80401};  // 192.168.4.1
 
 // Unknown URIs: while the captive portal is on, every one leads to the
 // interface, so the probes phones and laptops send on joining open it.
 esp_err_t notFound(httpd_req_t* req, httpd_err_code_t) {
     if (g_captive.load()) {
+        uint32_t ip = g_portalIp.load();
+        char url[24];  // "http://255.255.255.255/"
+        snprintf(url, sizeof(url), "http://%u.%u.%u.%u/", static_cast<unsigned>(ip >> 24),
+                 static_cast<unsigned>(ip >> 16 & 255), static_cast<unsigned>(ip >> 8 & 255),
+                 static_cast<unsigned>(ip & 255));
         httpd_resp_set_status(req, "302 Found");
-        httpd_resp_set_hdr(req, "Location", g_portalUrl);
+        httpd_resp_set_hdr(req, "Location", url);  // kept until the send below
         httpd_resp_set_hdr(req, "Cache-Control", "no-store");
         httpd_resp_send(req, nullptr, 0);
         return ESP_OK;
@@ -69,9 +77,7 @@ esp_err_t nvsInit() {
 }
 
 void captiveRedirect(bool on, uint32_t apIp) {
-    snprintf(g_portalUrl, sizeof(g_portalUrl), "http://%u.%u.%u.%u/", static_cast<unsigned>(apIp >> 24),
-             static_cast<unsigned>(apIp >> 16 & 255), static_cast<unsigned>(apIp >> 8 & 255),
-             static_cast<unsigned>(apIp & 255));
+    g_portalIp.store(apIp);
     g_captive.store(on);
 }
 }  // namespace esp
