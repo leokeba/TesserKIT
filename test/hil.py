@@ -129,14 +129,23 @@ def status(board, timeout=3):
 
 
 def wait_up(boards, settle):
-    end = time.time() + 180
-    while time.time() < end:
-        down = [b['name'] for b in boards if not status(b)]
+    """Every board on the network. One still away after 90 s is reset once
+    (its first boot after a flash has stayed off the network until then:
+    DEVKIT-V3, a weak supply, 2026-10-15), then waited for again."""
+    start, reset = time.time(), False
+    while True:
+        down = [b for b in boards if not status(b)]
         if not down:
             break
+        waited = time.time() - start
+        if waited > 90 and not reset:
+            for b in down:
+                log(f"  {b['name']} still away after 90 s: resetting it")
+                run(['uvx', 'esptool', '--chip', 'esp32', '--port', b['port'], '--baud', '115200', 'run'], timeout=60)
+            reset = True
+        elif waited > 210:
+            sys.exit(f'not on the network after 210 s: {", ".join(b["name"] for b in down)}')
         time.sleep(5)
-    else:
-        sys.exit(f'not on the network after 180 s: {", ".join(down)}')
     log(f'  all up; settling {settle} s')
     time.sleep(settle)
 
