@@ -176,6 +176,27 @@ TEST(mqtt_follows_the_connection) {
     CHECK_EQ(r.fake.mqtt.sessions, 1);
 }
 
+// The session's events go through the device's bounded queue, which can
+// lose them: its state is read back once a second.
+TEST(mqtt_lost_session_events_are_caught_up) {
+    MqttRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    tesserkit::EventSink real = r.fake.mqtt.sink;
+    r.fake.mqtt.sink = [](tesserkit::Event) {};  // lost
+    r.fake.mqtt.connect();
+    r.run(1100);
+    CHECK_EQ(r.value("/sys/mqtt/status/connected"), "true");
+    CHECK_EQ(r.fake.mqtt.retained[r.pre() + "/status"].payload, "online");
+    r.set("/led/on", "true");
+    r.settle();
+    CHECK_EQ(r.fake.mqtt.last(r.pre() + "/led/on"), "true");
+    r.fake.mqtt.drop();
+    r.run(1100);
+    CHECK_EQ(r.value("/sys/mqtt/status/connected"), "false");
+    r.fake.mqtt.sink = real;
+}
+
 TEST(mqtt_restarts_on_new_settings) {
     MqttRig r;
     r.online();

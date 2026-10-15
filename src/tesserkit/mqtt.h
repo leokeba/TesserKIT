@@ -62,6 +62,8 @@ private:
     uint32_t settingsGen() const;
     void connect();
     void disconnect();
+    void onConnected();
+    void onDisconnected(const std::string& why);
     void bridge();
     void unbridge();
     void publishTree(const std::string& path, JsonVariantConst v, bool retain);
@@ -101,6 +103,7 @@ private:
     bool restart_ = false;  // settings changed: restart once they settle
     bool tried_ = false;
     uint32_t triedAtMs_ = 0;
+    uint32_t checkedAtMs_ = 0;  // the session's state, read back
     MqttClient* client_ = nullptr;
     int32_t session_ = 0;
     tesser::Reservation tls_;  // a TLS session's heap, while one is up (kTlsBytes)

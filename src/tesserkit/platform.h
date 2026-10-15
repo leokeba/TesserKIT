@@ -353,6 +353,12 @@ public:
     virtual void stop() = 0;
     // Queues a message (QoS 0) without blocking; false if it can't.
     virtual bool publish(const std::string& topic, const std::string& payload, bool retain) = 0;
+    // Whether the running session is connected now, for when the device's
+    // queue lost its events; false if the client can't tell.
+    virtual bool connectedNow(bool& connected) {
+        (void)connected;
+        return false;
+    }
 };
 
 // Bluetooth LE: Bluetooth's. TesserAPI's BleTransport (the Nordic UART

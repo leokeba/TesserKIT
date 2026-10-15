@@ -1071,6 +1071,44 @@ TEST(network_lost_address_event_is_caught_up) {
     CHECK_EQ(r.value("/sys/network/wifi/status/ip"), "\"192.168.1.50\"");
 }
 
+// A disconnection of the link before arrives late, during the next attempt,
+// which it makes Network give up while the radio goes on to join: a station
+// Network doesn't count on. Found under chaos (chaos_cases.h): it stayed
+// joined beside Ethernet's lease in fallback.
+TEST(network_station_joined_behind_networks_back) {
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    r.run(10000);  // no cable: joined over Wi-Fi
+    CHECK(r.fake.wifi.linked);
+    // The router drops the station; its event is late.
+    std::vector<tesserkit::Event> late;
+    tesserkit::EventSink real = r.fake.wifi.sink;
+    r.fake.wifi.sink = [&late, real](tesserkit::Event e) {
+        if (e.type == Event::Type::StaDisconnected && e.value == 200) {
+            late.push_back(e);
+        } else {
+            real(std::move(e));
+        }
+    };
+    r.fake.wifi.dhcpSilent = true;  // the next attempt waits for its address
+    r.fake.wifi.drop();
+    r.run(tesserkit::Network::kPollMs + 100);  // the loss read back, a new attempt
+    CHECK_EQ(late.size(), size_t(1));
+    r.fake.wifi.sink = real;
+    for (tesserkit::Event& e : late) real(e);  // the old disconnection: the attempt is given up
+    r.step();
+    r.fake.wifi.giveAddress();  // but the radio joined
+    r.run(tesserkit::Network::kPollMs + 100);
+    CHECK(r.net.connected());  // taken as it is
+    // Ethernet's lease: the station leaves, in fallback.
+    r.fake.ethernet.plug();
+    r.run(tesserkit::Network::kPollMs + 100);
+    CHECK(r.net.ethernetConnected());
+    CHECK(!r.fake.wifi.linked);
+}
+
 TEST(network_access_point_clients_are_read_back) {
     NetRig r;  // no network saved: the access point is up
     CHECK(r.dev.begin());

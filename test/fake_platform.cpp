@@ -7,10 +7,65 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <algorithm>
+
 namespace fake {
 
 using tesser::Check;
 using tesser::Status;
+
+void Chaos::deliver(EventSink& sink, Event e) {
+    uint64_t now = clock ? *clock : 0;
+    // Behind an earlier event of its source still held: after it.
+    uint64_t after = 0;
+    for (const Held& h : held_) {
+        if (h.sink == &sink && h.dueMs > after) after = h.dueMs;
+    }
+    if (!on) {
+        if (after) {
+            held_.push_back({after, &sink, std::move(e)});
+        } else if (sink) {
+            sink(std::move(e));
+        }
+        return;
+    }
+    if (chance(dropPercent)) {
+        dropped++;
+        return;
+    }
+    if (after || chance(delayPercent)) {
+        delayed++;
+        uint64_t due = now + 1 + below(maxDelayMs);
+        held_.push_back({due > after ? due : after, &sink, std::move(e)});
+        return;
+    }
+    if (sink) sink(std::move(e));
+}
+
+void Chaos::release() {
+    uint64_t now = clock ? *clock : 0;
+    std::vector<Held> due;
+    for (auto it = held_.begin(); it != held_.end();) {
+        if (it->dueMs <= now) {
+            due.push_back(std::move(*it));
+            it = held_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    // Sources interleaved at random, each in its own order.
+    std::stable_sort(due.begin(), due.end(), [](const Held& a, const Held& b) { return a.dueMs < b.dueMs; });
+    while (!due.empty()) {
+        // A random source's oldest.
+        size_t pick = below(static_cast<uint32_t>(due.size()));
+        EventSink* s = due[pick].sink;
+        size_t first = 0;
+        while (due[first].sink != s) first++;
+        Held h = std::move(due[first]);
+        due.erase(due.begin() + static_cast<std::ptrdiff_t>(first));
+        if (*h.sink) (*h.sink)(std::move(h.e));
+    }
+}
 
 Core::Core() {
     boot.chip = "ESP32-D0WD-V3 rev 3.0, 2 cores, 240 MHz";
@@ -150,6 +205,11 @@ void Ethernet::unplug() {
     state.ip = 0;
     state.mbps = 0;
     post(Event::Type::EthLink, 0);
+}
+
+void Ethernet::serveDhcp() {
+    dhcp = true;
+    if (state.link && !state.ip && !ip.staticIp) lease(*this);
 }
 
 void Clock::timezone(const char* posix) {
@@ -317,6 +377,7 @@ bool UdpApi::begin(tesser::Api& api, uint16_t p, const std::string& n, size_t ca
 void Mqtt::stop() {
     if (!running) return;
     running = false;
+    linked = false;
     stops++;
     // The will, as the ESP client publishes it before disconnecting.
     publish(config.willTopic, config.willPayload, true);
@@ -331,18 +392,20 @@ bool Mqtt::publish(const std::string& topic, const std::string& payload, bool re
 }
 
 void Mqtt::connect() {
+    linked = true;
     tesserkit::Event e;
     e.type = tesserkit::Event::Type::MqttConnected;
     e.value = session;
-    sink(e);
+    emit(chaos, sink, std::move(e));
 }
 
 void Mqtt::drop(const char* why) {
+    linked = false;
     tesserkit::Event e;
     e.type = tesserkit::Event::Type::MqttDisconnected;
     e.value = session;
     e.text = why;
-    sink(e);
+    emit(chaos, sink, std::move(e));
 }
 
 void Mqtt::message(const std::string& topic, const std::string& payload) {
@@ -351,7 +414,7 @@ void Mqtt::message(const std::string& topic, const std::string& payload) {
     e.value = session;
     e.text = topic;
     e.data = payload;
-    sink(e);
+    emit(chaos, sink, std::move(e));
 }
 
 std::string Mqtt::last(const std::string& topic) const {

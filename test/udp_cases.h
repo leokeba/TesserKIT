@@ -74,9 +74,10 @@ struct UdpRig : rig::Rig {
     void pump(uint32_t ms = 100) {
         for (uint32_t t = 0; t < ms || !quiet(); t += 20) {
             if (t > 20000) break;
-            auto mine = std::move(fake.udpApi.out);
+            // Through the chaos, when on: lost, late or out of order.
+            auto mine = fake.chaos.carry(mineLine, std::move(fake.udpApi.out));
             fake.udpApi.out.clear();
-            auto theirs = std::move(peerOut);
+            auto theirs = fake.chaos.carry(theirLine, std::move(peerOut));
             peerOut.clear();
             for (auto& d : mine) {
                 if (reaches(d.to, other)) peer->packet(self, d.data.data(), d.data.size());
@@ -91,7 +92,11 @@ struct UdpRig : rig::Rig {
             step(20);
         }
     }
-    bool quiet() const { return fake.udpApi.out.empty() && peerOut.empty(); }
+    bool quiet() const {
+        return fake.udpApi.out.empty() && peerOut.empty() && mineLine.held.empty() && theirLine.held.empty();
+    }
+    fake::Chaos::Line<fake::UdpApi::Datagram> mineLine;
+    fake::Chaos::Line<std::pair<PeerAddress, std::vector<uint8_t>>> theirLine;
     // A request from the other node to the device, over UDP.
     rig::Reply fromPeer(Op op, const char* path, const char* body = "") {
         auto r = std::make_shared<rig::Reply>();

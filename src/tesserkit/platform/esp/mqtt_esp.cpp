@@ -219,6 +219,13 @@ public:
         s->live.store(false);
     }
 
+    bool connectedNow(bool& connected) override {
+        Session* s = session_;
+        if (!s) return false;
+        connected = s->connected.load();
+        return true;
+    }
+
     bool publish(const std::string& topic, const std::string& payload, bool retain) override {
         Session* s = session_;
         if (!s || !s->connected.load()) return false;

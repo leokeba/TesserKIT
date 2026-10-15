@@ -17,6 +17,7 @@ namespace {
 
 constexpr uint32_t kSettleMs = 1000;  // settings edited field by field: one restart
 constexpr uint32_t kRetryMs = 10000;  // a client that couldn't start
+constexpr uint32_t kCheckMs = 1000;   // the session's state read back
 constexpr int kAnnouncePerTick = 4;   // discovery shares the queue with the states
 
 bool startsWith(const std::string& s, const char* prefix) { return s.compare(0, strlen(prefix), prefix) == 0; }
@@ -270,43 +271,64 @@ void Mqtt::tick(uint32_t nowMs) {
         discoveryGen_ = discGen;
         if (connected_) discover();
     }
+    // The session's state, read back once a second: its events pass
+    // through the device's bounded queue, which can lose them (a burst of
+    // other events while the task stalls). Without this a lost
+    // MqttConnected left the bridge down for the whole session.
+    bool now = false;
+    if (session_ && nowMs - checkedAtMs_ >= kCheckMs && client_->connectedNow(now)) {
+        checkedAtMs_ = nowMs;
+        if (now != connected_) {
+            if (now) {
+                onConnected();
+            } else {
+                onDisconnected(std::string());
+            }
+        }
+    }
     if (connected_) announce();
 }
 
 void Mqtt::event(const Event& e) {
     switch (e.type) {
         case Event::Type::MqttConnected:
-            if (e.value != session_) return;
-            tls_.settle();  // the session's buffers are allocated: the heap shows them
-            connected_ = true;
-            status_->changed();
-            setError("");
-            send(topicPrefix() + "/status", "online", true);
-            bridge();
-            discover();
+            if (e.value == session_) onConnected();
             return;
         case Event::Type::MqttDisconnected:
-            if (e.value != session_) return;
-            // The attempt is over: what it took isn't about to be taken.
-            tls_.settle();
-            if (!e.text.empty()) setError(e.text);
-            if (connected_) {
-                connected_ = false;
-                status_->changed();
-                unbridge();
-                // Not stopped here: the broker or the network went.
-                if (e.text.empty()) {
-                    lost_->emit();
-                } else {
-                    lost_->emit(e.text);
-                }
-            }
+            if (e.value == session_) onDisconnected(e.text);
             return;
         case Event::Type::MqttMessage:
             if (e.value == session_ && connected_) command(e.text, e.data);
             return;
         default:
             return;
+    }
+}
+
+void Mqtt::onConnected() {
+    tls_.settle();  // the session's buffers are allocated: the heap shows them
+    if (connected_) return;
+    connected_ = true;
+    status_->changed();
+    setError("");
+    send(topicPrefix() + "/status", "online", true);
+    bridge();
+    discover();
+}
+
+void Mqtt::onDisconnected(const std::string& why) {
+    // The attempt is over: what it took isn't about to be taken.
+    tls_.settle();
+    if (!why.empty()) setError(why);
+    if (!connected_) return;
+    connected_ = false;
+    status_->changed();
+    unbridge();
+    // Not stopped here: the broker or the network went.
+    if (why.empty()) {
+        lost_->emit();
+    } else {
+        lost_->emit(why);
     }
 }
 

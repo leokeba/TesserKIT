@@ -3,10 +3,12 @@
 // slot that is a byte vector, an HTTP client serving strings.
 #pragma once
 
+#include <algorithm>
 #include <deque>
 #include <functional>
 #include <map>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -17,6 +19,91 @@ namespace fake {
 
 using tesserkit::Event;
 using tesserkit::EventSink;
+
+// Chaos, off until start(): the platform's events reach the device late, out
+// of order, or not at all, under a seeded generator, as on a busy device
+// whose queue fills (a dropped event) and whose tasks run when they can.
+// Events of one source keep their order, as one task posts them; those of
+// different sources overtake each other. The rigs' links use it for
+// datagrams too (carry()). Rig::step() releases what is due.
+struct Chaos {
+    bool on = false;
+    unsigned dropPercent = 0, delayPercent = 0;
+    uint32_t maxDelayMs = 0;
+    std::mt19937 rng;
+    const uint64_t* clock = nullptr;  // the fake core's
+    uint64_t dropped = 0, delayed = 0;
+
+    // Seeded: the same seed, the same chaos.
+    void start(uint32_t seed, unsigned dropPct = 10, unsigned delayPct = 30, uint32_t maxDelay = 3000) {
+        rng.seed(seed);
+        on = true;
+        dropPercent = dropPct;
+        delayPercent = delayPct;
+        maxDelayMs = maxDelay;
+    }
+    // Calm again: what is held still comes, when due.
+    void stop() { on = false; }
+    bool chance(unsigned percent) { return percent && rng() % 100 < percent; }
+    uint32_t below(uint32_t n) { return n ? static_cast<uint32_t>(rng() % n) : 0; }
+
+    // An event on its way to `sink`.
+    void deliver(EventSink& sink, Event e);
+    // Delivers the held events that are due, sources interleaved at random.
+    void release();
+    bool holding() const { return !held_.empty(); }
+
+    // Datagrams on one direction of a link: those to deliver now, the
+    // others dropped or held (in `line`) for later, reordered.
+    template <class T>
+    struct Line {
+        std::vector<std::pair<uint64_t, T>> held;
+    };
+    template <class T>
+    std::vector<T> carry(Line<T>& line, std::vector<T> batch) {
+        uint64_t now = clock ? *clock : 0;
+        std::vector<T> out;
+        for (auto it = line.held.begin(); it != line.held.end();) {
+            if (it->first <= now) {
+                out.push_back(std::move(it->second));
+                it = line.held.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (T& d : batch) {
+            if (!on) {
+                out.push_back(std::move(d));
+            } else if (chance(dropPercent)) {
+                dropped++;
+            } else if (chance(delayPercent)) {
+                delayed++;
+                line.held.push_back({now + 1 + below(maxDelayMs), std::move(d)});
+            } else {
+                out.push_back(std::move(d));
+            }
+        }
+        if (on) std::shuffle(out.begin(), out.end(), rng);
+        return out;
+    }
+
+private:
+    struct Held {
+        uint64_t dueMs;
+        EventSink* sink;
+        Event e;
+    };
+    std::vector<Held> held_;
+};
+
+// What a fake does with an event: through the chaos, if any.
+inline void emit(Chaos* chaos, EventSink& sink, Event e) {
+    if (chaos) {
+        chaos->deliver(sink, std::move(e));
+    } else if (sink) {
+        sink(std::move(e));
+    }
+}
 
 struct Core : tesserkit::Core {
     tesserkit::BootInfo boot;
@@ -59,6 +146,7 @@ struct Air {
 
 struct Wifi : tesserkit::Wifi {
     EventSink sink;
+    Chaos* chaos = nullptr;
     std::string hostnameSet;
     int8_t tx = 0;
     tesserkit::PowerSave ps = tesserkit::PowerSave::Min;
@@ -126,13 +214,14 @@ struct Wifi : tesserkit::Wifi {
         Event e;
         e.type = type;
         e.value = value;
-        sink(e);
+        emit(chaos, sink, std::move(e));
     }
 };
 
 // A cable the test plugs in, and a DHCP server that answers it (or not).
 struct Ethernet : tesserkit::Ethernet {
     EventSink sink;
+    Chaos* chaos = nullptr;
     bool starts = true;
     int begins = 0;
     tesserkit::EthernetBoard board;
@@ -164,11 +253,14 @@ struct Ethernet : tesserkit::Ethernet {
     }
     void plug();
     void unplug();
+    // The cable's DHCP server answers again (or at last): a client still
+    // asking gets its lease, as lwIP's keeps asking.
+    void serveDhcp();
     void post(Event::Type type, int32_t value = 0) {
         Event e;
         e.type = type;
         e.value = value;
-        sink(e);
+        emit(chaos, sink, std::move(e));
     }
 };
 
@@ -186,6 +278,7 @@ struct Mdns : tesserkit::Mdns {
 
 struct Clock : tesserkit::Clock {
     EventSink sink;
+    Chaos* chaos = nullptr;
     int64_t epoch = 0;
     std::string tz;
     bool sntpOn = false;
@@ -206,7 +299,7 @@ struct Clock : tesserkit::Clock {
         epoch = ms;
         Event e;
         e.type = Event::Type::TimeSynced;
-        sink(e);
+        emit(chaos, sink, std::move(e));
     }
 };
 
@@ -292,10 +385,12 @@ struct Mqtt : tesserkit::MqttClient {
         bool retain = false;
     };
     tesserkit::EventSink sink;
+    Chaos* chaos = nullptr;
     tesserkit::MqttConfig config;
     int32_t session = 0, sessions = 0;
     bool running = false;
-    bool full = false;  // the outbox refuses messages
+    bool linked = false;  // the session is connected to the broker
+    bool full = false;    // the outbox refuses messages
     int stops = 0;
     std::vector<Message> published;
     std::map<std::string, Message> retained;  // the broker's
@@ -304,10 +399,16 @@ struct Mqtt : tesserkit::MqttClient {
         config = c;
         sink = std::move(s);
         running = true;
+        linked = false;
         return session = ++sessions;
     }
     void stop() override;
     bool publish(const std::string& topic, const std::string& payload, bool retain) override;
+    bool connectedNow(bool& c) override {
+        if (!running) return false;
+        c = linked;
+        return true;
+    }
     // The broker accepted the connection, or lost it.
     void connect();
     void drop(const char* why = "connection lost");
@@ -354,6 +455,7 @@ struct Ble : tesserkit::Ble {
 // NowTP: the test adds nodes nearby and finishes pairings.
 struct NowTp : tesserkit::NowTpRadio {
     tesserkit::EventSink sink;
+    Chaos* chaos = nullptr;
     tesserkit::NowTpConfig config;
     tesserkit::NowTpStatus state;
     std::vector<tesserkit::NowTpPeer> nearby;
@@ -435,7 +537,7 @@ struct NowTp : tesserkit::NowTpRadio {
         e.type = tesserkit::Event::Type::NowTpPairing;
         e.value = ok ? 0 : 1;
         e.text = text;
-        sink(e);
+        emit(chaos, sink, std::move(e));
     }
     void found(const char* name, const char* mac, bool tesser = true) {
         tesserkit::NowTpPeer p;
@@ -447,7 +549,7 @@ struct NowTp : tesserkit::NowTpRadio {
         nearby.push_back(p);
         tesserkit::Event e;
         e.type = tesserkit::Event::Type::NowTpPeers;
-        sink(e);
+        emit(chaos, sink, std::move(e));
     }
 };
 
@@ -598,6 +700,7 @@ struct Platform {
     Power power;
     Pins pins;
     UdpApi udpApi;
+    Chaos chaos;
     void install(tesserkit::Device& dev, bool withCoredump = true) {
         tesserkit::Platform& p = dev.platform();
         p.core = &core;
@@ -617,6 +720,8 @@ struct Platform {
         p.power = &power;
         p.pins = &pins;
         udpApi.clock = &core.now;
+        chaos.clock = &core.now;
+        wifi.chaos = ethernet.chaos = clock.chaos = mqtt.chaos = nowtp.chaos = &chaos;
         nowtp.clock = &core.now;
         p.udpApi = &udpApi;
     }

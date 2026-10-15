@@ -792,8 +792,18 @@ void Network::poll(uint32_t nowMs) {
             linkIp_ = formatIpv4(info.ip);
             staStatus_->changed();
         }
-    } else if (sta_ == Sta::Connecting && associated_ && wifi_->staInfo(info) && info.ip) {
-        connected(nowMs);  // its address came, though the event didn't
+    } else if (sta_ == Sta::Connecting) {
+        if (associated_ && wifi_->staInfo(info) && info.ip) connected(nowMs);  // its address came, though the event didn't
+    } else if (wifi_->staInfo(info)) {
+        // Joined, though the station counts on nothing: a late event said
+        // the attempt failed (a disconnection from before it). Idle wants
+        // no station (kept away by Ethernet, off, nothing saved): it
+        // leaves. Otherwise it is the network it was after.
+        if (sta_ == Sta::Idle) {
+            wifi_->disconnect();
+        } else if (info.ip) {
+            connected(nowMs);
+        }
     }
     if (apUp_) setApClients(wifi_->apClients());
 }

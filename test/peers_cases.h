@@ -24,6 +24,8 @@ struct PeersRig : udp_cases::UdpRig {
     std::unique_ptr<tesser::DatagramEndpoint> peerNow;
     std::vector<std::pair<PeerAddress, std::string>> peerNowOut;
     bool udpUp = true, nowUp = true;  // the links carry datagrams
+    fake::Chaos::Line<fake::NowTp::Message> nowMine;
+    fake::Chaos::Line<std::pair<PeerAddress, std::string>> nowTheirs;
     std::vector<std::string> lost;    // onDeviceLost()
 
     PeersRig() {
@@ -49,9 +51,9 @@ struct PeersRig : udp_cases::UdpRig {
     void pumpAll(uint32_t ms = 100) {
         for (uint32_t t = 0; t < ms || !peerNowOut.empty() || !fake.nowtp.sent.empty(); t += 20) {
             if (t > 20000) break;
-            auto mine = std::move(fake.nowtp.sent);
+            auto mine = fake.chaos.carry(nowMine, std::move(fake.nowtp.sent));
             fake.nowtp.sent.clear();
-            auto theirs = std::move(peerNowOut);
+            auto theirs = fake.chaos.carry(nowTheirs, std::move(peerNowOut));
             peerNowOut.clear();
             if (nowUp) {
                 for (auto& m : mine) peerNow->receive(mac(kSelfMac), m.text.data(), m.text.size(), true);

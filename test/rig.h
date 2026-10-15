@@ -63,6 +63,7 @@ struct Rig {
 
     void step(uint32_t ms = 20) {
         fake.core.now += ms;
+        fake.chaos.release();
         dev.loop();
     }
     void run(uint32_t ms) {
