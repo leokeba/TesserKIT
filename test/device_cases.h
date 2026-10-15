@@ -243,12 +243,49 @@ TEST(device_factory_reset) {
     r.set("/sys/time/tz", "\"EST5EDT\"");
     r.run(2500);
     CHECK_EQ(r.storage.records.size(), 2u);  // sys and @version
+    // The action replies first: the device's task erases, at its next loop,
+    // not the task the request came in on (a transport's).
     CHECK_EQ(r.set("/sys/factoryReset").status, Status::Ok);
+    CHECK_EQ(r.storage.records.size(), 2u);
+    r.step();
     CHECK(r.storage.records.empty());
     r.set("/sys/time/tz", "\"PST8PDT\"");  // too late: nothing is saved any more
     r.run(3000);
     CHECK(r.storage.records.empty());
     CHECK_EQ(r.fake.core.restarts, 1);
+}
+
+// Services hear of a factory reset in the device's task, whichever task the
+// action came in on (an HTTP or NowTP one), and only then is the storage
+// swapped: NowTp's forgetKey() then never races NowTP's own task.
+struct ResetWatcher : tesserkit::Service {
+    std::thread::id resetIn;
+    int resets = 0;
+    explicit ResetWatcher(tesserkit::Device& d) : Service(d, "watcher") {}
+    void describe(tesser::Object&) override {}
+
+protected:
+    void factoryReset() override {
+        resetIn = std::this_thread::get_id();
+        resets++;
+    }
+};
+
+TEST(device_factory_reset_runs_in_the_device_task) {
+    SysRig r;
+    ResetWatcher w{r.dev};
+    CHECK(r.dev.begin());
+    rig::Reply reply;
+    std::thread transport([&r, &reply] { reply = r.set("/sys/factoryReset"); });
+    transport.join();
+    CHECK_EQ(reply.status, Status::Ok);
+    CHECK_EQ(w.resets, 0);
+    r.step();
+    CHECK_EQ(w.resets, 1);
+    CHECK(w.resetIn == std::this_thread::get_id());
+    r.run(600);
+    CHECK_EQ(r.fake.core.restarts, 1);
+    CHECK_EQ(w.resets, 1);
 }
 
 TEST(device_state_callbacks) {

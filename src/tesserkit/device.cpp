@@ -273,6 +273,8 @@ void Device::loop() {
     State before = state_;
     {
         tesser::Lock lock(api_);
+        // Before api_.poll() below can save anything.
+        if (resetWanted_.exchange(false)) resetNow();
         for (const Event& e : events) {
             for (Service* s = services_; s; s = s->next_) s->event(e);
         }
@@ -340,14 +342,19 @@ void Device::post(Event e) {
 
 void Device::restartIn(uint32_t ms) { restartDelayMs_.store(ms == kNoRestart ? ms - 1 : ms); }
 
-bool Device::factoryReset() {
-    bool ok = storage_ ? storage_->erase() : true;
+void Device::factoryReset() {
+    resetWanted_.store(true);
+    wake();  // not waiting for the next period
+}
+
+void Device::resetNow() {
+    if (storage_ && !storage_->erase()) tesser::logError("tesserkit: factory reset: the settings couldn't be erased");
     for (Service* sv = services_; sv; sv = sv->next_) sv->factoryReset();
     // Nothing is saved any more: the running state would be written back.
     if (!erased_) erased_ = new tesser::MemoryStorage();
     api_.persistence(*erased_, 2000);
+    tesser::logWarning("tesserkit: factory reset, restarting");
     restartIn(500);
-    return ok;
 }
 
 void Device::fail(bool failed) {

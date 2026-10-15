@@ -187,8 +187,10 @@ public:
 
     // Restarts `ms` from now, from the device's task. Thread-safe.
     void restartIn(uint32_t ms);
-    // Erases the persisted state, then restarts.
-    bool factoryReset();
+    // Erases the persisted state, then restarts. Thread-safe: the erase runs
+    // in the device's task at its next loop (services' factoryReset()
+    // included), so an action calling this replies first.
+    void factoryReset();
     // Milliseconds the device has been online (0 if it isn't).
     uint32_t onlineMs() const;
     // Milliseconds the device has been within clients' reach: online, or with
@@ -231,6 +233,7 @@ private:
     bool startTask();
     tesser::Storage* defaultStorage();
     void updateState(uint32_t nowMs);
+    void resetNow();  // factoryReset()'s work, in the device's task under the API lock
     std::string defaultHostname() const;
     // TesserAPI's migration: TesserKIT's services, then the application's.
     bool migrate(std::string_view record, uint32_t version, JsonVariant value);
@@ -273,7 +276,8 @@ private:
     std::atomic<uint32_t> restartDelayMs_{kNoRestart};  // set by restartIn()
     bool restartArmed_ = false;
     uint32_t restartAtMs_ = 0;
-    tesser::MemoryStorage* erased_ = nullptr;  // after factoryReset(): saves go nowhere
+    std::atomic<bool> resetWanted_{false};     // set by factoryReset()
+    tesser::MemoryStorage* erased_ = nullptr;  // after the reset: saves go nowhere
 
     static constexpr size_t kMaxEvents = 32;
     static constexpr size_t kMaxMqttMessages = 8;

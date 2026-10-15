@@ -150,6 +150,8 @@ TEST(nowtp_factory_reset_forgets_the_key) {
     r.fake.nowtp.paired(true, "10:52:1c:75:f3:7c");
     r.settle();
     CHECK_EQ(r.set("/sys/factoryReset").status, Status::Ok);
+    CHECK_EQ(r.fake.nowtp.forgets, 0);  // not in the request's task
+    r.step();
     CHECK_EQ(r.fake.nowtp.forgets, 1);
 }
 

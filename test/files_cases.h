@@ -303,6 +303,7 @@ TEST(backup_factory_reset_removes_stored) {
     r.set("/sys/backup/save", "\"keepme\"");
     r.uploadNamed("/sys/files/upload", "other.txt", "o");
     CHECK_EQ(r.set("/sys/factoryReset").status, Status::Ok);
+    r.step();
     CHECK(!r.onDisk("backups"));  // they hold secrets
     CHECK(r.onDisk("other.txt"));
 }

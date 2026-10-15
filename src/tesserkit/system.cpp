@@ -79,8 +79,8 @@ void System::describe(tesser::Object& o) {
         .writeAccess(Access::Admin)
         .ui("confirm", "Restart the device?")
         .ui("style", "danger");
-    o.action("factoryReset",
-             [&dev] { return dev.factoryReset() ? tesser::Status::Ok : tesser::Status::Internal; })
+    // Replies at once; the device's task erases, then restarts.
+    o.action("factoryReset", [&dev] { dev.factoryReset(); })
         .label("Factory reset")
         .writeAccess(Access::Admin)
         .ui("confirm", "Erase every setting and restart?")

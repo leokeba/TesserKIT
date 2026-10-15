@@ -104,7 +104,7 @@ Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of 
 
 - `src/tesserkit/platform/esp/` implements them on ESP-IDF APIs, which Arduino-ESP32 3.x also ships, so one implementation serves both.
 - `test/fake_platform.*` implements them in memory for host tests: a Wi-Fi radio whose scans and connections the test scripts, a clock the test advances, an OTA partition that's a byte vector.
-- **Services also hear of a factory reset** (`Service::factoryReset()`), before the restart, to erase what they keep outside the device's storage: NowTp's installation key.
+- **Services also hear of a factory reset** (`Service::factoryReset()`), before the restart, to erase what they keep outside the device's storage: NowTp's installation key. It runs in the device's task under the API lock, like `tick()`, whichever task asked for the reset.
 - **Linked when used:** `Device::platform()` holds a pointer per interface. A service fills the ones it uses with the ESP implementation when the application (or a test) didn't, so an interface whose service isn't instantiated isn't linked. Events from platform tasks (Wi-Fi, SNTP) are posted to the device and handed to the services in its task, under the API lock.
 
 Service code is then plain state machines driven by `tick(nowMs)` and platform callbacks, testable on the host like TesserAPI's core.
@@ -182,6 +182,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - Values that only change at boot (chip, flash, idf) are constants: zero cost per read.
 - Watched values (heap, uptime, temperature) are sampled only while someone is subscribed (TesserAPI §11), so a UI chart (TesserUI §7.7) replaces ESP32-sveltekit's analytics service and its device-side history.
 - `restart` answers first, then restarts after 500 ms, so the client sees the reply.
+- `factoryReset` answers first too: `Device::factoryReset()` only asks for it (thread-safe), and the device's task, at its next loop, erases the storage, calls each service's `factoryReset()`, stops saving (the running state would be written back), and restarts 500 ms later. So the services' erasures (NowTP's key, Files' backups) never run in a transport's task beside NowTP's own or the API's saves. An erase the storage refuses is logged; the reply can no longer say so.
 - The firmware's log lines are the Log service's (§5.14).
 
 ### 5.2 Network
