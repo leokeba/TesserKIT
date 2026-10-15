@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "tesserkit/crypto.h"
+#include "tesserkit/limits.h"
 #include "tesserkit/time_service.h"
 
 namespace tesserkit {
@@ -189,7 +190,7 @@ void Auth::describe(tesser::Object& o) {
         .writeAccess(Access::Admin)
         .persist()
         .ui("advanced");
-    keyNode_ = &o.value("key", key_).readOnly().secret().persist().readAccess(Access::Admin).ui("hidden");
+    keyNode_ = &o.value("key", key_).validate(limits::atMost<64>).readOnly().secret().persist().readAccess(Access::Admin).ui("hidden");
 
     if (defaultName_ && defaultPassword_) {
         User u;

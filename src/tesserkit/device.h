@@ -12,6 +12,7 @@
 #include "tesser/api.h"
 #include "tesser/storage.h"
 #include "tesserkit/platform.h"
+#include "tesserkit/settings_store.h"
 
 #if defined(ESP_PLATFORM)
 #include "tesser/transports/http_server.h"
@@ -119,6 +120,13 @@ public:
     Device& cors(const char* origin);      // CORS headers for other origins
     Device& task(bool own);  // false: the application calls loop() itself
     Device& storage(tesser::Storage& storage);  // default: NVS, namespace "tesserkit"
+    // The NVS partition's size, for refusing a record it couldn't rewrite
+    // (docs/DESIGN.md section 11). Default: the "nvs" partition's with the
+    // default storage, else none (0).
+    Device& settingsCapacity(uint32_t bytes);
+    // Why a settings record wasn't saved ("" when all were): too large for
+    // NVS. The stored one stays, so the change is lost at the next boot.
+    const std::string& settingsRefused() const { return settings_.refused(); }
     // URI handler slots for the application's own routes (default 4).
     Device& extraHandlers(uint8_t n);
     // The version of the application's own persisted state (default 0), and
@@ -244,6 +252,9 @@ private:
     Platform platform_;
     BootInfo info_;
     tesser::Storage* storage_ = nullptr;
+    SettingsStore settings_;  // in front of storage_
+    uint32_t settingsCapacity_ = 0;
+    bool capacitySet_ = false;
     uint16_t appVersion_ = 0;
     Migration appMigrate_;
     Service* services_ = nullptr;

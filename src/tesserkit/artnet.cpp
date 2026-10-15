@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "tesserkit/limits.h"
+
 namespace tesserkit {
 
 using tesser::Access;
@@ -78,6 +80,7 @@ void ArtNet::describe(tesser::Object& o) {
                         .validate([this](const std::string& v) {
                             // Before the service starts the tree may be
                             // incomplete: a boot load keeps what it stored.
+                            if (v.size() > limits::kPath) return limits::length<limits::kPath>(v);
                             return v.empty() || !client_ || resolves(dev_.api(), v)
                                        ? Check::ok()
                                        : Check::fail(Status::NotFound, "no such node");

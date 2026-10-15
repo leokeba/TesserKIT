@@ -5,6 +5,8 @@
 
 #include <algorithm>
 
+#include "tesserkit/limits.h"
+
 namespace tesserkit {
 
 using tesser::Access;
@@ -21,7 +23,8 @@ bool startsWith(const std::string& s, const char* prefix) { return s.compare(0, 
 
 Check topicPart(const std::string& v) {
     bool ok = v.find_first_of("+#") == std::string::npos && (v.empty() || (v.front() != '/' && v.back() != '/'));
-    return ok ? Check::ok() : Check::fail(Status::InvalidValue, "no + or #, and no slash at either end");
+    return ok ? limits::length<limits::kSecret>(v)
+              : Check::fail(Status::InvalidValue, "no + or #, and no slash at either end");
 }
 
 #if !defined(TESSERKIT_NO_HOME_ASSISTANT)
@@ -131,18 +134,25 @@ void Mqtt::describe(tesser::Object& o) {
     settings_.push_back(&o.value("enabled", enabled_).persist());
     settings_.push_back(&o.value("uri", uri_)
                              .validate([](const std::string& v) {
-                                 return v.empty() || startsWith(v, "mqtt://") || startsWith(v, "mqtts://") ||
-                                                startsWith(v, "ws://") || startsWith(v, "wss://")
-                                            ? Check::ok()
-                                            : Check::fail(Status::InvalidValue, "mqtt://, mqtts://, ws:// or wss://");
+                                 if (!(v.empty() || startsWith(v, "mqtt://") || startsWith(v, "mqtts://") ||
+                                       startsWith(v, "ws://") || startsWith(v, "wss://"))) {
+                                     return Check::fail(Status::InvalidValue, "mqtt://, mqtts://, ws:// or wss://");
+                                 }
+                                 return limits::length<limits::kUri>(v);
                              })
                              .persist()
                              .label("Broker")
                              .ui("placeholder", "mqtt://broker.local:1883"));
-    settings_.push_back(&o.value("user", user_).persist().label("User name"));
-    settings_.push_back(&o.value("password", password_).secret().persist());
     settings_.push_back(
-        &o.value("clientId", clientId_).persist().label("Client ID").ui("placeholder", "the hostname").ui("advanced"));
+        &o.value("user", user_).validate(limits::atMost<limits::kSecret>).persist().label("User name"));
+    settings_.push_back(
+        &o.value("password", password_).validate(limits::atMost<limits::kLongSecret>).secret().persist());
+    settings_.push_back(&o.value("clientId", clientId_)
+                             .validate(limits::atMost<limits::kSecret>)
+                             .persist()
+                             .label("Client ID")
+                             .ui("placeholder", "the hostname")
+                             .ui("advanced"));
     settings_.push_back(&o.value("prefix", prefix_)
                              .validate(topicPart)
                              .persist()
@@ -155,6 +165,7 @@ void Mqtt::describe(tesser::Object& o) {
                                    .validate([this](const std::string& v) {
                                        // Before the service starts the tree may be
                                        // incomplete: a boot load keeps what it stored.
+                                       if (v.size() > limits::kPath) return limits::length<limits::kPath>(v);
                                        return v.empty() || !commander_ || v == "/" || resolves(dev_.api(), v)
                                                   ? Check::ok()
                                                   : Check::fail(Status::NotFound, "no such node");
@@ -174,7 +185,9 @@ void Mqtt::describe(tesser::Object& o) {
                                       .doc("Announces the published values and actions to Home Assistant (MQTT discovery)"));
     discoverySettings_.push_back(&o.value("discoveryPrefix", discoveryPrefix_)
                                       .validate([](const std::string& v) {
-                                          return v.empty() ? Check::fail(Status::InvalidValue, "empty") : topicPart(v);
+                                          return v.empty() ? Check::fail(Status::InvalidValue, "empty")
+                                                           : v.size() > limits::kName ? limits::length<limits::kName>(v)
+                                                                                      : topicPart(v);
                                       })
                                       .persist()
                                       .label("Discovery prefix")

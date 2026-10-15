@@ -131,6 +131,12 @@ Device& Device::task(bool own) {
     return *this;
 }
 
+Device& Device::settingsCapacity(uint32_t bytes) {
+    settingsCapacity_ = bytes;
+    capacitySet_ = true;
+    return *this;
+}
+
 Device& Device::storage(tesser::Storage& s) {
     storage_ = &s;
     return *this;
@@ -232,7 +238,8 @@ bool Device::begin() {
                             [this](std::string_view record, uint32_t version, JsonVariant value) {
                                 return migrate(record, version, value);
                             });
-        api_.persistence(*storage_, 2000);
+        settings_.wrap(storage_, settingsCapacity_);
+        api_.persistence(settings_, 2000);
         api_.load();
     }
     for (Service* s = services_; s; s = s->next_) s->start();
@@ -348,7 +355,7 @@ void Device::factoryReset() {
 }
 
 void Device::resetNow() {
-    if (storage_ && !storage_->erase()) tesser::logError("tesserkit: factory reset: the settings couldn't be erased");
+    if (storage_ && !settings_.erase()) tesser::logError("tesserkit: factory reset: the settings couldn't be erased");
     for (Service* sv = services_; sv; sv = sv->next_) sv->factoryReset();
     // Nothing is saved any more: the running state would be written back.
     if (!erased_) erased_ = new tesser::MemoryStorage();

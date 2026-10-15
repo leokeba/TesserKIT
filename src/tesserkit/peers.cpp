@@ -6,6 +6,8 @@
 #include "tesser/remote.h"
 #include "tesser/udp_link.h"
 
+#include "tesserkit/limits.h"
+
 namespace tesserkit {
 
 using tesser::Access;
@@ -100,7 +102,7 @@ void describe(tesser::Object& o, PeerSettings& s) {
             return parseId(v, a) ? Check::ok() : Check::fail(Status::InvalidValue, "a MAC: 12 hex digits");
         })
         .ui("placeholder", "10521c75f37c");
-    o.value("name", s.name).doc("Its name under /peers when declared by address").ui("placeholder", "from the id");
+    o.value("name", s.name).validate(limits::atMost<limits::kName>).doc("Its name under /peers when declared by address").ui("placeholder", "from the id");
     o.value("order", s.order).label("Routes").validate(checkOrder).ui("placeholder", "the default");
     o.value("address", s.address)
         .doc("Reached over UDP at this address even when it isn't discovered (another subnet)")
@@ -112,15 +114,16 @@ void describe(tesser::Object& o, PeerSettings& s) {
         })
         .ui("placeholder", "discovered");
     o.value("user", s.user)
+        .validate(limits::atMost<limits::kName>)
         .label("Account")
         .doc("This device's account on that node; empty: the account of every node")
         .ui("placeholder", "the default");
-    o.value("password", s.password).secret();
+    o.value("password", s.password).validate(limits::atMost<limits::kSecret>).secret();
 }
 
 void describe(tesser::Object& o, PeerAccount& a) {
-    o.value("name", a.name).ui("placeholder", "none");
-    o.value("password", a.password).secret();
+    o.value("name", a.name).validate(limits::atMost<limits::kName>).ui("placeholder", "none");
+    o.value("password", a.password).validate(limits::atMost<limits::kSecret>).secret();
 }
 
 Peers::Peers(Device& dev) : Service(dev, "peers") {}

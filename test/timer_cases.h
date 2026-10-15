@@ -114,6 +114,20 @@ TEST(timers_errors_are_kept) {
     CHECK_EQ(r.value("/sys/timers/bad/last"), "\"invalid_value: expected boolean\"");
 }
 
+// A result is persisted: cut to its limit, on a character's boundary.
+TEST(timers_long_errors_are_cut) {
+    TimerRig r;
+    // "invalid_value: " is 15 bytes; the é straddles byte 48.
+    r.dev.api().object("led").action("fail", [] {
+        return tesser::Check::fail(Status::InvalidValue, "01234567890123456789012345678901é and on and on and on and on");
+    });
+    r.timers.add(r.timer("bad", "08:00", "/led/fail", "null"));
+    r.fake.clock.epoch = kWednesday0759 + 60000;
+    CHECK(r.dev.begin());
+    r.advance(1500);
+    CHECK_EQ(r.value("/sys/timers/bad/last"), "\"invalid_value: 01234567890123456789012345678901\"");
+}
+
 TEST(timers_writes_are_checked) {
     TimerRig r;
     CHECK(r.dev.begin());

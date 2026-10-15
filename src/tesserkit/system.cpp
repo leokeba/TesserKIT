@@ -48,6 +48,12 @@ void System::describe(tesser::Object& o) {
         .unit("B")
         .doc("The largest allocation the heap can serve now; far below the free heap, it is fragmented")
         .ui("advanced");
+    // A settings record too large for NVS (docs/DESIGN.md section 11).
+    s.value("settings", [&dev] { return dev.settingsRefused(); })
+        .label("Settings not saved")
+        .watch()
+        .ui("style", "warning")
+        .ui("visibleWhen", "settings!=");
     if (info.psram) s.value("psram", [&dev] { return dev.core().freePsram(); }).label("Free PSRAM").unit("B").watch();
     s.value("resetReason", resetReason_,
             {"power-on", "software", "panic", "watchdog", "brownout", "deep-sleep", "other"})

@@ -8,6 +8,8 @@
 #include <iterator>
 #include <utility>
 
+#include "tesserkit/limits.h"
+
 namespace tesserkit {
 
 using tesser::Access;
@@ -348,7 +350,7 @@ void Network::describe(tesser::Object& o) {
         .persist()
         .ui("labels", "Always,When offline,Never");
     apNodes_.clear();
-    apNodes_.push_back(&ap.value("ssid", apSsid_).persist().label("Name").ui("placeholder", "the hostname"));
+    apNodes_.push_back(&ap.value("ssid", apSsid_).validate(limits::atMost<32>).persist().label("Name").ui("placeholder", "the hostname"));
     apNodes_.push_back(&ap.value("password", apPassword_)
                            .validate([](const std::string& v) {
                                return v.empty() || (v.size() >= 8 && v.size() <= 63)

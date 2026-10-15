@@ -1,5 +1,6 @@
 #include "tesserkit/nowtp.h"
 
+#include "tesserkit/limits.h"
 #include "tesserkit/peers.h"
 
 namespace tesserkit {
@@ -77,6 +78,7 @@ void NowTp::describe(tesser::Object& o) {
                           .doc("Espressif's Long Range mode, besides 802.11b/g/n: farther, slower")
                           .ui("advanced");
     restartSettings_.push_back(&o.value("pairingCode", pairingCode_)
+                                    .validate(limits::atMost<limits::kSecret>)
                                     .secret()
                                     .persist()
                                     .label("Pairing code")

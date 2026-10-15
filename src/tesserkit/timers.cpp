@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "tesserkit/limits.h"
 #include "tesserkit/time_service.h"
 
 namespace tesserkit {
@@ -59,12 +60,14 @@ void Timers::describe(tesser::Object& o) {
                             .validate([this](const std::string& v) {
                                 // Until the service starts, the tree may be
                                 // incomplete: a boot load keeps what it stored.
+                                if (v.size() > limits::kPath) return limits::length<limits::kPath>(v);
                                 return !started_ || resolves(v) ? Check::ok()
                                                                 : Check::fail(Status::NotFound, "no such node");
                             })
                             .ui("placeholder", "/led/on");
                         e.value("value", t.value)
                             .validate([](const std::string& v) {
+                                if (v.size() > limits::kValue) return limits::length<limits::kValue>(v);
                                 JsonDocument doc;
                                 return deserializeJson(doc, v)
                                            ? Check::fail(Status::InvalidValue,
@@ -73,7 +76,7 @@ void Timers::describe(tesser::Object& o) {
                             })
                             .ui("placeholder", "true");
                         // Read-only, not const: a backup or a boot restores it.
-                        e.value("last", t.last).readOnly().label("Last run");
+                        e.value("last", t.last).validate(limits::atMost<limits::kResult>).readOnly().label("Last run");
                     })
                  .key("name")
                  .maxSize(16)
@@ -145,6 +148,12 @@ void Timers::finished(const std::string& name, std::string result) {
         if (result != "ok") {
             tesser::logWarning("tesserkit: timer \"%s\": %s", t.name, result.c_str());
             failed_->emit(std::string(t.name) + ": " + result);
+        }
+        // Persisted: cut to its limit, on a character's boundary.
+        if (result.size() > limits::kResult) {
+            size_t n = limits::kResult;
+            while (n > 0 && (static_cast<unsigned char>(result[n]) & 0xC0) == 0x80) n--;
+            result.resize(n);
         }
         t.last = std::move(result);
         list_->changed();

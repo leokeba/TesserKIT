@@ -146,7 +146,7 @@ TEST(device_without_platform_fails) {
 TEST(device_sys_tree) {
     SysRig r;
     CHECK(r.dev.begin());
-    CHECK_EQ(r.value("/"), "{\"sys\":{\"status\":{\"state\":\"online\",\"uptime\":1,\"heap\":180000,\"minHeap\":150000,\"maxBlock\":110000,"
+    CHECK_EQ(r.value("/"), "{\"sys\":{\"status\":{\"state\":\"online\",\"uptime\":1,\"heap\":180000,\"minHeap\":150000,\"maxBlock\":110000,\"settings\":\"\","
                            "\"resetReason\":\"power-on\",\"chip\":\"ESP32-D0WD-V3 rev 3.0, 2 cores, 240 MHz\","
                            "\"flash\":4194304,\"appSize\":900000,\"appSlot\":2031616,\"idf\":\"v5.4\","
                            "\"mac\":\"c8:f0:9e:f4:a6:7c\"},\"coredumpPresent\":false}}");

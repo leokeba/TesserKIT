@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "tesserkit/limits.h"
+
 namespace tesserkit {
 
 using tesser::Access;
@@ -21,6 +23,9 @@ bool digits(std::string_view s) {
 bool relative(std::string_view s) { return s.size() > 1 && (s[0] == '+' || s[0] == '-') && digits(s.substr(1)); }
 
 // A step's name: anything an index or a relative reference can't be.
+// A step's name (24 characters at most), its index, or "+1", "-2".
+constexpr size_t kStepRef = 24;
+
 bool nameOk(std::string_view s) { return s.empty() || !(s[0] == '+' || s[0] == '-' || (s[0] >= '0' && s[0] <= '9')); }
 
 int toIndex(std::string_view s) {
@@ -31,6 +36,7 @@ int toIndex(std::string_view s) {
 }
 
 Check jsonOk(const std::string& v) {
+    if (v.size() > limits::kValue) return limits::length<limits::kValue>(v);
     JsonDocument doc;
     return deserializeJson(doc, v) ? Check::fail(Status::InvalidValue, "not JSON (an action without argument: null)")
                                    : Check::ok();
@@ -91,6 +97,7 @@ void Sequencer::describe(tesser::Object& o) {
                    .validate([this](const std::string& v) {
                        // Until the service starts, the tree may be
                        // incomplete: a boot load keeps what it stored.
+                       if (v.size() > limits::kPath) return limits::length<limits::kPath>(v);
                        return !started_ || resolves(dev_.api(), v) ? Check::ok()
                                                                     : Check::fail(Status::NotFound, "no such node");
                    })
@@ -101,6 +108,7 @@ void Sequencer::describe(tesser::Object& o) {
                e.value("ms", s.ms).range(0, 86400000).unit("ms");
                e.value("next", s.next)
                    .validate([](const std::string& v) {
+                       if (v.size() > kStepRef) return limits::length<kStepRef>(v);
                        return v.empty() || digits(v) || relative(v) || nameOk(v)
                                   ? Check::ok()
                                   : Check::fail(Status::InvalidValue, "a step's name, its index, or +1, -2...");
@@ -114,6 +122,7 @@ void Sequencer::describe(tesser::Object& o) {
         .label("Steps");
     o.value("boot", boot_)
         .validate([](const std::string& v) {
+            if (v.size() > kStepRef) return limits::length<kStepRef>(v);
             return v.empty() || digits(v) || nameOk(v) ? Check::ok()
                                                        : Check::fail(Status::InvalidValue, "a step's name or index");
         })
@@ -129,6 +138,7 @@ void Sequencer::describe(tesser::Object& o) {
                   .ui("advanced");
     f.value("path", finallyPath_)
         .validate([this](const std::string& v) {
+            if (v.size() > limits::kPath) return limits::length<limits::kPath>(v);
             return v.empty() || !started_ || resolves(dev_.api(), v) ? Check::ok()
                                                                       : Check::fail(Status::NotFound, "no such node");
         })

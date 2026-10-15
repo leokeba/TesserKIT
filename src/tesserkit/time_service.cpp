@@ -5,6 +5,8 @@
 
 #include <utility>
 
+#include "tesserkit/limits.h"
+
 namespace tesserkit {
 
 using tesser::Access;
@@ -81,7 +83,7 @@ void Time::describe(tesser::Object& o) {
                    .ui("placeholder", "CET-1CEST,M3.5.0,M10.5.0/3");
     auto& s = o.object("sntp").label("Network time").writeAccess(Access::Admin).ui("advanced");
     sntpNode_ = &s.value("enabled", sntpOn_).persist();
-    serverNode_ = &s.value("server", server_).persist();
+    serverNode_ = &s.value("server", server_).validate(limits::atMost<limits::kHost>).persist();
     o.action("set",
              [this](int64_t ms) -> Status {
                  if (ms < kValidAfterMs) return Status::InvalidValue;

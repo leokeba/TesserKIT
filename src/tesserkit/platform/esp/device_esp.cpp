@@ -12,6 +12,7 @@
 #include "esp_http_server.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_partition.h"
 #include "nvs_flash.h"
 
 namespace tesserkit {
@@ -133,6 +134,10 @@ tesser::Storage* Device::defaultStorage() {
         return nullptr;
     }
     static tesser::NvsStorage storage("tesserkit");
+    if (!capacitySet_) {
+        const esp_partition_t* p = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, "nvs");
+        settingsCapacity_ = p ? static_cast<uint32_t>(p->size) : 0;
+    }
     return &storage;
 }
 
