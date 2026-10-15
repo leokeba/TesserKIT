@@ -79,6 +79,8 @@ def main():
         d.name = d.value('/sys/network/hostname')
         st = d.value('/sys/udp/status')
         check(f'running_{d.name}', st and st['running'], st)
+        # Failures before this run (a peer restarted by another test) don't count.
+        d.failed_before = st['failed'] if st else 0
 
     # Every device shows the others under /peers (by UDP, or NowTP first).
     for d in devs:
@@ -134,7 +136,7 @@ def main():
     for d in devs:
         d.set('/led/on', False)
         st = d.value('/sys/udp/status')
-        check(f'nothing_failed_{d.name}', st and st['failed'] == 0, st)
+        check(f'nothing_failed_{d.name}', st and st['failed'] == d.failed_before, st)
     print(f'DONE pass={PASS} fail={FAIL}')
     sys.exit(1 if FAIL else 0)
 

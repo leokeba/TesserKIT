@@ -11,3 +11,4 @@ compile_commands.json
 __pycache__/
 secrets.h
 .DS_Store
+test/hil_boards.json

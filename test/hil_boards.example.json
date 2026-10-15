@@ -1,0 +1,18 @@
+{
+  "work": "/tmp/tesserkit-hil",
+  "heapFloor": 8192,
+  "settle": 60,
+  "builds": {
+    "full": [],
+    "gledopto": ["-DETHERNET_BOARD=gledopto"]
+  },
+  "boards": [
+    {"name": "DEVKIT-V3", "role": "gateway", "mac": "c8:f0:9e:f4:a6:7c", "port": "/dev/cu.usbserial-3",
+     "url": "http://192.168.1.59", "hostname": "tesserkit-a67c", "build": "full"},
+    {"name": "DEVKIT-R1", "role": "peer", "mac": "10:52:1c:75:f3:7c", "port": "/dev/cu.usbserial-0001",
+     "url": "http://192.168.1.98", "hostname": "tesserkit-f37c", "build": "full"},
+    {"name": "Gledopto", "role": "ethernet", "mac": "70:4b:ca:8f:bd:e4", "port": "/dev/cu.wchusbserial10",
+     "baud": 115200, "url": "http://192.168.1.30", "hostname": "tesserkit-bde4", "build": "gledopto",
+     "staticIp": "192.168.1.231"}
+  ]
+}
