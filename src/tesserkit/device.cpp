@@ -284,9 +284,13 @@ tesser::Storage* Device::defaultStorage() {
 }
 
 std::string Device::settingsStatus() const {
-    const std::string& refused = settings_.refused();
-    if (settingsWhere_.empty()) return refused;
-    return refused.empty() ? settingsWhere_ : settingsWhere_ + "; " + refused;
+    std::string s = settingsWhere_;
+    for (const std::string* part : {&settings_.refused(), &settings_.waiting()}) {
+        if (part->empty()) continue;
+        if (!s.empty()) s += "; ";
+        s += *part;
+    }
+    return s;
 }
 
 void Device::loop() {

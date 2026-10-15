@@ -18,12 +18,14 @@
 
 namespace tesserkit {
 
-// What writing a file through stdio takes from the heap on LittleFS, the
-// record aside (TesserAPI reserved and allocated it already): the stdio
-// buffer (newlib's is the filesystem's block, 4 KB), LittleFS's cache for
-// an open file (CONFIG_LITTLEFS_CACHE_SIZE, 512 bytes by default), and the
-// VFS's file structure and descriptor table.
-constexpr size_t kFileWriteBytes = 5 * 1024;
+// What writing a file takes from the heap on LittleFS, the record aside
+// (TesserAPI reserved and allocated it already): LittleFS's cache for an
+// open file (CONFIG_LITTLEFS_CACHE_SIZE, 512 bytes by default), and the
+// VFS's and newlib's file structures. TesserAPI's FileStorage writes
+// unbuffered: a stdio buffer would add the filesystem's block, 4 KB, which a
+// tight board (a Gledopto with every service, 4.8 KB above the floor) can't
+// give, and every save failed there.
+constexpr size_t kFileWriteBytes = 1536;
 
 class SettingsStore : public tesser::Storage {
 public:
@@ -48,6 +50,9 @@ public:
 
     // Why the last refused record was refused ("" once every record fits).
     const std::string& refused() const { return refused_; }
+    // A save that couldn't be made yet (no memory, or the write failed),
+    // which TesserAPI tries again; "" once it is.
+    const std::string& waiting() const { return waiting_; }
 
     // Whether NVS can keep rewriting a record of `record` bytes beside
     // `others` bytes of other records, in a partition of `capacity` bytes.
@@ -74,6 +79,8 @@ private:
     std::map<std::string, size_t, std::less<>> sizes_;  // what each stored record takes
     std::map<std::string, std::string, std::less<>> refusals_;
     std::string refused_;
+    std::string waiting_;
+    void wait(std::string_view key, const char* why);
 };
 
 // Moves the settings records named `keys` from `from` (NVS; null if there

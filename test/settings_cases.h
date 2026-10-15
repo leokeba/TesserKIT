@@ -350,12 +350,15 @@ TEST(settings_save_waits_for_memory) {
     r.run(2500);
     CHECK_EQ(r.set("/sys/time/tz", "\"EST5EDT\"").status, Status::Ok);
     {
-        rig::BudgetLimit limit(2048);  // the record's text, not the write's buffers
+        rig::BudgetLimit limit(512);  // under the write's buffers
         r.run(2500);
         CHECK(r.file(".settings/sys.json").find("EST5EDT") == std::string::npos);
+        // Told, not silent: a change not saved yet is lost at a restart.
+        CHECK_EQ(r.value("/sys/status/settings"), "\"\\\"sys\\\" waiting to be saved: not enough free memory\"");
     }
     r.run(200);
     CHECK(r.file(".settings/sys.json").find("EST5EDT") != std::string::npos);
+    CHECK_EQ(r.value("/sys/status/settings"), "\"\"");
 }
 
 // Backups work the same with the settings on the filesystem.

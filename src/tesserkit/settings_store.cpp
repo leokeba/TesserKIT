@@ -79,8 +79,15 @@ bool SettingsStore::save(std::string_view key, const std::string& data) {
     // Without the heap for the write, TesserAPI tries again: a filesystem
     // short of memory fails its write, or takes what the rest needs.
     tesser::Reservation held;
-    if (!reserve(held)) return false;
-    if (!inner_->save(key, data)) return false;
+    if (!reserve(held)) {
+        wait(key, "not enough free memory");
+        return false;
+    }
+    if (!inner_->save(key, data)) {
+        wait(key, "the write failed");
+        return false;
+    }
+    waiting_.clear();
     sizes_[std::string(key)] = data.size();
     auto it = refusals_.find(key);
     if (it != refusals_.end()) {
@@ -88,6 +95,14 @@ bool SettingsStore::save(std::string_view key, const std::string& data) {
         refused_ = refusals_.empty() ? std::string() : refusals_.begin()->second;
     }
     return true;
+}
+
+// Told once per reason: TesserAPI tries the save again every 50 ms.
+void SettingsStore::wait(std::string_view key, const char* why) {
+    std::string w = "\"" + std::string(key) + "\" waiting to be saved: " + why;
+    if (w == waiting_) return;
+    waiting_ = std::move(w);
+    tesser::logError("tesserkit: settings %s", waiting_.c_str());
 }
 
 bool SettingsStore::remove(std::string_view key) {
