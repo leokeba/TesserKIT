@@ -168,11 +168,15 @@ Owners: **KIT** TesserKIT, **API** TesserAPI, **UI** TesserUI, **NowTP**. Phases
 
 ### Phase 1: stability under memory pressure
 
-**Status (2026-10-15):**
-- Pushed: TesserKIT 1a4fd7a (static address without a gateway, factory reset in the device task, passwords hashed off the lock, bounded strings and the NVS guard, chaos tests and the allocator cap, `test/hil.py`); TesserUI b8c870e (item 7's client fixes).
-- Local, waiting for a board run: TesserAPI e74b0ff, a58dcd5, 71b941f, b5a2c1c (items 1, 2, 3 and NowTP's refusal); NowTP a1b379f to 05ef2c2 (items 1, 2, 3 and 5 for NowTP).
-- In progress: the serial base64 corruption (reproducible; a UART overflow), then items 4 and 5 (tesserapi-ae).
-- Closed: the UDP broadcast loss isn't a regression (v0.1.21: 7 failed checks in 5 runs, v0.1.22: 1).
+**Status (2026-10-15, released in TesserKIT v0.1.26):**
+- Done: items 1 to 7. TesserAPI e74b0ff..5817cc9, NowTP a1b379f..fdd4449, TesserUI f91c706..fc29e6a, TesserKIT 580a52a..06586b1.
+  - TesserKIT: static addresses without a gateway, factory reset in the device task, passwords hashed off the lock, bounded strings and the NVS guard, chaos tests, the allocator cap, `test/hil.py`, the UART handler in IRAM, network settings applied after the reply, and the log's lines in a ring.
+  - Item 6: the UDP broadcast loss is the access point, not a regression (v0.1.21: 7 failed checks in 5 runs, v0.1.22: 1). The serial base64 corruption was bytes lost on the UART during flash writes: caught now, and made rare by the IRAM handler.
+- `test/hil.py` on v0.1.26's commits: device 37/37, files 39/39, ethernet 16/16, transfers 18/18, udp 32/34. No crash or brownout. DEVKIT-V3's lowest heap through the gateway suites was 7.1 KB (3.3 KB before).
+- Open:
+  - V3's lowest heap fell to 1.7 KB during the files suite (being traced).
+  - The Gledopto with every service and Ethernet sits at 4–7 KB (decision 2, Phase 2's profiles).
+  - Registering a nightly runner for `test/hil.py` is Leo's to do.
 
 
 Goal: every allocation a client can trigger is reserved or refused, and the boards' headroom is measured continuously.
