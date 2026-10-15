@@ -98,8 +98,9 @@ TEST(settings_on_the_filesystem) {
     CHECK_EQ(next.value("/app/level"), "7");
 }
 
-// The first boot with a filesystem moves NVS's records there, and removes
-// them from NVS: only TesserAPI's records of this tree.
+// The first boot with a filesystem moves NVS's records there. NVS keeps its
+// copy, no longer written: the device's fallback if the filesystem ever
+// doesn't mount.
 TEST(settings_moved_from_nvs) {
     std::map<std::string, std::string> nvs = {
         {"@version", "1"},
@@ -118,19 +119,47 @@ TEST(settings_moved_from_nvs) {
         CHECK_EQ(r.records(), "@moved,@version,app,sys");
         CHECK_EQ(r.file(".settings/sys.json"), nvs["sys"]);
         CHECK_EQ(r.file(".settings/app.json"), nvs["app"]);
-        CHECK_EQ(r.fake.nvs.records.size(), 1u);
-        CHECK_EQ(r.fake.nvs.records.count("gone"), 1u);
+        CHECK(r.fake.nvs.records == nvs);  // kept, as they were
         CHECK_EQ(r.value("/sys/status/settings"), "\"\"");
+        // Saved to the filesystem from now on, not to NVS.
+        CHECK_EQ(r.set("/sys/time/tz", "\"PST8PDT\"").status, Status::Ok);
+        r.run(2500);
+        CHECK(r.file(".settings/sys.json").find("PST8PDT") != std::string::npos);
+        CHECK(r.fake.nvs.records == nvs);
         dir = r.keepDir();
     }
-    // A move cut short after its marker: what NVS still holds goes, and the
-    // filesystem's copy is the one used.
+    // Moved before: the filesystem's copy is the one used, whatever NVS holds.
     SettingsRig next(dir);
-    next.fake.nvs.records = {{"sys", "{\"time\":{\"tz\":\"CET-1CEST\"}}"}};
+    next.fake.nvs.records = nvs;
     CHECK(next.dev.begin());
     CHECK(next.dev.settingsOnFiles());
+    CHECK_EQ(next.value("/sys/time/tz"), "\"PST8PDT\"");
+    CHECK(next.fake.nvs.records == nvs);
+}
+
+// Moved, then the filesystem doesn't mount one day: the device starts from
+// the copy NVS kept (its network among them), not from defaults.
+TEST(settings_fall_back_to_nvs_copy) {
+    std::map<std::string, std::string> nvs = {
+        {"@version", "1"},
+        {"sys", "{\"time\":{\"tz\":\"EST5EDT\"}}"},
+    };
+    std::string dir;
+    {
+        SettingsRig r;
+        r.fake.nvs.records = nvs;
+        CHECK(r.dev.begin());
+        CHECK(r.dev.settingsOnFiles());
+        nvs = r.fake.nvs.records;  // what NVS holds after the move
+        dir = r.keepDir();
+    }
+    SettingsRig next(dir);
+    next.fake.nvs.records = nvs;
+    next.fake.fs.present = false;
+    CHECK(next.dev.begin());
+    CHECK(!next.dev.settingsOnFiles());
     CHECK_EQ(next.value("/sys/time/tz"), "\"EST5EDT\"");
-    CHECK(next.fake.nvs.records.empty());
+    CHECK_EQ(next.value("/sys/status/settings"), "\"in NVS: the filesystem didn't mount\"");
 }
 
 // A move that fails midway leaves NVS as it was and the filesystem empty:
@@ -171,7 +200,7 @@ TEST(settings_move_failing_midway_keeps_nvs) {
     CHECK(next.dev.settingsOnFiles());
     CHECK_EQ(next.records(), "@moved,@version,app,sys");
     CHECK_EQ(next.value("/app/level"), "5");
-    CHECK(next.fake.nvs.records.empty());
+    CHECK(next.fake.nvs.records == nvs);  // NVS keeps its copy
 }
 
 TEST(settings_in_nvs_without_a_filesystem) {

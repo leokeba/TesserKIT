@@ -113,16 +113,11 @@ bool SettingsStore::erase() {
 
 bool moveSettings(tesser::Storage* from, tesser::Storage& to, const std::vector<std::string>& keys, std::string& why) {
     std::string data, back;
-    if (to.load(SettingsStore::kMoved, data)) {
-        // Moved before. What NVS still holds of them, as a move cut short
-        // after its marker leaves it: the filesystem's copy is the one in use.
-        size_t left = 0;
-        for (const std::string& key : keys) {
-            if (from && from->load(key, data) && from->remove(key)) left++;
-        }
-        if (left) tesser::logWarning("tesserkit: settings: removed what NVS still held of them (%u records)", static_cast<unsigned>(left));
-        return true;
-    }
+    // Moved before: the filesystem's copy is the one in use. NVS keeps the
+    // copy it had, no longer written: if the filesystem doesn't mount one
+    // day (or a firmware without Files is installed), the device starts from
+    // those settings, its network among them, rather than from defaults.
+    if (to.load(SettingsStore::kMoved, data)) return true;
     // Not moved yet, or a move cut short before its marker: from an empty
     // directory, so nothing of a cut move comes back.
     auto fail = [&to, &why](std::string reason) {
@@ -147,15 +142,9 @@ bool moveSettings(tesser::Storage* from, tesser::Storage& to, const std::vector<
     if (!to.save(SettingsStore::kMoved, "1") || !to.load(SettingsStore::kMoved, back) || back != "1") {
         return fail("the filesystem couldn't be written");
     }
-    // Only now, with every record on the filesystem and read back.
     if (!moved.empty()) {
-        tesser::logWarning("tesserkit: settings moved from NVS to the filesystem (%u records)",
+        tesser::logWarning("tesserkit: settings moved from NVS to the filesystem (%u records; NVS keeps its copy)",
                            static_cast<unsigned>(moved.size()));
-    }
-    for (const std::string* key : moved) {
-        if (!from->remove(*key)) {
-            tesser::logWarning("tesserkit: settings: \"%s\" left in NVS, removed at the next boot", key->c_str());
-        }
     }
     return true;
 }
