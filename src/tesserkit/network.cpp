@@ -25,9 +25,30 @@ Check checkIp(const std::string& text) {
     return text.empty() || parseIpv4(text, ip) ? Check::ok() : Check::fail(Status::InvalidValue, "expected a.b.c.d");
 }
 
-// An IPv4 field of a static configuration: empty, or a.b.c.d.
-tesser::Node& ipField(tesser::Object& o, const char* name, const char* label, std::string& field) {
-    return o.value(name, field).validate(checkIp).label(label).ui("visibleWhen", "enabled=true");
+// A host's own address: not 0.0.0.0, loopback, multicast or broadcast.
+bool hostAddress(uint32_t ip) { return ip != 0 && ip >> 24 != 127 && ip < 0xE0000000u; }
+
+Check checkAddress(const std::string& text) {
+    uint32_t ip;
+    return text.empty() || (parseIpv4(text, ip) && hostAddress(ip))
+               ? Check::ok()
+               : Check::fail(Status::InvalidValue, "expected a host's address, a.b.c.d");
+}
+
+// A netmask: ones then zeros, /1 to /32. Never empty: a static address
+// can't apply without one.
+bool contiguousMask(uint32_t m) { return m != 0 && ((~m + 1) & ~m) == 0; }
+
+Check checkMask(const std::string& text) {
+    uint32_t m;
+    return parseIpv4(text, m) && contiguousMask(m) ? Check::ok()
+                                                   : Check::fail(Status::InvalidValue, "a netmask: 255.255.255.0");
+}
+
+// An IPv4 field of a static configuration.
+tesser::ValueNode& ipField(tesser::Object& o, const char* name, const char* label, std::string& field,
+                           Check (*check)(const std::string&) = checkIp) {
+    return o.value(name, field).validate(check).label(label).ui("visibleWhen", "enabled=true");
 }
 
 // A static address's settings, collapsed: DHCP unless enabled. Its values'
@@ -36,9 +57,9 @@ tesser::Object& describeStatic(tesser::Object& parent, StaticIp& ip, std::vector
     auto& s = parent.object("static").label("Static IP").ui("collapsed");
     tesser::Node* n[] = {
         &s.value("enabled", ip.enabled).label("Use a static address"),
-        &ipField(s, "ip", "Address", ip.ip),
-        &ipField(s, "mask", "Netmask", ip.mask),
-        &ipField(s, "gateway", "Gateway", ip.gateway),
+        &ipField(s, "ip", "Address", ip.ip, checkAddress),
+        &ipField(s, "mask", "Netmask", ip.mask, checkMask),
+        &ipField(s, "gateway", "Gateway", ip.gateway).ui("placeholder", "none: no router"),
         &ipField(s, "dns", "DNS server", ip.dns),
     };
     if (nodes) nodes->assign(std::begin(n), std::end(n));
@@ -46,15 +67,19 @@ tesser::Object& describeStatic(tesser::Object& parent, StaticIp& ip, std::vector
 }
 
 // The setup a static address's settings make: DHCP unless they are enabled
-// and complete. A missing DNS server is the gateway.
+// and have an address. The fields' validators refuse a malformed address or
+// mask; an empty gateway is a network without a router (gateway 0).
 IpConfig ipConfig(const StaticIp& s, const char* what) {
     IpConfig c;
     if (!s.enabled) return c;
-    c.staticIp = parseIpv4(s.ip, c.ip) && parseIpv4(s.mask, c.mask) && parseIpv4(s.gateway, c.gateway);
+    c.staticIp = parseIpv4(s.ip, c.ip) && hostAddress(c.ip) && parseIpv4(s.mask, c.mask) && contiguousMask(c.mask);
     if (!c.staticIp) {
-        tesser::logWarning("tesserkit: incomplete static address for %s, using DHCP", what);
+        // Validators see one field at a time, so "enabled" with no address
+        // yet can't be refused (DESIGN.md section 5.2).
+        tesser::logWarning("tesserkit: no static address for %s, using DHCP", what);
         return IpConfig();
     }
+    if (!parseIpv4(s.gateway, c.gateway)) c.gateway = 0;
     if (!parseIpv4(s.dns, c.dns)) c.dns = c.gateway;
     return c;
 }

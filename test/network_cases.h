@@ -222,6 +222,56 @@ TEST(network_static_address) {
              "\"enabled=true\"");
 }
 
+// A network without a router: an address and a mask, no gateway.
+TEST(network_static_address_without_gateway) {
+    NetRig r;
+    r.air("Home", "pw");
+    r.net.defaultNetwork("Home", "pw");
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.set("/sys/network/wifi/networks/Home/static", "{\"enabled\":true,\"ip\":\"10.0.0.7\"}").status,
+             Status::Ok);
+    r.settle();
+    r.settle();
+    CHECK(r.fake.wifi.last.staticIp);
+    CHECK_EQ(r.fake.wifi.last.ip, 0x0A000007u);
+    CHECK_EQ(r.fake.wifi.last.gateway, 0u);
+    CHECK_EQ(r.fake.wifi.last.dns, 0u);  // no gateway, no DNS of its own
+    CHECK_EQ(r.value("/sys/network/wifi/status/ip"), "\"10.0.0.7\"");
+
+    // A DNS server of its own still applies.
+    CHECK_EQ(r.set("/sys/network/wifi/networks/Home/static/dns", "\"10.0.0.53\"").status, Status::Ok);
+    r.settle();
+    r.settle();
+    CHECK_EQ(r.fake.wifi.last.dns, 0x0A000035u);
+    CHECK_EQ(r.fake.wifi.last.gateway, 0u);
+}
+
+// What a static address can't apply without is refused, and the refused
+// patch changes nothing.
+TEST(network_static_address_refusals) {
+    NetRig r;
+    r.air("Home", "pw");
+    r.net.defaultNetwork("Home", "pw");
+    CHECK(r.dev.begin());
+    const char* bad[] = {
+        "{\"enabled\":true,\"ip\":\"10.0.0.7\",\"mask\":\"\"}",
+        "{\"enabled\":true,\"ip\":\"10.0.0.7\",\"mask\":\"255.0.255.0\"}",
+        "{\"enabled\":true,\"ip\":\"10.0.0.7\",\"mask\":\"0.0.0.0\"}",
+        "{\"enabled\":true,\"ip\":\"0.0.0.0\"}",
+        "{\"enabled\":true,\"ip\":\"255.255.255.255\"}",
+        "{\"enabled\":true,\"ip\":\"224.0.0.1\"}",
+    };
+    for (const char* b : bad) {
+        CHECK_EQ(r.set("/sys/network/wifi/networks/Home/static", b).status, Status::InvalidValue);
+    }
+    CHECK_EQ(r.value("/sys/network/wifi/networks/Home/static"),
+             "{\"enabled\":false,\"ip\":\"\",\"mask\":\"255.255.255.0\",\"gateway\":\"\",\"dns\":\"\"}");
+    r.settle();
+    CHECK(!r.fake.wifi.last.staticIp);
+    CHECK_EQ(r.set("/sys/network/wifi/networks/Home/static/mask", "\"255.255.0.0\"").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/network/wifi/networks/Home/static/mask", "\"255.255.255.255\"").status, Status::Ok);
+}
+
 TEST(network_slow_dhcp_still_joins) {
     // A Freebox: associated in 3 s, then DHCP with address conflict
     // detection binds 7.3 s later, past 10 s from the attempt's start.
@@ -709,6 +759,28 @@ TEST(network_ethernet_static_turned_off_releases_the_address) {
     r.settle();
     CHECK(r.net.ethernetConnected());
     CHECK_EQ(r.dev.address(), 0xC0A80332u);
+}
+
+// A cable to a network without a router: Ethernet takes the address with no
+// gateway (it keeps the default route, so traffic beyond the subnet fails).
+TEST(network_ethernet_static_address_without_gateway) {
+    EthRig r;
+    r.fake.ethernet.dhcp = false;
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    CHECK_EQ(r.set("/sys/network/ethernet/static", "{\"enabled\":true,\"ip\":\"192.168.3.50\",\"mask\":\"255.255.0.0\"}")
+                 .status,
+             Status::Ok);
+    r.settle();
+    CHECK(r.fake.ethernet.ip.staticIp);
+    CHECK_EQ(r.fake.ethernet.ip.ip, 0xC0A80332u);
+    CHECK_EQ(r.fake.ethernet.ip.mask, 0xFFFF0000u);
+    CHECK_EQ(r.fake.ethernet.ip.gateway, 0u);
+    CHECK_EQ(r.fake.ethernet.ip.dns, 0u);
+    CHECK(r.net.ethernetConnected());
+    CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"connected, static address\"");
+    CHECK_EQ(r.set("/sys/network/ethernet/static/mask", "\"255.255.255.1\"").status, Status::InvalidValue);
+    CHECK_EQ(r.fake.ethernet.ip.mask, 0xFFFF0000u);
 }
 
 TEST(network_ethernet_that_doesnt_start) {
