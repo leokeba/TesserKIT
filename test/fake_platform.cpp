@@ -14,6 +14,14 @@ namespace fake {
 using tesser::Check;
 using tesser::Status;
 
+namespace {
+thread_local int t_notHeap = 0;
+}  // namespace
+
+NotHeap::NotHeap() { t_notHeap++; }
+NotHeap::~NotHeap() { t_notHeap--; }
+bool NotHeap::active() { return t_notHeap > 0; }
+
 void Chaos::deliver(EventSink& sink, Event e) {
     uint64_t now = clock ? *clock : 0;
     // Behind an earlier event of its source still held: after it.
@@ -229,6 +237,7 @@ Check Ota::open(uint32_t size) {
 Check Ota::write(const uint8_t* data, size_t len) {
     if (!open_) return Check::fail(Status::Internal, "not open");
     if (written.size() + len > slot) return Check::fail(Status::TooLarge, "image larger than the slot");
+    NotHeap flash;
     written.append(reinterpret_cast<const char*>(data), len);
     return Check::ok();
 }
@@ -237,6 +246,7 @@ Check Ota::finish() {
     if (!open_) return Check::fail(Status::Internal, "not open");
     open_ = false;
     if (verifyFails) return Check::fail(Status::InvalidValue, "image verification failed");
+    NotHeap flash;
     installed = written;
     return Check::ok();
 }

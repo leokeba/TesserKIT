@@ -96,6 +96,17 @@ private:
     std::vector<Held> held_;
 };
 
+// Memory a fake takes that isn't the device's heap (an OTA slot is flash):
+// while one lives in a thread, an allocator cap (test/alloc_cap.h) doesn't
+// count that thread's allocations.
+struct NotHeap {
+    NotHeap();
+    ~NotHeap();
+    NotHeap(const NotHeap&) = delete;
+    NotHeap& operator=(const NotHeap&) = delete;
+    static bool active();
+};
+
 // What a fake does with an event: through the chaos, if any.
 inline void emit(Chaos* chaos, EventSink& sink, Event e) {
     if (chaos) {

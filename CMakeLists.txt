@@ -145,7 +145,7 @@ target_compile_options(tesserkit_fake PRIVATE ${TESSERKIT_WARNINGS})
 
 if(TESSERKIT_BUILD_TESTS)
     enable_testing()
-    add_executable(tesserkit_tests test/test_main.cpp)
+    add_executable(tesserkit_tests test/test_main.cpp test/alloc_cap.cpp)
     add_executable(tesserkit_fixtures test/fixtures_main.cpp)
     # A device on the host for working on its interface (not run by ctest).
     add_executable(tesserkit_demo test/demo_main.cpp)
@@ -160,6 +160,10 @@ if(TESSERKIT_BUILD_TESTS)
             target_compile_options(${t} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer -g)
             target_link_options(${t} PRIVATE -fsanitize=address,undefined)
         endforeach()
+    endif()
+    # The allocator cap names where an allocation came from (dladdr).
+    if(NOT APPLE)
+        target_link_options(tesserkit_tests PRIVATE -rdynamic)
     endif()
     add_test(NAME tesserkit_tests COMMAND tesserkit_tests)
     # Checks that the generator runs cleanly; the committed fixtures are
