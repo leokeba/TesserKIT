@@ -80,7 +80,7 @@ IpConfig ipConfig(const StaticIp& s, const char* what) {
         return IpConfig();
     }
     if (!parseIpv4(s.gateway, c.gateway)) c.gateway = 0;
-    if (!parseIpv4(s.dns, c.dns)) c.dns = c.gateway;
+    if (!parseIpv4(s.dns, c.dns)) c.dns = c.gateway;  // a router usually answers names; 0: none
     return c;
 }
 
