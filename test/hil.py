@@ -7,7 +7,7 @@
 Builds examples/idf/full (and its Ethernet variant for boards that have one)
 against the sibling commits deps.lock pins, flashes each board after reading
 its MAC, waits for every board on the network, then runs the end-to-end
-suites. After each suite it reads every board's lowest free heap since boot
+suites (device, files, ethernet, transfers, udp). After each suite it reads every board's lowest free heap since boot
 (/sys/status/minHeap) and fails when one fell below the floor: an
 out-of-memory abort is usually one allocation away from there (DESIGN.md
 section 12, docs/review-2026-10-14-open.md, Roadmap › Phase 1).
@@ -103,11 +103,15 @@ def mac_of(port):
 
 
 def flash(board, image):
+    """The whole flash set (bootloader, partition table, otadata, app), not
+    the app alone: a board that ran other firmware (NowTP's or TesserAPI's
+    test images) has another partition table, where the app doesn't fit.
+    NVS isn't written, so the board keeps its settings."""
     got = mac_of(board['port'])
     if got != board['mac']:
         sys.exit(f"{board['name']}: {board['port']} has MAC {got}, expected {board['mac']}: not flashing")
     rc = run(['uvx', 'esptool', '--chip', 'esp32', '--port', board['port'], '--baud', str(board.get('baud', 460800)),
-              'write-flash', '0x10000', image], timeout=600)
+              'write-flash', '@flash_args'], cwd=os.path.dirname(image), timeout=900)
     if rc:
         sys.exit(f"{board['name']}: flashing failed")
     # write-flash's own reset has left boards outside their app (seen on
@@ -206,6 +210,8 @@ def main():
         suite('device', ['test/e2e_device.py', gw['url'], '--only',
                          'test_status,test_ui,test_websocket,test_time,test_persistence,test_backup,test_auth,test_timers'],
               boards, floor, work)
+    if gw and want('files'):
+        suite('files', ['test/e2e_files.py', gw['url']], boards, floor, work)
     if eth and want('ethernet'):
         cmd = ['test/e2e_ethernet.py', eth['url']]
         if eth.get('staticIp'):

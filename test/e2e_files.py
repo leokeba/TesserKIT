@@ -160,6 +160,9 @@ def test_backups(dev):
     dev.call('/sys/backup/restartAfter', False)
     status, name = dev.call('/sys/backup/save', '')
     check('save, named after the date', status == 200 and name[:2] == '20', (status, name))
+    if status != 200:  # refused (busy on a short heap): nothing to go on with
+        dev.call('/sys/backup/restartAfter', restart)
+        return
     stored = dev.value('/sys/backup/stored')
     check('stored', name in names(stored), stored)
     status, data, headers = dev.download('/sys/backup/stored/' + name + '/content')
