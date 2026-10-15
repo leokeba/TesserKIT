@@ -12,6 +12,7 @@ Line references are from the reviewed commits: TesserKIT c0e8b9f, TesserAPI 5842
 2. **The Ethernet variant of the full example is too big for a classic ESP32.** `examples/idf/full -DETHERNET_BOARD=gledopto` has about 5 KB of room in its slot (local IDF 6.2; CI's 5.5 images run about 15 KB larger, so it wouldn't fit in CI). With every service on, a Gledopto has 12 KB of free heap: HTTPS and backups are refused. With Bluetooth off it has 60 KB. Options: Bluetooth off by default on Ethernet boards, or fewer services in that variant. `release.yml`'s size gate doesn't build this variant.
 3. **Memory tiers for gateways aren't applied.** NowTP and TesserAPI both proposed smaller limits for boards with 30–50 KB free (8 KB messages, 12 KB queues each way) and under 20 KB free (4 KB messages). A message larger than a receiver's limit is rejected, so every device on a link must change together. Fleet-wide decision.
 4. **Silent assertions in the full example** (258cced) saved 59 KB, so the release fits. A failed assert still panics with a backtrace and a core dump, but the console no longer prints the assert's file and line. Revert if you'd rather pay for the strings another way.
+6. **NVS is too small for a fully configured device.** Every persisted string now has a length limit, and the worst-case `/sys` record (every service at its limits) is 16.7 KB; a 20 KB NVS partition can rewrite only about 6.7 KB of it (measured with ESP-IDF's real `nvs_flash` on the host, beside PHY calibration and NowTP's key). Since 1a4fd7a TesserKIT refuses a record NVS couldn't rewrite, keeping the stored one and warning in `/sys/status/settings`, rather than risking it. The fix is a 64 KB `nvs` partition for new boards: a partition change needs a serial flash. Leo's call.
 5. **Ethernet takes the default route even with a static address and no router** (8326587, Leo's choice). Consequence, measured on a Gledopto: with a static cable to an isolated network and the station connected, internet traffic goes to the cable and fails (`server unreachable`). An optional refinement: a static configuration with an empty gateway would mean "no router here" and keep internet on Wi-Fi. A static address currently requires a gateway, and without one it falls back to DHCP silently (see TesserKIT below).
 
 ## Security
@@ -166,6 +167,13 @@ From AGENTS.md and this round:
 Owners: **KIT** TesserKIT, **API** TesserAPI, **UI** TesserUI, **NowTP**. Phases are in order, but items inside a phase are independent, and a later phase's item can start once its layer is free.
 
 ### Phase 1: stability under memory pressure
+
+**Status (2026-10-15):**
+- Pushed: TesserKIT 1a4fd7a (static address without a gateway, factory reset in the device task, passwords hashed off the lock, bounded strings and the NVS guard, chaos tests and the allocator cap, `test/hil.py`); TesserUI b8c870e (item 7's client fixes).
+- Local, waiting for a board run: TesserAPI e74b0ff, a58dcd5, 71b941f, b5a2c1c (items 1, 2, 3 and NowTP's refusal); NowTP a1b379f to 05ef2c2 (items 1, 2, 3 and 5 for NowTP).
+- In progress: the serial base64 corruption (reproducible; a UART overflow), then items 4 and 5 (tesserapi-ae).
+- Closed: the UDP broadcast loss isn't a regression (v0.1.21: 7 failed checks in 5 runs, v0.1.22: 1).
+
 
 Goal: every allocation a client can trigger is reserved or refused, and the boards' headroom is measured continuously.
 
