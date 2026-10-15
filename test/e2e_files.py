@@ -136,7 +136,9 @@ def test_files(dev):
     # Refused on the announced size. A refused body is drained up to 256 KB
     # (then the connection is closed before the client reads the reply): a
     # filler file first, so what is refused is below that.
-    filler = b'f' * 120 * 1024
+    # Smaller than Files keeps for the settings (64 KB) and what's stored, so
+    # it fits a 384 KB partition beside them.
+    filler = b'f' * 64 * 1024
     check('filler', dev.upload('/sys/files/upload', filler, 'filler.bin')[0] == 200)
     free = total - dev.value('/sys/files/used')
     check('too large', dev.upload('/sys/files/upload', b'x' * (free + 1), 'huge.bin')[0] == 413, free)
