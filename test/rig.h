@@ -70,8 +70,9 @@ struct Rig {
         for (uint32_t t = 0; t < ms; t += 20) step(20);
     }
     // Long enough for platform events to be handled (they arrive in the
-    // device's next period).
-    void settle() { run(100); }
+    // device's next period), and for Network to apply changed settings
+    // (Network::kApplyAfterMs).
+    void settle() { run(300); }
 
     // Sends a request; `wait` keeps the device running until the reply.
     Reply request(tesser::LocalClient& c, Op op, std::string_view path, std::string_view body = {},

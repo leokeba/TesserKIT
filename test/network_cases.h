@@ -727,6 +727,29 @@ TEST(network_ethernet_static_address) {
     CHECK_EQ(again.fake.ethernet.addressCalls, 0);  // given to begin()
 }
 
+// A new address waits a moment: the reply to the write that set it goes out
+// first (TesserAPI sends replies after the API lock), and quick patches make
+// one change.
+TEST(network_settings_apply_after_the_reply) {
+    EthRig r;
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    r.settle();
+    CHECK_EQ(r.set("/sys/network/ethernet/static", "{\"enabled\":true,\"ip\":\"10.0.0.7\",\"gateway\":\"10.0.0.1\"}")
+                 .status,
+             Status::Ok);
+    r.run(80);
+    CHECK(!r.fake.ethernet.ip.staticIp);  // not yet
+    CHECK_EQ(r.set("/sys/network/ethernet/static/ip", "\"10.0.0.8\"").status, Status::Ok);
+    r.run(100);
+    CHECK(!r.fake.ethernet.ip.staticIp);  // a further patch waits with it
+    int calls = r.fake.ethernet.addressCalls;
+    r.run(200);
+    CHECK(r.fake.ethernet.ip.staticIp);
+    CHECK_EQ(r.fake.ethernet.ip.ip, 0x0A000008u);
+    CHECK_EQ(r.fake.ethernet.addressCalls, calls + 1);  // one change for both
+}
+
 TEST(network_ethernet_static_turned_off_releases_the_address) {
     // A cable straight to a computer: no DHCP, a static address.
     EthRig r;

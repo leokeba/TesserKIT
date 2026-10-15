@@ -414,6 +414,7 @@ void Network::start() {
     ethGen_ = ethFingerprint();
     staModeGen_ = staModeNode_->generation();
     if (ethEnabledNode_) ethEnabledGen_ = ethEnabledNode_->generation();
+    settingsSeen_ = settingsFingerprint();
     applyMdns();
     lostAtMs_ = now;
     join(now);
@@ -815,7 +816,23 @@ void Network::setApClients(int32_t n) {
     apStatus_->changed();
 }
 
+// Every setting checkSettings() applies: generations only grow, so the sum
+// changes whenever one of them does.
+uint32_t Network::settingsFingerprint() const {
+    uint32_t sum = networksNode_->generation() + hostnameNode_->generation() + powerSaveNode_->generation() +
+                   staModeNode_->generation() + apFingerprint();
+    if (mdnsNode_) sum += mdnsNode_->generation();
+    if (eth_) sum += ethEnabledNode_->generation() + ethFingerprint();
+    return sum;
+}
+
 void Network::checkSettings(uint32_t nowMs) {
+    uint32_t seen = settingsFingerprint();
+    if (seen != settingsSeen_) {
+        settingsSeen_ = seen;
+        settingsAtMs_ = nowMs;
+    }
+    if (nowMs - settingsAtMs_ < kApplyAfterMs) return;
     if (networksNode_->generation() != networksGen_) {
         networksGen_ = networksNode_->generation();
         backoff_ = 0;

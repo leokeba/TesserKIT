@@ -94,6 +94,11 @@ public:
     // a change known sooner: one the device's queue lost (or an address that
     // came without one, link-local from AutoIP) is caught up within this.
     static constexpr uint32_t kPollMs = 1000;
+    // A changed setting is applied once the settings have been still this
+    // long: the reply to the write goes out first (TesserAPI sends replies
+    // after the API lock, so a new address could otherwise come first), and
+    // a few quick patches make one reconnection.
+    static constexpr uint32_t kApplyAfterMs = 150;
 
 protected:
     void start() override;
@@ -129,6 +134,7 @@ private:
     StaConfig config(const WifiNetwork& n) const;
     const WifiNetwork* find(const std::string& ssid) const;
     uint32_t apFingerprint() const;
+    uint32_t settingsFingerprint() const;
     uint32_t ethFingerprint() const;
     IpConfig ethConfig() const;
     std::string apSsid() const { return apSsid_.empty() ? dev_.hostname() : apSsid_; }
@@ -170,6 +176,7 @@ private:
     tesser::EventNode* ethJoined_ = nullptr;
     uint32_t networksGen_ = 0, hostnameGen_ = 0, mdnsGen_ = 0;
     uint32_t apGen_ = 0, ethGen_ = 0;
+    uint32_t settingsSeen_ = 0, settingsAtMs_ = 0;
     uint32_t staModeGen_ = 0, ethEnabledGen_ = 0, powerSaveGen_ = 0;
 
     // Station.
