@@ -166,7 +166,7 @@ void StoredBackups::describe(tesser::Object& o) {
                              bool restart = false;
                              c = backup_.restore(text, skipped, restart);
                              if (!c.isOk()) return call.fail(c.status, c.message);
-                             call.replyWith([&](tesser::JsonWriter& w) { Backup::writeResult(w, skipped, restart); });
+                             call.replyWith([&](tesser::JsonWriter& w) { backup_.writeResult(w, skipped, restart); });
                          }).ui("confirm", "Replace the settings with this backup?");
                         e.action("delete", [this, file] {
                              Check c = files_.remove(file);

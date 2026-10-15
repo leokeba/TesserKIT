@@ -361,6 +361,35 @@ TEST(settings_save_waits_for_memory) {
     CHECK_EQ(r.value("/sys/status/settings"), "\"\"");
 }
 
+// A restore whose save waits for memory is applied all the same: ok, with
+// "saved": false, no restart (which would lose it), and saved once memory
+// allows (seen on DEVKIT-V3 over its serial line, 2026-10-15).
+TEST(settings_restore_waits_for_memory) {
+    SettingsRig r;
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.set("/sys/time/tz", "\"EST5EDT\"").status, Status::Ok);
+    r.run(2500);
+    rig::Reply d = r.download("/sys/backup/settings");
+    CHECK_EQ(d.status, Status::Ok);
+    CHECK_EQ(r.set("/sys/time/tz", "\"CET-1CEST\"").status, Status::Ok);
+    r.run(2500);
+    rig::Reply u;
+    {
+        // Room for the restore's document, not for the save's write.
+        rig::BudgetLimit limit(2 * d.body.size() + 256);
+        u = r.upload("/sys/backup/settings", d.body);
+        CHECK_EQ(u.status, Status::Ok);
+        CHECK(u.body.find("\"saved\":false") != std::string::npos);
+        CHECK(u.body.find("\"restart\":false") != std::string::npos);
+        CHECK_EQ(r.value("/sys/time/tz"), "\"EST5EDT\"");  // applied
+        CHECK(r.value("/sys/status/settings").find("waiting to be saved") != std::string::npos);
+    }
+    r.run(2500);  // TesserAPI's debounce
+    CHECK(r.file(".settings/sys.json").find("EST5EDT") != std::string::npos);
+    CHECK_EQ(r.value("/sys/status/settings"), "\"\"");
+    CHECK_EQ(r.fake.core.restarts, 0);
+}
+
 // Backups work the same with the settings on the filesystem.
 TEST(settings_backup_and_restore_on_files) {
     SettingsRig r;

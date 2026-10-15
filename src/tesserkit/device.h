@@ -136,6 +136,9 @@ public:
     // kept in NVS although the application has Files, and why; a record
     // refused (settingsRefused()).
     std::string settingsStatus() const;
+    // A settings save that couldn't be made yet (no memory), which TesserAPI
+    // tries again: "" when every change is saved.
+    const std::string& settingsWaiting() const { return settings_.waiting(); }
     // Whether the settings are kept on the Files service's filesystem.
     bool settingsOnFiles() const { return settingsOnFiles_; }
     // URI handler slots for the application's own routes (default 4).

@@ -71,13 +71,22 @@ Check Backup::restore(std::string_view text, std::vector<std::string>& skipped, 
     if (!doc) return Check::fail(Status::Busy, "not enough free memory to restore the settings now");
     Status s = dev_.api().restore(text, &skipped);
     if (s == Status::BadRequest) return Check::fail(s, "not a settings file");
-    if (s != Status::Ok) return Check::fail(s, "the settings couldn't be saved");
+    // Applied, but its save waits for memory (settings on the filesystem
+    // on a tight heap): TesserAPI saves it as soon as it can. Not restarted
+    // meanwhile, which would lose it.
+    saved_ = s == Status::Ok;
+    if (!saved_ && dev_.settingsWaiting().empty()) return Check::fail(s, "the settings couldn't be saved");
+    if (!saved_) restart = false;
     if (restart) dev_.restartIn(1000);
     return Check::ok();
 }
 
-void Backup::writeResult(tesser::JsonWriter& w, const std::vector<std::string>& skipped, bool restart) {
+void Backup::writeResult(tesser::JsonWriter& w, const std::vector<std::string>& skipped, bool restart) const {
     w.beginObject();
+    if (!saved_) {
+        w.key("saved");
+        w.boolean(false);  // applied; saved once memory allows (/sys/status/settings)
+    }
     w.key("skipped");
     w.beginArray();
     for (const std::string& p : skipped) w.string(p);
