@@ -297,7 +297,8 @@ TEST(auth_login_is_answered_off_the_lock) {
 std::string storedHash(AuthRig& r, const char* name) {
     JsonDocument doc;
     deserializeJson(doc, r.storage.records["sys"]);
-    for (JsonVariantConst u : doc["auth"]["users"].as<JsonArrayConst>()) {
+    JsonArrayConst users = doc["auth"]["users"].as<JsonArrayConst>();
+    for (JsonVariantConst u : users) {
         if (std::string(u["name"] | "") == name) return u["password"] | "";
     }
     return "";
