@@ -139,7 +139,8 @@ def test_files(dev):
     # Smaller than Files keeps for the settings (64 KB) and what's stored, so
     # it fits a 384 KB partition beside them.
     filler = b'f' * 64 * 1024
-    check('filler', dev.upload('/sys/files/upload', filler, 'filler.bin')[0] == 200)
+    got = dev.upload('/sys/files/upload', filler, 'filler.bin')
+    check('filler', got[0] == 200, got)
     free = total - dev.value('/sys/files/used')
     check('too large', dev.upload('/sys/files/upload', b'x' * (free + 1), 'huge.bin')[0] == 413, free)
     check('nothing left behind', 'huge.bin' not in names(dev.value('/sys/files/entries')))
