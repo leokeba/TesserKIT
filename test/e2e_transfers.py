@@ -6,7 +6,7 @@ to a node nearby over ESP-NOW (TesserAPI §14).
 Usage:
   uv run --with pyserial python test/e2e_transfers.py --http http://<ip> \
       [--serial PORT] [--peer NAME] [--image <build>/tesserkit_full.bin] \
-      [--no-serial-firmware]
+      [--peer-image <build>/tesserkit_full.bin] [--no-serial-firmware]
 
 The device (and the peer) run examples/idf/full: Files, Backup, Firmware,
 NowTp with the peer mounted under /peers. Opening the serial port resets the
@@ -337,6 +337,9 @@ def main():
     ap.add_argument('--serial')
     ap.add_argument('--peer')
     ap.add_argument('--image')
+    # The peer's own build when it differs from the gateway's (an Ethernet
+    # gateway's image on a devkit peer).
+    ap.add_argument('--peer-image')
     ap.add_argument('--no-serial-firmware', action='store_true')
     args = ap.parse_args()
     dev = Http(args.http)
@@ -354,7 +357,7 @@ def main():
         if not check('peer online', dev.wait(lambda: dev.get(f'/peers/{args.peer}/sys/status/state') is not None, 90,
                                              'the peer under /peers')):
             return 1
-        test_relay(dev, host, args.peer, args.image)
+        test_relay(dev, host, args.peer, args.peer_image or args.image)
     print(f'E2E pass={PASS} fail={FAIL}')
     return 1 if FAIL else 0
 

@@ -191,7 +191,9 @@ def main():
     work = os.path.expanduser(cfg.get('work', '/tmp/tesserkit-hil'))
     floor = cfg.get('heapFloor', 8192)
     boards = cfg['boards']
-    by_role = {b['role']: b for b in boards}
+    # A board may hold several roles ("role": ["gateway", "ethernet"]) when
+    # fewer boards are plugged in.
+    by_role = {r: b for b in boards for r in ([b['role']] if isinstance(b['role'], str) else b['role'])}
 
     log('== siblings (deps.lock)')
     siblings = fetch_siblings(work)
@@ -229,6 +231,9 @@ def main():
     if gw and peer and want('transfers'):
         cmd = ['test/e2e_transfers.py', '--http', gw['url'], '--peer', peer['hostname'],
                '--image', images.get(gw.get('build', 'full'), os.path.join(work, 'build-full', 'tesserkit_full.bin'))]
+        if peer.get('build', 'full') != gw.get('build', 'full'):
+            cmd += ['--peer-image', images.get(peer.get('build', 'full'),
+                                               os.path.join(work, f"build-{peer.get('build', 'full')}", 'tesserkit_full.bin'))]
         if gw.get('port'):
             cmd += ['--serial', gw['port']]
         suite('transfers', cmd, boards, floor, work)
