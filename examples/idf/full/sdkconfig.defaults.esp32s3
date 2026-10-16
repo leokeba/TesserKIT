@@ -1,0 +1,3 @@
+# The W5500's driver, for -DETHERNET_W5500 on ESP-IDF before 6.0 (since, it is
+# the espressif/w5500 component). Linked only with a W5500 declared.
+CONFIG_ETH_SPI_ETHERNET_W5500=y

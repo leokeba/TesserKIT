@@ -179,12 +179,14 @@ public:
     virtual void captivePortal(bool on) = 0;
 };
 
-// How a board wires its Ethernet PHY to the ESP32's internal MAC (RMII):
-// fixed by the hardware. Presets for known boards are in network.h.
+// How a board wires its Ethernet: a PHY on the ESP32's internal MAC (RMII),
+// or a module with its own MAC on SPI (W5500), for chips without that MAC.
+// Fixed by the hardware. Presets for known boards are in network.h.
 struct EthernetBoard {
     // PHYs the driver knows by name; any other works as Generic (the
-    // registers IEEE 802.3 standardizes).
-    enum class Phy : uint8_t { Generic, Lan8720, Ip101, Rtl8201, Dp83848, Ksz8081 };
+    // registers IEEE 802.3 standardizes). W5500: WIZnet's MAC and PHY in one
+    // chip on SPI, wired by the SPI fields below (the RMII ones unused).
+    enum class Phy : uint8_t { Generic, Lan8720, Ip101, Rtl8201, Dp83848, Ksz8081, W5500 };
     // The 50 MHz RMII clock: from an oscillator on the board into GPIO 0, or
     // out of the ESP32 on GPIO 0, 16 or 17 (unstable with Wi-Fi on, the
     // ESP32's errata say).
@@ -196,6 +198,12 @@ struct EthernetBoard {
     int8_t power = -1;  // a GPIO powering the PHY or its oscillator, -1 if none
     Clock clock = Clock::In;
     int8_t clockGpio = 0;
+    // A module on SPI: the bus's pins (SPI2), its chip select, its interrupt
+    // (-1: polled every 10 ms) and reset (-1 if none) pins, the bus's clock.
+    int8_t sck = -1, miso = -1, mosi = -1, cs = -1, irq = -1, reset = -1;
+    uint8_t spiMhz = 20;
+
+    bool spi() const { return phy == Phy::W5500; }
 };
 
 struct EthInfo {
@@ -560,7 +568,7 @@ struct Platform {
 // The ESP implementations (null on the host).
 Core* espCore();
 Wifi* espWifi();
-Ethernet* espEthernet();  // null on chips without an internal Ethernet MAC
+Ethernet* espEthernet();  // null without the internal MAC or a W5500 driver
 Mdns* espMdns();
 Clock* espClock();
 Ota* espOta();

@@ -16,6 +16,14 @@ dependencies:
     version: "^1.0.0"
     rules:
       - if: "idf_version >=6.0"
+  # W5500 Ethernet modules on SPI, for chips without the internal MAC: part
+  # of ESP-IDF (CONFIG_ETH_SPI_ETHERNET_W5500) until 6.0. Linked only by
+  # applications declaring such a board (Network::ethernet()).
+  espressif/w5500:
+    version: "^2.0.1"
+    rules:
+      - if: "idf_version >=6.0"
+      - if: "target not in [esp32, esp32p4]"
   # LittleFS, for the Files service. Linked only by applications using it.
   joltwallet/littlefs:
     version: "^1.20.0"

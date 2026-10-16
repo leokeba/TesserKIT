@@ -40,6 +40,9 @@ EthernetBoard wt32Eth01();
 EthernetBoard olimexEsp32Poe();
 // Espressif's ESP32-Ethernet-Kit: IP101 at 1, powered by GPIO 5.
 EthernetBoard esp32EthernetKit();
+// A W5500 module on SPI, wired to these GPIOs; without `irq` it is polled.
+// spin-sequencer's XIAO ESP32-S3: w5500(7, 8, 9, 44, 43) (D8, D9, D10, D7, D6).
+EthernetBoard w5500(int8_t sck, int8_t miso, int8_t mosi, int8_t cs, int8_t irq = -1, int8_t reset = -1);
 }  // namespace boards
 
 // "a.b.c.d" as (a << 24) | (b << 16) | (c << 8) | d; false if it isn't one.

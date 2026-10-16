@@ -18,7 +18,8 @@
 //
 // Build options: -DBATTERY_GPIO=n adds the Battery service on that ADC pin,
 // through a divider of two equal resistors; -DETHERNET_BOARD=gledopto uses
-// that board's Ethernet.
+// that board's Ethernet; -DETHERNET_W5500="sck,miso,mosi,cs,irq" a W5500
+// module on those GPIOs.
 #include "TesserKIT.h"
 #include "driver/ledc.h"
 #include "sdkconfig.h"
@@ -112,6 +113,8 @@ extern "C" void app_main() {
 #endif
 #if defined(ETHERNET_BOARD)
     net.ethernet(tesserkit::boards::ETHERNET_BOARD());  // preferred while it has an address
+#elif defined(ETHERNET_W5500)
+    net.ethernet(tesserkit::boards::w5500(ETHERNET_W5500));
 #endif
     net.apMode(tesserkit::ApMode::Fallback);  // its own network while no other is joined
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3").defaultServer("pool.ntp.org");

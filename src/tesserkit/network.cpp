@@ -211,6 +211,18 @@ EthernetBoard wt32Eth01() { return board(Phy::Lan8720, 1, 23, 18, 16, Clock::In,
 EthernetBoard olimexEsp32Poe() { return board(Phy::Lan8720, 0, 23, 18, 12, Clock::Out, 17); }
 EthernetBoard esp32EthernetKit() { return board(Phy::Ip101, 1, 23, 18, 5, Clock::In, 0); }
 
+EthernetBoard w5500(int8_t sck, int8_t miso, int8_t mosi, int8_t cs, int8_t irq, int8_t reset) {
+    EthernetBoard b;
+    b.phy = Phy::W5500;
+    b.sck = sck;
+    b.miso = miso;
+    b.mosi = mosi;
+    b.cs = cs;
+    b.irq = irq;
+    b.reset = reset;
+    return b;
+}
+
 }  // namespace boards
 
 Network& Network::defaultNetwork(const char* ssid, const char* password) {

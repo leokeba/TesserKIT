@@ -573,6 +573,30 @@ TEST(network_without_ethernet_has_no_tree) {
     CHECK(chip.fake.wifi.apUp);  // recovery as without Ethernet
 }
 
+// A W5500 module on SPI: the same tree, its wiring handed to the platform.
+TEST(network_ethernet_w5500_board) {
+    NetRig r;
+    r.net.ethernet(tesserkit::boards::w5500(7, 8, 9, 44, 43));
+    CHECK(r.dev.begin());
+    const tesserkit::EthernetBoard& b = r.fake.ethernet.board;
+    CHECK(b.spi());
+    CHECK(b.phy == tesserkit::EthernetBoard::Phy::W5500);
+    CHECK_EQ(b.sck, 7);
+    CHECK_EQ(b.miso, 8);
+    CHECK_EQ(b.mosi, 9);
+    CHECK_EQ(b.cs, 44);
+    CHECK_EQ(b.irq, 43);
+    CHECK_EQ(b.reset, -1);
+    CHECK_EQ(b.spiMhz, 20);
+    CHECK(!tesserkit::boards::gledopto().spi());
+    CHECK_EQ(tesserkit::boards::w5500(7, 8, 9, 2).irq, -1);  // polled
+    r.step();
+    CHECK_EQ(at(r.value("/sys/network/ethernet/status"), "state"), "\"no cable\"");
+    r.fake.ethernet.plug();
+    r.run(10000);
+    CHECK(r.net.ethernetConnected());
+}
+
 TEST(network_ethernet_is_preferred) {
     EthRig r;
     r.air("Home", "password1");
