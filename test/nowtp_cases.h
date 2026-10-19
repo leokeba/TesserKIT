@@ -205,18 +205,23 @@ TEST(nowtp_network_time_reference_changes_at_runtime) {
     CHECK_EQ(r.set("/sys/nowtp/time/reference", "\"10:52:1c:75:f3\"").status, Status::InvalidValue);
     r.settle();
     CHECK_EQ(r.fake.nowtp.timeReferenceSet, "10:52:1C:75:F3:7C");
-    CHECK_EQ(r.value("/sys/nowtp/restartNeeded"), "false");
-    // A radio that fixes the role when it starts: at the next boot.
-    r.fake.nowtp.timeReferenceRuntime = false;
     CHECK_EQ(r.set("/sys/nowtp/time/reference", "\"this\"").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/nowtp/time/interval", "30").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/nowtp/time/interval", "0").status, Status::InvalidValue);
     r.settle();
-    CHECK_EQ(r.value("/sys/nowtp/restartNeeded"), "true");
-    // Or when NowTP starts again.
+    CHECK_EQ(r.fake.nowtp.timeReferenceSet, "this");
+    CHECK_EQ(r.fake.nowtp.config.timeIntervalMs, 30000u);
+    CHECK_EQ(r.value("/sys/nowtp/restartNeeded"), "false");  // all at once
+    CHECK_EQ(r.fake.nowtp.begins, 1);
+    // Kept while NowTP is off, and given to it when it starts again.
     CHECK_EQ(r.set("/sys/nowtp/enabled", "false").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.set("/sys/nowtp/time/reference", "\"auto\"").status, Status::Ok);
     r.settle();
     CHECK_EQ(r.set("/sys/nowtp/enabled", "true").status, Status::Ok);
     r.settle();
-    CHECK_EQ(r.fake.nowtp.config.timeReference, "this");
+    CHECK_EQ(r.fake.nowtp.config.timeReference, "auto");
+    CHECK_EQ(r.fake.nowtp.timeReferenceSet, "auto");
 }
 
 TEST(nowtp_network_time_for_the_application) {

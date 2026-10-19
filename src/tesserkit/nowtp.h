@@ -106,10 +106,11 @@ private:
     tesser::Node* statusNode_ = nullptr;
     tesser::Node* timeNode_ = nullptr;
     tesser::Node* timeReferenceNode_ = nullptr;
+    tesser::Node* timeIntervalNode_ = nullptr;
     tesser::Node* pairingNode_ = nullptr;
     tesser::Node* restartNode_ = nullptr;
     std::vector<tesser::Node*> restartSettings_;  // what applies at the next boot
-    uint32_t enabledGen_ = 0, channelGen_ = 0, longRangeGen_ = 0, timeReferenceGen_ = 0;
+    uint32_t enabledGen_ = 0, channelGen_ = 0, longRangeGen_ = 0, timeReferenceGen_ = 0, timeIntervalGen_ = 0;
     uint32_t restartGen_ = 0;
     uint32_t polledAtMs_ = 0;
     uint32_t startMs_ = 0;

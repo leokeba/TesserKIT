@@ -57,9 +57,7 @@ public:
         // gateway 4 KB more heap than before NowTP 764a3d2, which a device
         // with every service can't spare (DESIGN.md section 5.11).
         c.eventBufferSize = 6 * 1024;
-        // Network time: "this" offers this node's clock; NowTP picks the
-        // reference announced in discovery otherwise, or the node set below.
-        c.timeSync.reference = config.timeReference == "this";
+        c.timeSync.role = role(config.timeReference);
         c.timeSync.intervalMs = config.timeIntervalMs;
         // The transport outlives a stop: nodes mounted under `peers` keep
         // pointing at its endpoint.
@@ -89,12 +87,8 @@ public:
             mounted_ = true;
         }
         transport_->advertise();
-        timeReference_ = "auto";
-        if (config.timeReference == "this") {
-            timeReference_ = "this";
-        } else if (config.timeReference != "auto") {
-            timeReference(config.timeReference);
-        }
+        nowtp::Mac mac;
+        if (parseMac(config.timeReference, mac)) radio_.setTimeReference(mac);
         return true;
     }
 
@@ -106,16 +100,24 @@ public:
     uint64_t networkTimeUs() override { return radio_.networkTimeUs(); }
     int64_t localTimeUs(uint64_t networkUs) override { return radio_.localTimeUs(networkUs); }
 
-    bool timeReference(const std::string& ref) override {
-        if (ref == timeReference_) return true;
-        nowtp::Mac mac;
-        // Following another node is set at once; being the reference, or
-        // back to the announced one, is fixed when the radio starts.
-        if (timeReference_ == "this" || !parseMac(ref, mac)) return false;
-        if (radio_.setTimeReference(mac) != nowtp::Status::Ok) return false;
-        timeReference_ = ref;
-        return true;
+    // "auto": a candidate, which NowTP's election may make the reference;
+    // "this": the reference; a MAC: a follower of that node, which never
+    // takes over.
+    static nowtp::TimeRole role(const std::string& ref) {
+        if (ref == "auto") return nowtp::TimeRole::Candidate;
+        if (ref == "this") return nowtp::TimeRole::Reference;
+        return nowtp::TimeRole::Follow;
     }
+
+    bool timeReference(const std::string& ref) override {
+        nowtp::Mac mac;
+        bool follow = parseMac(ref, mac);
+        if (radio_.setTimeRole(role(ref)) != nowtp::Status::Ok) return false;
+        nowtp::Status st = follow ? radio_.setTimeReference(mac) : radio_.clearTimeReference();
+        return st == nowtp::Status::Ok;
+    }
+
+    bool timeInterval(uint32_t ms) override { return radio_.setTimeSyncInterval(ms) == nowtp::Status::Ok; }
 
     void end() override {
         if (transport_) transport_->end();
@@ -149,11 +151,8 @@ public:
         s.timeSynced = t.synced;
         s.timeReference = t.isReference;
         s.timeOffsetUs = t.offsetUs;
-        if (t.isReference) {
-            s.timeReferenceMac = macString(radio_.localMac());
-        } else if (t.synced || t.rounds) {
-            s.timeReferenceMac = macString(t.reference);
-        }
+        // The reference is this node's MAC while it acts as one.
+        if (t.isReference || t.synced || t.rounds) s.timeReferenceMac = macString(t.reference);
         s.timeRoundTripUs = t.roundTripUs;
         s.timeDriftPpm = t.driftPpm;
         s.timeRounds = t.rounds;
@@ -220,7 +219,6 @@ private:
     std::unique_ptr<tesser::NowTpTransport> transport_;
     bool polled_ = false;  // no worker task: poll() handles the messages
     bool mounted_ = false;
-    std::string timeReference_ = "auto";  // what NowTP runs: "auto", "this" or a MAC
     EventSink sink_;
 };
 

@@ -404,9 +404,9 @@ struct NowTpConfig {
     // and `queued` runs (from NowTP's task) when one arrives.
     bool runTask = true;
     std::function<void()> queued;
-    // Network time (NowTP's TimeSync): "auto" (the nodes choose a reference
-    // among themselves), "this" (this node's clock is the network time), or
-    // the MAC of the node to follow.
+    // Network time (NowTP's TimeSync): "auto" (a candidate: the nodes elect
+    // a reference among themselves), "this" (this node's clock is the
+    // network time), or the MAC of the node to follow.
     std::string timeReference = "auto";
     uint32_t timeIntervalMs = 5000;  // between synchronization rounds once synchronized
 };
@@ -424,7 +424,7 @@ struct NowTpStatus {
     bool started = false;
     uint8_t channel = 0;
     bool secured = false;
-    bool timeSynced = false, timeReference = false;  // synchronized; this node is the reference
+    bool timeSynced = false, timeReference = false;  // synchronized; this node acts as the reference
     std::string timeReferenceMac;                    // the node whose clock is the network time
     int64_t timeOffsetUs = 0;                        // network time minus the local clock
     uint32_t timeRoundTripUs = 0;                    // the last round's shortest
@@ -464,9 +464,9 @@ public:
     virtual uint64_t networkTimeUs() = 0;
     // The local clock's value at network time `networkUs`.
     virtual int64_t localTimeUs(uint64_t networkUs) = 0;
-    // Changes NowTpConfig::timeReference while started; false when that
-    // takes a new begin().
+    // Change NowTpConfig::timeReference and timeIntervalMs while started.
     virtual bool timeReference(const std::string& ref) = 0;
+    virtual bool timeInterval(uint32_t ms) = 0;
     // Without a worker task (NowTpConfig::runTask false): handles what
     // arrived, and expires calls. In the device's task.
     virtual void poll() = 0;

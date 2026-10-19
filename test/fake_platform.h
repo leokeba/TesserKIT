@@ -521,16 +521,18 @@ struct NowTp : tesserkit::NowTpRadio {
     std::vector<tesserkit::NowTpPeer> peers() override { return nearby; }
     tesserkit::NowTpStatus status() override { return state; }
     // Network time: the fake core's clock plus the offset in `state`.
-    std::string timeReferenceSet;     // what the radio runs
-    bool timeReferenceRuntime = true;  // false: a change waits for begin()
+    std::string timeReferenceSet;  // what the radio runs
     uint64_t networkTimeUs() override {
         uint64_t local = clock ? *clock * 1000 : 0;
         return local + static_cast<uint64_t>(state.timeOffsetUs);
     }
     int64_t localTimeUs(uint64_t networkUs) override { return static_cast<int64_t>(networkUs) - state.timeOffsetUs; }
     bool timeReference(const std::string& ref) override {
-        if (!timeReferenceRuntime) return false;
         timeReferenceSet = ref;
+        return true;
+    }
+    bool timeInterval(uint32_t ms) override {
+        config.timeIntervalMs = ms;
         return true;
     }
     bool channel(uint8_t ch) override {

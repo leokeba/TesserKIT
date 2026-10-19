@@ -165,15 +165,15 @@ void NowTp::describe(tesser::Object& o) {
                               .validate(checkTimeReference)
                               .persist()
                               .label("Reference")
-                              .doc("auto: the nodes choose one among themselves; this: this node's clock; or the "
+                              .doc("auto: the nodes elect one among themselves; this: this node's clock; or the "
                                    "MAC of the node to follow");
-    restartSettings_.push_back(&t.value("interval", timeInterval_)
-                                    .range(1, 600)
-                                    .unit("s")
-                                    .persist()
-                                    .label("Interval")
-                                    .doc("Between synchronization rounds, once synchronized")
-                                    .ui("advanced"));
+    timeIntervalNode_ = &t.value("interval", timeInterval_)
+                             .range(1, 600)
+                             .unit("s")
+                             .persist()
+                             .label("Interval")
+                             .doc("Between synchronization rounds, once synchronized")
+                             .ui("advanced");
     t.value("synced", [this] { return status_.timeSynced; }).label("Synchronized");
     t.value("isReference", [this] { return status_.timeReference; }).label("This node is the reference");
     t.value("source", [this] { return status_.timeReferenceMac; })
@@ -233,6 +233,7 @@ void NowTp::start() {
     channelGen_ = channelNode_->generation();
     longRangeGen_ = longRangeNode_->generation();
     timeReferenceGen_ = timeReferenceNode_->generation();
+    timeIntervalGen_ = timeIntervalNode_->generation();
     restartGen_ = restartGen();
     // Nodes found are mounted at the root, beside the application's tree,
     // where TesserUI's menu shows them (TesserUI's DESIGN.md section 6.3).
@@ -328,15 +329,9 @@ Check NowTp::pairing(bool accept) {
 }
 
 void NowTp::applyTimeReference() {
-    if (!started_ || radio_->timeReference(timeReference_)) {
-        refresh();
-        return;
-    }
-    // NowTP fixes some roles when it starts.
-    if (!restart_) {
-        restart_ = true;
-        restartNode_->changed();
-    }
+    if (!started_) return;
+    if (!radio_->timeReference(timeReference_)) tesser::logError("tesserkit: NowTP refused the time reference");
+    refresh();
 }
 
 void NowTp::tick(uint32_t nowMs) {
@@ -368,6 +363,10 @@ void NowTp::tick(uint32_t nowMs) {
     if ((gen = timeReferenceNode_->generation()) != timeReferenceGen_) {
         timeReferenceGen_ = gen;
         applyTimeReference();
+    }
+    if ((gen = timeIntervalNode_->generation()) != timeIntervalGen_) {
+        timeIntervalGen_ = gen;
+        if (started_) radio_->timeInterval(timeInterval_ * 1000);
     }
     uint32_t rg = restartGen();
     if (rg != restartGen_) {
