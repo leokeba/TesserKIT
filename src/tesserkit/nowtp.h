@@ -34,10 +34,27 @@ public:
     // are handled in the device's task, woken as they arrive, which saves
     // 6 KB of heap at no measurable latency. true: a worker task.
     NowTp& ownTask(bool own);
+    // Network time: "auto" (default), "this", or the MAC of the node whose
+    // clock is the network time (docs/DESIGN.md section 5.11).
+    NowTp& timeReference(const char* ref);
+    // Between synchronization rounds once synchronized (default 5 s).
+    NowTp& timeInterval(uint32_t seconds);
 
     void describe(tesser::Object& o) override;
 
     bool started() const { return started_; }
+
+    // Network time in µs: the reference node's clock, the same instant on
+    // every synchronized node. The local clock's while NowTP is off or
+    // unsynchronized. From any task.
+    uint64_t networkTimeUs() const;
+    // The local clock's value (esp_timer_get_time()) at network time
+    // `networkUs`: an action scheduled there happens at the same instant on
+    // every synchronized node.
+    int64_t localTimeUs(uint64_t networkUs) const;
+    // Synchronized with the reference, or the reference: as of the last
+    // second (the service polls the radio), under the API lock.
+    bool timeSynced() const { return status_.timeSynced; }
 
 protected:
     void start() override;
@@ -58,6 +75,7 @@ private:
     void begin();
     void refresh();
     void setPairing(const std::string& s);
+    void applyTimeReference();
     tesser::Check pairing(bool accept);
 
     bool enabled_ = true;
@@ -68,6 +86,8 @@ private:
     size_t maxCalls_ = 8;
     bool ownTask_ = false;
     std::string pairingCode_;
+    std::string timeReference_ = "auto";
+    uint32_t timeInterval_ = 5;  // s
 
     NowTpRadio* radio_ = nullptr;
     tesser::Object* peersObject_ = nullptr;
@@ -84,10 +104,12 @@ private:
     tesser::Node* longRangeNode_ = nullptr;
     tesser::Node* nodesNode_ = nullptr;
     tesser::Node* statusNode_ = nullptr;
+    tesser::Node* timeNode_ = nullptr;
+    tesser::Node* timeReferenceNode_ = nullptr;
     tesser::Node* pairingNode_ = nullptr;
     tesser::Node* restartNode_ = nullptr;
     std::vector<tesser::Node*> restartSettings_;  // what applies at the next boot
-    uint32_t enabledGen_ = 0, channelGen_ = 0, longRangeGen_ = 0;
+    uint32_t enabledGen_ = 0, channelGen_ = 0, longRangeGen_ = 0, timeReferenceGen_ = 0;
     uint32_t restartGen_ = 0;
     uint32_t polledAtMs_ = 0;
     uint32_t startMs_ = 0;

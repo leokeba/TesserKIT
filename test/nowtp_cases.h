@@ -184,4 +184,64 @@ TEST(nowtp_without_its_own_task) {
     CHECK(r.fake.nowtp.polls > 0);
 }
 
+TEST(nowtp_network_time_settings_reach_the_radio) {
+    NowTpRig r;
+    r.nowtp.timeReference("this").timeInterval(2);
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.fake.nowtp.config.timeReference, "this");
+    CHECK_EQ(r.fake.nowtp.config.timeIntervalMs, 2000u);
+    CHECK_EQ(r.value("/sys/nowtp/time/reference"), "\"this\"");
+    CHECK_EQ(r.value("/sys/nowtp/time/interval"), "2");
+}
+
+TEST(nowtp_network_time_reference_changes_at_runtime) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.fake.nowtp.timeReferenceSet, "auto");
+    CHECK_EQ(r.set("/sys/nowtp/time/reference", "\"10:52:1C:75:F3:7C\"").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/nowtp/time/reference", "\"lamp\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/nowtp/time/reference", "\"10:52:1c:75:f3\"").status, Status::InvalidValue);
+    r.settle();
+    CHECK_EQ(r.fake.nowtp.timeReferenceSet, "10:52:1C:75:F3:7C");
+    CHECK_EQ(r.value("/sys/nowtp/restartNeeded"), "false");
+    // A radio that fixes the role when it starts: at the next boot.
+    r.fake.nowtp.timeReferenceRuntime = false;
+    CHECK_EQ(r.set("/sys/nowtp/time/reference", "\"this\"").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.value("/sys/nowtp/restartNeeded"), "true");
+    // Or when NowTP starts again.
+    CHECK_EQ(r.set("/sys/nowtp/enabled", "false").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.set("/sys/nowtp/enabled", "true").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.nowtp.config.timeReference, "this");
+}
+
+TEST(nowtp_network_time_for_the_application) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK(!r.nowtp.timeSynced());
+    CHECK_EQ(r.value("/sys/nowtp/time/synced"), "false");
+    auto& st = r.fake.nowtp.state;
+    st.timeSynced = true;
+    st.timeReferenceMac = "10:52:1c:75:f3:7c";
+    st.timeOffsetUs = 1500;
+    st.timeRoundTripUs = 420;
+    st.timeRounds = 3;
+    r.run(1100);
+    CHECK(r.nowtp.timeSynced());
+    CHECK_EQ(r.value("/sys/nowtp/time/synced"), "true");
+    CHECK_EQ(r.value("/sys/nowtp/time/isReference"), "false");
+    CHECK_EQ(r.value("/sys/nowtp/time/source"), "\"10:52:1c:75:f3:7c\"");
+    CHECK_EQ(r.value("/sys/nowtp/time/offset"), "1500");
+    CHECK_EQ(r.value("/sys/nowtp/time/roundTrip"), "420");
+    CHECK_EQ(r.value("/sys/nowtp/time/rounds"), "3");
+    uint64_t net = r.nowtp.networkTimeUs();
+    CHECK_EQ(net, r.fake.core.now * 1000 + 1500);
+    CHECK_EQ(r.nowtp.localTimeUs(net + 10000), static_cast<int64_t>(r.fake.core.now * 1000 + 10000));
+}
+
 }  // namespace nowtp_cases

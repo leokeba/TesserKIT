@@ -404,6 +404,11 @@ struct NowTpConfig {
     // and `queued` runs (from NowTP's task) when one arrives.
     bool runTask = true;
     std::function<void()> queued;
+    // Network time (NowTP's TimeSync): "auto" (the nodes choose a reference
+    // among themselves), "this" (this node's clock is the network time), or
+    // the MAC of the node to follow.
+    std::string timeReference = "auto";
+    uint32_t timeIntervalMs = 5000;  // between synchronization rounds once synchronized
 };
 
 struct NowTpPeer {
@@ -419,8 +424,13 @@ struct NowTpStatus {
     bool started = false;
     uint8_t channel = 0;
     bool secured = false;
-    bool timeSynced = false, timeReference = false;
-    int64_t timeOffsetUs = 0;
+    bool timeSynced = false, timeReference = false;  // synchronized; this node is the reference
+    std::string timeReferenceMac;                    // the node whose clock is the network time
+    int64_t timeOffsetUs = 0;                        // network time minus the local clock
+    uint32_t timeRoundTripUs = 0;                    // the last round's shortest
+    float timeDriftPpm = 0;
+    uint32_t timeRounds = 0;                         // with the current reference
+    uint32_t timeAgeMs = 0;                          // since the last successful round
     uint32_t sent = 0, received = 0, failed = 0;
 };
 
@@ -449,6 +459,14 @@ public:
     virtual bool forgetKey() = 0;
     // TesserAPI's endpoint: null before the first begin(), then kept.
     virtual tesser::DatagramEndpoint* endpoint() = 0;
+    // Network time, in µs; the local clock's (esp_timer's) while stopped or
+    // unsynchronized. From any task.
+    virtual uint64_t networkTimeUs() = 0;
+    // The local clock's value at network time `networkUs`.
+    virtual int64_t localTimeUs(uint64_t networkUs) = 0;
+    // Changes NowTpConfig::timeReference while started; false when that
+    // takes a new begin().
+    virtual bool timeReference(const std::string& ref) = 0;
     // Without a worker task (NowTpConfig::runTask false): handles what
     // arrived, and expires calls. In the device's task.
     virtual void poll() = 0;

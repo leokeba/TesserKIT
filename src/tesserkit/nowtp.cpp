@@ -14,6 +14,17 @@ namespace {
 constexpr uint32_t kPollMs = 1000;    // the radio's status and the nodes nearby
 constexpr uint32_t kSettleMs = 20000;  // at the latest: the access point is up by then
 
+// "auto", "this", or a MAC ("aa:bb:cc:dd:ee:ff", either case).
+Check checkTimeReference(const std::string& v) {
+    if (v == "auto" || v == "this") return Check::ok();
+    bool mac = v.size() == 17;
+    for (size_t i = 0; mac && i < v.size(); i++) {
+        char c = v[i];
+        mac = i % 3 == 2 ? c == ':' : (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    }
+    return mac ? Check::ok() : Check::fail(Status::InvalidValue, "auto, this, or a node's MAC (aa:bb:cc:dd:ee:ff)");
+}
+
 }  // namespace
 
 NowTp& NowTp::enable(bool on) {
@@ -49,6 +60,26 @@ NowTp& NowTp::longRange(bool on) {
 NowTp& NowTp::txPower(int8_t dBm) {
     txPower_ = dBm;
     return *this;
+}
+
+NowTp& NowTp::timeReference(const char* ref) {
+    timeReference_ = ref ? ref : "auto";
+    return *this;
+}
+
+NowTp& NowTp::timeInterval(uint32_t seconds) {
+    timeInterval_ = seconds;
+    return *this;
+}
+
+uint64_t NowTp::networkTimeUs() const {
+    if (radio_) return radio_->networkTimeUs();
+    return dev_.core().uptimeMs() * 1000;
+}
+
+int64_t NowTp::localTimeUs(uint64_t networkUs) const {
+    if (radio_) return radio_->localTimeUs(networkUs);
+    return static_cast<int64_t>(networkUs);
 }
 
 NowTp& NowTp::pairingCode(const char* code) {
@@ -127,14 +158,56 @@ void NowTp::describe(tesser::Object& o) {
                       .readOnly()
                       .label("Nodes nearby");
 
+    auto& t = o.object("time").label("Network time").doc(
+        "A clock shared by the nodes nearby, the reference node's: actions started at the same instant on each");
+    timeNode_ = &t;
+    timeReferenceNode_ = &t.value("reference", timeReference_)
+                              .validate(checkTimeReference)
+                              .persist()
+                              .label("Reference")
+                              .doc("auto: the nodes choose one among themselves; this: this node's clock; or the "
+                                   "MAC of the node to follow");
+    restartSettings_.push_back(&t.value("interval", timeInterval_)
+                                    .range(1, 600)
+                                    .unit("s")
+                                    .persist()
+                                    .label("Interval")
+                                    .doc("Between synchronization rounds, once synchronized")
+                                    .ui("advanced"));
+    t.value("synced", [this] { return status_.timeSynced; }).label("Synchronized");
+    t.value("isReference", [this] { return status_.timeReference; }).label("This node is the reference");
+    t.value("source", [this] { return status_.timeReferenceMac; })
+        .label("Reference node")
+        .doc("The MAC of the node whose clock is the network time");
+    t.value("offset", [this] { return status_.timeOffsetUs; })
+        .unit("µs")
+        .label("Offset")
+        .doc("Network time minus this node's clock")
+        .ui("advanced");
+    t.value("roundTrip", [this] { return status_.timeRoundTripUs; })
+        .unit("µs")
+        .label("Round trip")
+        .doc("The shortest of the last round's exchanges with the reference")
+        .ui("advanced");
+    t.value("drift", [this] { return status_.timeDriftPpm; })
+        .unit("ppm")
+        .label("Drift")
+        .doc("How fast the offset grows: the two crystals' difference")
+        .ui("advanced");
+    t.value("rounds", [this] { return status_.timeRounds; })
+        .label("Rounds")
+        .doc("Synchronization rounds with the current reference")
+        .ui("advanced");
+    t.value("age", [this] { return status_.timeAgeMs; })
+        .unit("ms")
+        .label("Last round")
+        .doc("Since the last successful round")
+        .ui("advanced");
+
     auto& s = o.object("status").label("Status");
     statusNode_ = &s;
     s.value("started", [this] { return status_.started; }).label("Running");
     s.value("channel", [this] { return status_.channel; });
-    s.value("timeSynced", [this] { return status_.timeSynced; })
-        .label("Network time")
-        .doc("Synchronized with the node whose clock is the network time (for actions started together)");
-    s.value("timeReference", [this] { return status_.timeReference; }).label("Time reference").ui("advanced");
     s.value("sent", [this] { return status_.sent; }).label("Messages sent").ui("advanced");
     s.value("received", [this] { return status_.received; }).label("Messages received").ui("advanced");
     s.value("failed", [this] { return status_.failed; }).label("Messages failed").ui("advanced");
@@ -159,6 +232,7 @@ void NowTp::start() {
     enabledGen_ = enabledNode_->generation();
     channelGen_ = channelNode_->generation();
     longRangeGen_ = longRangeNode_->generation();
+    timeReferenceGen_ = timeReferenceNode_->generation();
     restartGen_ = restartGen();
     // Nodes found are mounted at the root, beside the application's tree,
     // where TesserUI's menu shows them (TesserUI's DESIGN.md section 6.3).
@@ -187,6 +261,8 @@ void NowTp::begin() {
     c.pairingCode = pairingCode_;
     c.maxCalls = maxCalls_;
     c.runTask = ownTask_;
+    c.timeReference = timeReference_;
+    c.timeIntervalMs = timeInterval_ * 1000;
     if (!ownTask_) c.queued = [&dev = dev_] { dev.wake(); };
     Device& dev = dev_;
     bool had = radio_->endpoint() != nullptr;
@@ -200,10 +276,14 @@ void NowTp::refresh() {
     if (!radio_) return;
     NowTpStatus st = started_ ? radio_->status() : NowTpStatus();
     bool changed = st.started != status_.started || st.channel != status_.channel || st.secured != status_.secured ||
-                   st.timeSynced != status_.timeSynced || st.timeReference != status_.timeReference ||
                    st.sent != status_.sent || st.received != status_.received || st.failed != status_.failed;
-    status_ = st;
+    // The offset, drift and age move all the time: read when asked, announced
+    // with a round.
+    bool timeChanged = st.timeSynced != status_.timeSynced || st.timeReference != status_.timeReference ||
+                       st.timeReferenceMac != status_.timeReferenceMac || st.timeRounds != status_.timeRounds;
+    status_ = std::move(st);
     if (changed) statusNode_->changed();
+    if (timeChanged) timeNode_->changed();
     std::vector<Node> nodes;
     if (started_) {
         for (const NowTpPeer& p : radio_->peers()) {
@@ -247,6 +327,18 @@ Check NowTp::pairing(bool accept) {
     return Check::ok();
 }
 
+void NowTp::applyTimeReference() {
+    if (!started_ || radio_->timeReference(timeReference_)) {
+        refresh();
+        return;
+    }
+    // NowTP fixes some roles when it starts.
+    if (!restart_) {
+        restart_ = true;
+        restartNode_->changed();
+    }
+}
+
 void NowTp::tick(uint32_t nowMs) {
     if (enabled_ && !started_ && !begun_ && settled(nowMs)) {
         begun_ = true;  // once: a radio that won't start isn't retried every period
@@ -272,6 +364,10 @@ void NowTp::tick(uint32_t nowMs) {
     if ((gen = longRangeNode_->generation()) != longRangeGen_) {
         longRangeGen_ = gen;
         if (started_) radio_->longRange(longRange_);
+    }
+    if ((gen = timeReferenceNode_->generation()) != timeReferenceGen_) {
+        timeReferenceGen_ = gen;
+        applyTimeReference();
     }
     uint32_t rg = restartGen();
     if (rg != restartGen_) {
