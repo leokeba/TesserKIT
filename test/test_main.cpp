@@ -19,5 +19,6 @@
 #include "settings_cases.h"
 #include "chaos_cases.h"
 #include "heap_cases.h"
+#include "pwm_cases.h"
 
 int main(int argc, char** argv) { return check::run(argc > 1 ? argv[1] : nullptr) ? 1 : 0; }

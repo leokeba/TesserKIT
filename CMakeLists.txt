@@ -22,6 +22,7 @@ set(TESSERKIT_CORE_SRCS
     src/tesserkit/sleep.cpp
     src/tesserkit/udp_api.cpp
     src/tesserkit/peers.cpp
+    src/tesserkit/pwm.cpp
     src/tesserkit/settings_store.cpp)
 
 if(ESP_PLATFORM)
@@ -48,7 +49,7 @@ if(ESP_PLATFORM)
     endif()
     # The temperature sensor, GPIO and SPI drivers left "driver" in ESP-IDF 5.3.
     if(IDF_VERSION_MAJOR GREATER 5 OR (IDF_VERSION_MAJOR EQUAL 5 AND IDF_VERSION_MINOR GREATER_EQUAL 3))
-        set(TESSERKIT_DRIVER_REQS esp_driver_tsens esp_driver_gpio esp_driver_spi)
+        set(TESSERKIT_DRIVER_REQS esp_driver_tsens esp_driver_gpio esp_driver_spi esp_driver_ledc)
     else()
         set(TESSERKIT_DRIVER_REQS driver)
     endif()
@@ -72,6 +73,7 @@ if(ESP_PLATFORM)
              src/tesserkit/platform/esp/log_esp.cpp
              src/tesserkit/platform/esp/power_esp.cpp
              src/tesserkit/platform/esp/pins_esp.cpp
+             src/tesserkit/platform/esp/pwm_esp.cpp
              src/tesserkit/platform/esp/udp_api_esp.cpp
         INCLUDE_DIRS "src"
         REQUIRES esp_http_server esp_wifi esp_netif nvs_flash
