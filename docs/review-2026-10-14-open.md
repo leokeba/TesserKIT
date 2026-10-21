@@ -1,6 +1,6 @@
 # Full-stack review: what remains open
 
-The architecture review of 2026-10-14 covered TesserKIT, TesserAPI, TesserUI and NowTP. Most of its findings were fixed and released in TesserKIT v0.1.22 (2026-10-15), built on TesserAPI d1f4e6d, TesserUI 250ea7d and NowTP aca9321. This file lists what was **not** fixed, or only partly, plus what the board runs found afterwards.
+The architecture review of 2026-10-14 covered TesserKIT, TesserAPI, TesserUI and NowTP. Most of its findings were fixed and released in TesserKIT v0.1.22 (2026-10-15), built on TesserAPI d1f4e6d, TesserUI 250ea7d and NowTP aca9321; Phase 1 of the roadmap followed in v0.1.26. This file lists what is still **not** fixed, or only partly, plus what the board runs found afterwards. Items fixed since are removed from the sections and recorded in the roadmap's status lines (last pruned 2026-10-21).
 
 The [roadmap](#roadmap) at the end orders this work.
 
@@ -10,10 +10,10 @@ Line references are from the reviewed commits: TesserKIT c0e8b9f, TesserAPI 5842
 
 1. **Applications build siblings' `main` unpinned.** tiny-heliostat and ballet-photophonique call `firmware.yml` with plain `owner/repo` dependencies. TesserKIT pins its siblings in `deps.lock`; these two follow whatever `main` holds when their release runs. TesserAPI's main was red for ESP-IDF 5.1 builds between ba3d44f and d1f4e6d. Option: give each a `deps.lock` and `dependencies-file: deps.lock`.
 2. **The Ethernet variant of the full example is too big for a classic ESP32.** `examples/idf/full -DETHERNET_BOARD=gledopto` has about 5 KB of room in its slot (local IDF 6.2; CI's 5.5 images run about 15 KB larger, so it wouldn't fit in CI). With every service on, a Gledopto has 12 KB of free heap: HTTPS and backups are refused. With Bluetooth off it has 60 KB. Options: Bluetooth off by default on Ethernet boards, or fewer services in that variant. `release.yml`'s size gate doesn't build this variant.
-3. **Memory tiers for gateways aren't applied.** NowTP and TesserAPI both proposed smaller limits for boards with 30–50 KB free (8 KB messages, 12 KB queues each way) and under 20 KB free (4 KB messages). A message larger than a receiver's limit is rejected, so every device on a link must change together. Fleet-wide decision.
+3. ~~Memory tiers for gateways aren't applied.~~ **Answered by Phase 1 item 3:** each node advertises its message limit and peers send it no more (TesserAPI dd33e19, NowTP deadc54), so a gateway can take a smaller tier without the fleet changing. What's left is choosing the gateway profile's limits (Phase 2).
 4. **Silent assertions in the full example** (258cced) saved 59 KB, so the release fits. A failed assert still panics with a backtrace and a core dump, but the console no longer prints the assert's file and line. Revert if you'd rather pay for the strings another way.
-6. **NVS is too small for a fully configured device.** Every persisted string now has a length limit, and the worst-case `/sys` record (every service at its limits) is 16.7 KB; a 20 KB NVS partition can rewrite only about 6.7 KB of it (measured with ESP-IDF's real `nvs_flash` on the host, beside PHY calibration and NowTP's key). Since 1a4fd7a TesserKIT refuses a record NVS couldn't rewrite, keeping the stored one and warning in `/sys/status/settings`, rather than risking it. The fix is a 64 KB `nvs` partition for new boards: a partition change needs a serial flash. Leo's call. Since 2026-10-15 (Leo's decision), a device with Files keeps its settings on that filesystem instead, moved from NVS at boot (DESIGN §6.1): the boards on `tesserkit_4mb_files.csv` are covered without a new table. On TesserAPI 65ee017 (unbuffered FileStorage), checked on R1 and the Gledopto on 2026-10-16 (moved settings kept, saves, restart, factory reset). Still open for boards without Files: the 64 KB table.
-5. **Ethernet takes the default route even with a static address and no router** (8326587, Leo's choice). Consequence, measured on a Gledopto: with a static cable to an isolated network and the station connected, internet traffic goes to the cable and fails (`server unreachable`). An optional refinement: a static configuration with an empty gateway would mean "no router here" and keep internet on Wi-Fi. A static address currently requires a gateway, and without one it falls back to DHCP silently (see TesserKIT below).
+5. **NVS is too small for a fully configured device.** Every persisted string now has a length limit, and the worst-case `/sys` record (every service at its limits) is 16.7 KB; a 20 KB NVS partition can rewrite only about 6.7 KB of it (measured with ESP-IDF's real `nvs_flash` on the host, beside PHY calibration and NowTP's key). Since 1a4fd7a TesserKIT refuses a record NVS couldn't rewrite, keeping the stored one and warning in `/sys/status/settings`, rather than risking it. The fix is a 64 KB `nvs` partition for new boards: a partition change needs a serial flash. Leo's call. Since 2026-10-15 (Leo's decision), a device with Files keeps its settings on that filesystem instead, moved from NVS at boot (DESIGN §6.1): the boards on `tesserkit_4mb_files.csv` are covered without a new table. On TesserAPI 65ee017 (unbuffered FileStorage), checked on R1 and the Gledopto on 2026-10-16 (moved settings kept, saves, restart, factory reset). Still open for boards without Files: the 64 KB table.
+6. **Ethernet takes the default route even with a static address and no router** (8326587, Leo's choice). Consequence, measured on a Gledopto: with a static cable to an isolated network and the station connected, internet traffic goes to the cable and fails (`server unreachable`). Since 580a52a an empty gateway is accepted and means "no gateway", but Ethernet keeps its route priority. An optional refinement: an empty gateway on Ethernet would also give up the default route and keep internet on Wi-Fi.
 
 ## Security
 
@@ -31,9 +31,9 @@ Several defaults are "open until someone sets it up", and the gaps add up across
 ### TesserAPI
 
 - **Datagram transports trust source addresses** (`datagram.cpp:565-600`, `:711-770`, `remote.cpp:832-870`). A token is bound to the sender's IP or MAC, so spoofing an authenticated peer's address inherits its level. Writes need no reply, and notifications are accepted from the route's address, which lets forged state into mirrors. Call ids are sequential. Direction: per-session nonces and a MAC (HMAC with a fleet key), random call ids.
-- **Advertisements create remote nodes that are never removed, without a cap** (`DatagramEndpoint::mount`, `datagram.cpp:1229-1258`). Any LAN host broadcasting adverts with random names grows the tree until the heap is gone; DHCP churn piles up routes. Per-peer file sessions are uncapped too (`datagram.cpp:793-798`). Direction: cap mounted peers, evict offline auto-mounted ones.
+- **Spoofed advertisements compete for the peer caps.** Mounted nodes, routes and file sessions are capped and offline auto-mounted nodes evicted since b5a2c1c (Phase 1, so the heap is safe), but adverts with random names can still take the slots real peers would use (reasoned). Fixed by authenticated datagrams (Phase 3's fleet key).
 - **`TokenCheck` sees only the token**, not the client (`api.h`). TesserKIT's "open until an account exists" therefore applies equally to HTTP on the soft-AP and to UDP, ESP-NOW and BLE from strangers. Direction: pass `const Client&`.
-- **HTTP and WebSocket have no CSRF or DNS-rebinding defences** (`http_server.cpp:705-730`). Sets accept any Content-Type, so a web page can POST `text/plain` without a preflight. WebSocket checks no Origin, nothing checks the Host header, so any page the user visits can change an open device, and DNS rebinding lets it read. Token comparison isn't constant-time (`:456`). A WebSocket's level is fixed at the handshake, so a revoked token keeps working on an open socket. Direction: require `application/json` for sets, check Origin against the CORS allowlist and Host against known names, re-check tokens on revocation.
+- **HTTP and WebSocket have no CSRF or DNS-rebinding defences** (`http_server.cpp:705-730`). Sets accept any Content-Type, so a web page can POST `text/plain` without a preflight. WebSocket checks no Origin, nothing checks the Host header, so any page the user visits can change an open device, and DNS rebinding lets it read. (Token comparison is constant-time since 4e383c7.) A WebSocket's level is fixed at the handshake, so a revoked token keeps working on an open socket. Direction: require `application/json` for sets, check Origin against the CORS allowlist and Host against known names, re-check tokens on revocation.
 - **Tokens and the sign-in password travel in clear over relays** (and NowTP below).
 
 ### NowTP
@@ -66,34 +66,19 @@ Several defaults are "open until someone sets it up", and the gaps add up across
 ### TesserKIT
 
 - **Policy in the platform layer** (`platform/esp/wifi_esp.cpp:208-262`). The DNS refill policy decides which interface's DNS wins, calls `dhcp_renew()` from inside a netif ext callback (re-entrancy inside lwIP reasoned, not verified), and keeps global `g_staticDns`; eth_esp.cpp depends on it. Services carry ESP-IDF specifics: disconnect reason codes (`network.cpp:86-106`, `Event::kReasonLeft = 8`) and DHCP/ACD timings. None of it is host-testable. Direction: lift DNS and default-route policy into Network, with `dnsServers()`, `setDns()`, `renewLease()`, `setDefault()` primitives; the platform translates reasons into a TesserKIT enum.
-- **The fake platform can't produce the failures seen on hardware.** It is synchronous, with no DNS, no route priority and no event reordering. Tests now wrap its sink to drop events (`lossy()`) and limit TesserAPI's byte budget (`rig::BudgetLimit`), but there is no general chaotic mode (delay, reorder, drop) and no allocator cap catching unguarded `new`. Every OOM abort found this round was on hardware.
 - **The network state machine is partly emergent.** The station has an explicit enum; its interaction with Ethernet and the AP is spread over predicates (`stationKeptAway`, `ethWaits`, `updateAp`'s `want`) and edge handlers. Network now re-reads interface state every second (6a48c46), which makes it robust, but not simpler.
-- **A static IP without a gateway is silently ignored.** `network.cpp:53` requires a gateway; without one the static configuration is "incomplete" and falls back to DHCP with only a log warning. The field validators don't refuse the combination, against §5's "a refused patch changes nothing".
-- **The static DNS default contradicts the spec.** `network.cpp:58` makes an empty static DNS default to the gateway; DESIGN §5.2 says "empty: none of its own".
-- **Torn portal URL.** `g_portalUrl` is written by the device task while the httpd task reads it, unsynchronized (`device_esp.cpp:21, 72-77`).
-- **Factory reset from a transport task.** `Device::factoryReset()` runs services' `factoryReset()` (NowTP's `forgetKey`) and swaps persistence from whichever task issued the action (`device.cpp:226-235`). Thread safety against NowTP's task and `api_.poll()` is unverified.
-- **Global hooks.** `RemoteNode::onStateChange`, `onAccess` and `setDefaultRouteOrder` are process-wide statics set by Peers (`peers.cpp:200-218`): a second Device or Peers silently replaces them. The same in TesserAPI below.
-- **Setting a password still hashes under the API lock.** Sign-in moved to `tesser::background` (6ab8651); writing a password to `users` still runs PBKDF2 (about 280 ms) under the lock.
-- **The NVS partition is 20 KB.** The worst-case `/sys` record hasn't been measured: 8 users, 5 networks, 16 peer settings, 16 timers. Records are now sparse, which helps, but a large one could hit `NOT_ENOUGH_SPACE` and retry forever (reasoned).
 - **NowTP forces `WIFI_PS_NONE`** (`espnow_transport.cpp:893-901`), which overrides `/sys/network/wifi/powerSave`. The setting has no effect while NowTP runs.
 - **NowTP still runs its own task.** TesserKIT never sets NowTP's `runTask`; c3cebb9 removed only TesserAPI's worker. NowTP's polled mode has no wake hook or next-deadline query (see NowTP), so dropping the task (about 4 KB of stack) needs that first.
-- **A large change notification rebuilt every 10 ms while refused.** tesserapi-ae saw DEVKIT-R1 rebuild a 5–6 KB notification every 10 ms during transfers while its sending was refused for memory. Probably a subscription on `/sys` or `/peers`. Not investigated.
-- **Download chunk size on boards without PSRAM.** The network stack's copies of a reply in flight (lwIP, Wi-Fi TX) scale with the chunk and aren't seen by any reservation: 4 KB chunks cost about 23 KB at peak on R1, 512 B about 7.5 KB. During transfers V3's lowest heap reached 2.0–5.7 KB. A smaller `maxResponse` on such boards would help (and see the tiers above).
 
 ### TesserAPI
 
-- **Complexity and scope.** `RemoteNode` (`remote.cpp`, about 1,800 lines, several mutexes) combines forwarding, mirroring, shared upstream subscriptions, routes, failover and probing, ordered streamed sets, token presentation and file relays; `DatagramEndpoint` is similar. The library has grown from "a typed tree plus transports" into a mesh stack, with its own reliable UDP protocol duplicating NowTP's. Direction: split routing, upstream cache, streamer and relay out of `RemoteNode`. The lock-rank checker (fca51c8) now enforces lock order on host builds.
-- **Process-wide singletons.** `RemoteNode::onStateChange`, `onAccess` and `setDefaultRouteOrder` (`remote.cpp:531-545`): a second caller silently replaces the first. Direction: per instance, several subscribers.
-- **Queued-mode race** (opt-in; TesserKIT doesn't use it; reasoned). `runQueued` pops a request and releases the queue lock before taking the API lock (`api.cpp:1506-1521`). A concurrent `dropSubscriber` finds nothing queued and the transport deletes the Subscriber; `handleNow` then runs with a dangling `request.subscriber`.
-- **`DatagramEndpoint::process` uses raw `RemoteNode*` copies outside the lock** (`datagram.cpp:331-337, 619-630`). It is safe only because nodes are never destroyed while running.
-- **Every HTTP request below a remote node probes the remote's schema first** (`http_server.cpp:817+`), one extra round trip. 806bcee moved these requests off the httpd task, but the probe remains. A file marker in the URL or a cached remote schema would avoid it.
+- **Complexity and scope** (dispatched to tesserapi-c0 on 2026-10-21, Phase 4.1). `RemoteNode` (`remote.cpp`, about 1,800 lines then, 2,250 now, several mutexes) combines forwarding, mirroring, shared upstream subscriptions, routes, failover and probing, ordered streamed sets, token presentation and file relays; `DatagramEndpoint` is similar. The library has grown from "a typed tree plus transports" into a mesh stack, with its own reliable UDP protocol duplicating NowTP's. Direction: split routing, upstream cache, streamer and relay out of `RemoteNode`. The lock-rank checker (fca51c8) now enforces lock order on host builds.
 - **A renamed top-level node's record isn't migrated.** `persistVersion()`'s migration sees records by their stored name; renaming a top-level node loses its record. Rename below the top level only.
 - **Untested on hardware:**
   - the `deferTimeoutMs` timeout of an async HTTP request (no firmware action leaves a reply pending, and a silent NowTP peer now fails fast first);
   - a large schema over BLE beside NowTP traffic (the test firmware has no Bluetooth);
   - a real 1 MB relayed image beside a live WebSocket (only 8 × 32 KB was relayed; e2e_transfers' relayed firmware passes since).
 - **The main task's stack margin shrank:** `main_stack_free` 6,424 B, down from 7,944 B on the boot tests. Worth watching.
-- **Gateways could send `"v":2`** with forwarded requests that carry options, so newer peers refuse unknown ones instead of ignoring them. TesserUI doesn't send it either (nothing it sends is unknown to protocol 2 today).
 
 ### NowTP
 
@@ -104,8 +89,6 @@ Several defaults are "open until someone sets it up", and the gaps add up across
   - The automatic power fallback lowers Wi-Fi transmit power for the rest of the boot (`:1315-1317`).
 - **Callbacks run under NowTP's lock.** Receive, completion and peer-event callbacks hold NowTP's recursive mutex, so an application callback that takes a lock another task holds while calling NowTP can deadlock. TesserAPI avoids it by deferring; the contract is undocumented.
 - **Polled mode has no wake hook.** `poll()` has no `nextDeadlineMs()` and no wake from `pushEvent`. To drop the `nowtp` task, add an `onEvent` hook (`xTaskNotifyGive` from the Wi-Fi task) and a next-deadline query.
-- **The duplicate table is global.** Duplicate suppression is one 32-entry ring shared by all senders (`engine.cpp:881-897`). Above roughly 16 messages a second, a reliable message whose ack was lost and is re-probed can be delivered twice, for example a `set` executed twice (reasoned). Direction: per-sender id windows.
-- **"Complete" is acknowledged before delivery.** The ack is queued before the handler runs, and the handler can't refuse (`engine.cpp:769-774`). If TesserAPI drops the message at its heap floor, the sender still sees `Ok`. Requests are answered `busy`, but one-way messages are lost silently.
 - **Unauthenticated fragments can abort an authenticated reassembly.** An injected fragment with the same id but another count, or corrupt data, kills it (`engine.cpp:573-579`). No worse than jamming.
 - **`LatestOnly` scope is per (peer, port)**, and TesserAPI multiplexes everything on port 84. Latent: TesserAPI doesn't use `LatestOnly` today.
 - **Receiver credit.** nowtp-4f's recommendation for later: advertise free reassembly room in Busy and Missing acks, so senders wait before starting a message to a full receiver, and hold more than one message per destination only up to that credit. Today a refused message costs about one frame of airtime plus a resend.
@@ -115,14 +98,9 @@ Several defaults are "open until someone sets it up", and the gaps add up across
 
 - **Hidden pages keep their push subscriptions.** Polls pause while `document.hidden` (df634a5); a background tab's subscriptions and events stream stay open.
 - **The events-stream budget isn't shared across a launcher's connections.** Each opened connection holds one of a device's two streams.
-- **Opening the launcher resets boards.** It reopens remembered USB ports by itself (`Workspace.svelte:268-273`), which resets most devkits, a running motor controller included (the heliostat).
 - **Custom element versions collide.** The element registry is per page, so two devices shipping different versions of `x-sun-dial` both get the first one loaded (`Element.svelte:4-18`).
-- **Bluetooth writes swallow errors.** The send queue ignores write failures (`envelope.ts:296`), leaving a partial line on the device that corrupts the next envelope.
-- **Log lines can be read as replies.** `lineReader` treats any `{"` in a log line as an envelope (`envelope.ts:178`); a logged JSON object with `id` and `status` could resolve the wrong pending request.
 - **Optimistic writes on objects.** "Pending" is tracked per exact path (`store.svelte.ts:85`): a notification at a child of a pending object write (a form patch) overwrites the optimistic value.
-- **64-bit values break plain JSON calls** (latent: no fixture has values beyond 2^53). `JSON.stringify(r.body)` runs outside `storageSet`'s try (`session.svelte.ts:595`), so a BigInt in a schema stops `load()`. The cache is read back with plain `JSON.parse` (`:575`). `JSON.stringify` on event bodies and object values (`:452`, `format.ts:52`) throws on a BigInt.
 - **HTTP transport edges.**
-  - `close()` sends `unsub` but never stops the retry loop `setState('down')` arms (`http.ts:50-58,69-71`): a closed launcher connection to an offline node keeps sending a GET every 2 s.
   - File transfers over HTTP use a raw XHR (`File.svelte:61-84`) with no `targetAddressSpace` and no timeout.
   - A bridged serial port is recognised by its API URL ending in `/s` (`session.svelte.ts:286`).
 - **Versions and stubs.** Every package version says `0.1.0` while releases are past v0.1.8, so the `minVersion` check (`App.svelte:171`) can never trigger. DESIGN §9 promises stub pages "pin an exact version", but the README points stubs at the unversioned `leokeba.github.io/TesserUI/ui.js`, which changes with every push, with no SRI. Direction: versioned paths on Pages, SRI in `serveStub`, versions bumped at release.
@@ -138,9 +116,7 @@ Several defaults are "open until someone sets it up", and the gaps add up across
 
 ## Found during the board runs, not yet explained
 
-- **UDP broadcasts are lost more often.** e2e_udp on V3, R1 and the Gledopto, five runs on 2026-10-14: every functional check passed in some run, but about 5 broadcasts were lost in about 175 checks, against 1 in 105 on 2026-10-13. Not compared against v0.1.21 on the same boards. NowTP's traffic sharing the channel is one candidate.
 - **One DEVKIT-V3 panic without a core dump** during the first e2e_udp run on the integration build (TesserAPI ba3d44f). Not seen again in three runs; ESP-IDF 6.1-dev's core dump writer sometimes fails to write (AGENTS.md).
-- **One serial firmware chunk answered `bad_request` "data must be base64"** on V3 (TesserAPI 2fb030a), under memory pressure. tesserapi-ae fixed the serial line's refusals (they now reply under the request's id) but didn't see the corruption again in four runs, so a UART cause isn't confirmed or ruled out.
 
 - **Explained and fixed (2026-10-16): a relayed firmware lost the peer's upload at its last chunk** ("no upload in progress at this path", V3 gateway, R1 peer). NowTP declared the gateway lost after 7 s without discovery announcements, although its data kept arriving, and TesserAPI then dropped the peer's file session. NowTP 7586949 counts any accepted message or ack as heard; TesserAPI 65ee017 keeps a peer's calls and transfers through a link loss within 5 s of hearing it. Reproduced and checked by tesserapi-72 by silencing the gateway's announcements mid-upload.
 - **The Gledopto as gateway with Bluetooth on runs out of memory** (2026-10-16, V3 browning out so the Gledopto took its role): lowest heap 92 bytes; the settings download, serial file and firmware transfers refused `low_memory`; HTTP stopped answering for a while. Built without Bluetooth it had 106 KB free (58 KB at the lowest) and passed every suite. Evidence for Phase 2's classic gateway profile.
@@ -176,8 +152,8 @@ Owners: **KIT** TesserKIT, **API** TesserAPI, **UI** TesserUI, **NowTP**. Phases
   - TesserKIT: static addresses without a gateway, factory reset in the device task, passwords hashed off the lock, bounded strings and the NVS guard, chaos tests, the allocator cap, `test/hil.py`, the UART handler in IRAM, network settings applied after the reply, and the log's lines in a ring.
   - Item 6: the UDP broadcast loss is the access point, not a regression (v0.1.21: 7 failed checks in 5 runs, v0.1.22: 1). The serial base64 corruption was bytes lost on the UART during flash writes: caught now, and made rare by the IRAM handler.
 - `test/hil.py` on v0.1.26's commits: device 37/37, files 39/39, ethernet 16/16, transfers 18/18, udp 32/34. No crash or brownout. DEVKIT-V3's lowest heap through the gateway suites was 7.1 KB (3.3 KB before).
+- After the release: V3's lowest heap in the files suite (1.4–1.7 KB) was traced by tesserapi-ae to HTTP downloads and Peers' status rebuild; TesserAPI 2f5c47a paces downloads by the heap, and TesserKIT e36f93e reserves the status first (dd698fd): 5.3 KB at the lowest since.
 - Open:
-  - V3's lowest heap fell to 1.7 KB during the files suite (being traced).
   - The Gledopto with every service and Ethernet sits at 4–7 KB (decision 2, Phase 2's profiles).
   - Registering a nightly runner for `test/hil.py` is Leo's to do.
 
@@ -220,6 +196,8 @@ Goal: documented service combinations per target, each with flash and heap headr
 
 ### Phase 3: security as an opt-in mode
 
+**Status (2026-10-21):** constant-time token comparison done (TesserAPI 4e383c7, pinned since a3821f5). Everything else open.
+
 Goal: defaults stay open; one switch (per device, or per fleet) turns on a coherent secure mode, and its threat model is documented.
 
 1. **Free hardening, made by default.**
@@ -244,6 +222,10 @@ Goal: defaults stay open; one switch (per device, or per fleet) turns on a coher
 
 ### Phase 4: architecture, protocol and packaging
 
+**Status (2026-10-21):**
+- Done: per-Api remote-node hooks (TesserAPI 82c45b6; TesserKIT's Peers on them in a3821f5); remembered file probe below remote nodes (6640d46); gateways send `"v":2` with forwarded options (fca7629, tested end to end in 0440024).
+- In progress: the `RemoteNode`/`DatagramEndpoint` split, with tesserapi-c0.
+
 1. **TesserAPI's structure (API):** split `RemoteNode` (routing, upstream cache, streamer, relay); per-instance hooks instead of process-wide statics (TesserKIT's Peers follows); cache remote schemas so requests below a remote node skip the probe.
 2. **Protocol (API, UI):** gateways send `"v":2` with forwarded options; TesserUI does once an option needs it.
 3. **NowTP (NowTP):**
@@ -251,7 +233,8 @@ Goal: defaults stay open; one switch (per device, or per fleet) turns on a coher
    - the interface re-bound on Wi-Fi mode changes;
    - move notices when a station roams;
    - peers' channels reported;
-   - receiver credit.
+   - receiver credit;
+   - Wi-Fi power save left to the application (`/sys/network/wifi/powerSave`), not forced to `WIFI_PS_NONE`.
 4. **TesserUI's client (UI):**
    - hidden pages drop their push subscriptions;
    - one events-stream budget across a launcher's connections;
