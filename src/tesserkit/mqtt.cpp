@@ -546,7 +546,7 @@ std::string Mqtt::discoveryConfig(const std::string& path, const tesser::Node& n
     if (startsWith(path, "/sys/")) doc["entity_category"] = writable ? "config" : "diagnostic";
     JsonObject device = doc["device"].to<JsonObject>();
     device["identifiers"].to<JsonArray>().add(dev_.hostname());
-    device["name"] = dev_.label();
+    device["name"] = dev_.name();
     device["manufacturer"] = "TesserKIT";
     if (!dev_.info().chip.empty()) device["model"] = dev_.info().chip;
     if (!dev_.version().empty()) device["sw_version"] = dev_.version();

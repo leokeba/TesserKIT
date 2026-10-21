@@ -103,7 +103,7 @@ TEST(settings_on_the_filesystem) {
 // doesn't mount.
 TEST(settings_moved_from_nvs) {
     std::map<std::string, std::string> nvs = {
-        {"@version", "1"},
+        {"@version", std::to_string(tesserkit::Device::kSettingsVersion)},
         {"sys", "{\"time\":{\"tz\":\"EST5EDT\"}}"},
         {"app", "{\"level\":4}"},
         {"gone", "{\"x\":1}"},  // no such node any more: not TesserKIT's to touch
@@ -141,7 +141,7 @@ TEST(settings_moved_from_nvs) {
 // the copy NVS kept (its network among them), not from defaults.
 TEST(settings_fall_back_to_nvs_copy) {
     std::map<std::string, std::string> nvs = {
-        {"@version", "1"},
+        {"@version", std::to_string(tesserkit::Device::kSettingsVersion)},
         {"sys", "{\"time\":{\"tz\":\"EST5EDT\"}}"},
     };
     std::string dir;
@@ -166,7 +166,7 @@ TEST(settings_fall_back_to_nvs_copy) {
 // the settings stay in NVS for this boot, and move at the next.
 TEST(settings_move_failing_midway_keeps_nvs) {
     std::map<std::string, std::string> nvs = {
-        {"@version", "1"},
+        {"@version", std::to_string(tesserkit::Device::kSettingsVersion)},
         {"sys", "{\"time\":{\"tz\":\"EST5EDT\"}}"},
         {"app", "{\"note\":\"" + std::string(2000, 'n') + "\"}"},
     };

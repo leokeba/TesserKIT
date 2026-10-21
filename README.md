@@ -66,7 +66,7 @@ The bridge runs on your machine, finds the devices on its network and serves the
 
 | Service | Path | What it does |
 |---|---|---|
-| `System` | `/sys/status`, `/sys/restart`, ... | Chip, heap (charted), uptime, reset reason; restart, factory reset, core dump download |
+| `System` | `/sys/name`, `/sys/status`, `/sys/restart`, ... | The device's name, shown by the interface and in its node tabs, and its hostname's default; chip, heap (charted), uptime, reset reason; restart, factory reset, core dump download |
 | `Network` | `/sys/network` | Saved networks (a keyed list; passwords are never readable), scan, station state machine with backoff, access point (always, when offline, never), captive portal, mDNS. Ethernet on boards that have it (`net.ethernet(tesserkit::boards::gledopto())`), with the station always, never, or as a fallback to Ethernet's DHCP lease, and a link-local address on a cable without DHCP. Each interface says why it is in its state |
 | `Time` | `/sys/time` | SNTP, POSIX time zone (the interface picks it from IANA names), set from the browser's clock, external sources (GPS, RTC) |
 | `Firmware` | `/sys/firmware` | Upload with progress, checked for the chip before anything is written; download from a URL, and updates from GitHub releases checked daily on the device (opt-in); confirmation after a minute online, rollback |

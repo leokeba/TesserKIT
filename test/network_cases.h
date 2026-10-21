@@ -466,6 +466,44 @@ TEST(network_hostname_and_mdns) {
     CHECK(!r.fake.mdns.on);
 }
 
+TEST(network_hostname_follows_the_name) {
+    NetRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.value("/sys/network/hostname"), "\"\"");
+    CHECK_EQ(r.fake.mdns.host, "test-device-a67c");
+    CHECK_EQ(r.set("/sys/name", "\"Stage left\"").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.wifi.hostnameSet, "stage-left");
+    CHECK_EQ(r.fake.mdns.host, "stage-left");
+    // A hostname set wins over the name, until it is emptied.
+    CHECK_EQ(r.set("/sys/network/hostname", "\"rig-7\"").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.mdns.host, "rig-7");
+    CHECK_EQ(r.set("/sys/name", "\"Stage right\"").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.mdns.host, "rig-7");
+    CHECK_EQ(r.set("/sys/network/hostname", "\"\"").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.wifi.hostnameSet, "stage-right");
+    CHECK_EQ(r.fake.mdns.host, "stage-right");
+}
+
+TEST(network_hostname_migrates) {
+    // Settings version 1 stored the hostname itself: one equal to the
+    // default is dropped, so it follows the name; another is the user's.
+    for (const char* stored : {"test-device-a67c", "rig-7"}) {
+        NetRig r;
+        r.storage.records["@version"] = "1";
+        r.storage.records["sys"] = std::string("{\"network\":{\"hostname\":\"") + stored + "\"}}";
+        CHECK(r.dev.begin());
+        bool user = std::string(stored) == "rig-7";
+        CHECK_EQ(r.value("/sys/network/hostname"), user ? "\"rig-7\"" : "\"\"");
+        CHECK_EQ(r.set("/sys/name", "\"Porch\"").status, Status::Ok);
+        CHECK_EQ(r.dev.hostname(), user ? "rig-7" : "porch");
+    }
+}
+
 TEST(network_access_levels) {
     NetRig r;
     r.net.defaultNetwork("Home", "pw");

@@ -73,6 +73,7 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
 
 ```
 /sys                    label "System", ui.page, ui.icon "settings", a description
+  name                  System (§5.1): the device's name (§4.4)
   status/               System (§5.1): read-only, watched values
   restart, factoryReset System's actions
   network/              Network (§5.2)
@@ -151,8 +152,9 @@ Platform callbacks (Wi-Fi events, SNTP sync) only post to a small queue that the
 
 ### 4.4 Identity
 
-- **Label:** `Device("Heliostat")` sets `api.label()`, shown by TesserUI as the device's name.
-- **Hostname:** the label lowercased, non-alphanumerics replaced by `-`, plus the last two MAC bytes (`heliostat-a67c`), unless `dev.hostname()` or the persisted `/sys/network/hostname` says otherwise. It is the DHCP hostname, the mDNS name and the NowTP discovery name.
+- **Label:** `Device("Heliostat")` is the firmware's name for the device: its name until the user gives it one, and its hostname's start.
+- **Name:** `/sys/name` (§5.1), the user's name for this device ("Heliostat 3", "Lampe d'entrée"); empty, the label. It is the root's label (`api.label()`), which TesserUI shows as the node's name: the header, and the node's tab in a gateway's or the launcher's tab bar (TesserUI §6.5), where every node of one firmware would otherwise read the same. A change applies at once: the label is part of the schema's hash, which the node advertises over NowTP and UDP, so a gateway's UI reads the new name. Art-Net's short name and Home Assistant's device name are the name too. `dev.name()` reads it, `dev.nameSetting()` the setting.
+- **Hostname:** `/sys/network/hostname` when set; else the name the user gave, made a hostname (lowercased, Latin letters' accents dropped, other characters as single hyphens, at most 32: "Lampe d'entrée" → `lampe-d-entree`); else `dev.hostname("helio")`, the application's; else the label made one (at most 26), plus the last two MAC bytes (`heliostat-a67c`), so devices of one firmware differ until named. It is the DHCP hostname, the mDNS name, the NowTP and UDP discovery name (their nodes' names under a gateway's `/peers`; a new one from the next restart), the Bluetooth name and the files' download names. A name with neither letters nor digits ("★") leaves the hostname to the next rule. Two devices given the same name get the same hostname: give one a hostname of its own.
 - **Version:** `dev.version("1.4.0")`, else the ESP-IDF app description's version. Shown in `/sys/firmware/version`, advertised over mDNS.
 
 ## 5. Services
@@ -162,6 +164,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 ### 5.1 System
 
 ```
+/sys/name *(p)      string ≤ 32, Admin, ui.placeholder the label, no control characters: the device's name (§4.4); empty, the label
 /sys/status
   state        enum: booting, provisioning, connecting, online, updating, error
   uptime       integer, s, watched
@@ -190,7 +193,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 
 ```
 /sys/network
-  hostname *(p)        string ≤ 32, Admin
+  hostname *(p)        string ≤ 32, Admin, ui.placeholder "from the name": empty, from the device's name (§4.4)
   ethernet/            with a board (below)
     enabled *(p)       boolean (default true), Admin: off stops the MAC and the PHY
     status/            state (in words), link, connected, ip, speed (Mbps), mac
@@ -421,7 +424,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
   | other string | `text` writable, else `sensor` |
   | action without argument | `button` (`payload_press: null`) |
 
-  Secrets, `ui.hidden` nodes (and objects), events, lists, arrays, files, remote nodes and actions with an argument aren't announced; at most 64 entities. Each config has the node's label, prefixed by its parent's below the root ("LED on"), a `unique_id` (`<hostname>_<object id>`), the leaf's state topic and its `/set` command topic, `<prefix>/status` as availability, the unit and the display precision (`ui.precision`), `entity_category` `diagnostic` (read-only) or `config` (writable) under `/sys`, and the device (identifiers the hostname, name the label, manufacturer TesserKIT, model the chip, the firmware's version, a link to its page). Payloads are JSON both ways: `payload_on: "true"`, `value_template: "{{ value_json }}"` for strings, `command_template: "{{ value | tojson }}"` for strings and `"{{ value | int }}"` for integers, since Home Assistant formats numbers as `100.0`.
+  Secrets, `ui.hidden` nodes (and objects), events, lists, arrays, files, remote nodes and actions with an argument aren't announced; at most 64 entities. Each config has the node's label, prefixed by its parent's below the root ("LED on"), a `unique_id` (`<hostname>_<object id>`), the leaf's state topic and its `/set` command topic, `<prefix>/status` as availability, the unit and the display precision (`ui.precision`), `entity_category` `diagnostic` (read-only) or `config` (writable) under `/sys`, and the device (identifiers the hostname, name the device's name (§4.4), manufacturer TesserKIT, model the chip, the firmware's version, a link to its page). Payloads are JSON both ways: `payload_on: "true"`, `value_template: "{{ value_json }}"` for strings, `command_template: "{{ value | tojson }}"` for strings and `"{{ value | int }}"` for integers, since Home Assistant formats numbers as `100.0`.
 - **Announcing:** on each connection, and when `homeAssistant`, `discoveryPrefix` or the publish list change (no reconnection), the configs are queued after the states and sent four a period while the client's queue takes them: discovery never pushes states out, and a full queue only delays it (it isn't `dropped`). Configs announced earlier in this boot that no longer apply (a path removed from the list, discovery switched off, another prefix) are emptied, which removes them from Home Assistant. Those announced before a restart can't be known: switching discovery off before changing what is published removes them cleanly. Disabling MQTT leaves the configs, and Home Assistant shows the entities unavailable (the will). `CONFIG_TESSERKIT_HOME_ASSISTANT=n` (`-DTESSERKIT_NO_HOME_ASSISTANT` outside ESP-IDF's build) leaves discovery out, its settings and `status/entities` with it: 7.9 KB on the ESP32-C3.
 - One generic bridge replaces ESP32-sveltekit's per-service `MqttEndpoint`s.
 
@@ -439,7 +442,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - **Receiving:** an Art-Net 4 node on UDP 6454 (unicast and broadcast). TesserKIT's task drains the socket without blocking every period and keeps the last ArtDmx frame of its universe; ArtDmx for other universes only counts.
 - **Mappings:** each mapping turns channels of the frame into a write to `path` through the API (a `LocalClient`, Admin, as Timers do), **only when the written value changes**. `coarse` is the channel (1–512, 0: unused), `fine` the low byte's (0: 8 bits). The 16-bit value `v` (8 bits: `coarse × 257`, so 255 is the top) gives `min + v/65535·(max − min)`, written as a number, rounded for an integer node, or `true` from half up for a boolean node. A `threshold` (1–255) makes a gate: `true` while the coarse channel is at or above it. A frame too short for a mapping's channels leaves it alone. New mappings or a new universe write everything again on the next frame.
 - **Errors:** a refused write is kept in `status/error` (`/led/brightness: invalid_value: out of range`) until a write to the same path succeeds.
-- **Discovery:** an ArtPoll is answered with an ArtPollReply, unicast to the controller on port 6454: the device's address (station, else access point), its MAC, version, short name the label, long name the hostname, one DMX output port on the configured port-address, and a node report with the packet count.
+- **Discovery:** an ArtPoll is answered with an ArtPollReply, unicast to the controller on port 6454: the device's address (station, else access point), its MAC, version, short name the device's name (§4.4), long name the hostname, one DMX output port on the configured port-address, and a node report with the packet count.
 - **Platform:** `Udp` (§3.3) on lwIP sockets. A port that can't be opened is tried again every 5 s.
 - **Factory defaults:** `artnet.universe(0).map({"/heliostat/artnet/azimuth", 1, 2, 0, 360})`.
 - What a value means stays the application's: tiny-heliostat maps channels onto `/heliostat/artnet/azimuth` and `elevation` and decides there whether Art-Net takes over (§10.1). It replaces helionext's `ArtNetService` and serves any lighting-controlled device.
@@ -729,8 +732,9 @@ They apply only when the stored state doesn't set the value, so a user's change 
 
 Storage holds only what differs from the defaults (§6.2), so a changed default reaches every device whose user never changed it, except where an older firmware stored the old default itself: TesserKIT before settings version 1 (v0.1.19 and earlier, on TesserAPI before 1a8c28e) froze every default into storage at first boot, and a backup holds whatever its firmware stored. Versions tell those values apart from a user's choice:
 
-- **TesserKIT's version** (`Device::kSettingsVersion`, 1) covers `/sys`. `begin()` gives TesserAPI the stored version and a migration (`api.persistVersion()`, TesserAPI §12) before loading. State stored under an older version goes through each service's `migrate(from, settings)`, with its own object as stored (`/sys/<name>`, or `/<name>` for a service at the root, the Sequencer), which drops a value equal to a default that has since changed, or renames a key. Every record is then saved again, sparse, under the new version, which drops the values equal to today's defaults.
+- **TesserKIT's version** (`Device::kSettingsVersion`, 2) covers `/sys`. `begin()` gives TesserAPI the stored version and a migration (`api.persistVersion()`, TesserAPI §12) before loading. State stored under an older version goes through each service's `migrate(from, settings)`, with its own object as stored (`/sys/<name>`, or `/<name>` for a service at the root, the Sequencer), which drops a value equal to a default that has since changed, or renames a key. Every record is then saved again, sparse, under the new version, which drops the values equal to today's defaults.
 - **Version 1** made the records sparse. No persisted `/sys` default changed from TesserKIT's first release to it (v0.1.0 to v0.1.19, checked in the history on 2026-10-14), so its migration drops nothing itself: the values frozen before it equal today's defaults, and the sparse rewrite drops them. A later default change raises `kSettingsVersion`, and the service's `migrate()` drops its old value under the version before.
+- **Version 2** (2026-10-21) made `/sys/network/hostname` empty for the default, so that the hostname follows the device's name (§4.4). Before, it read the hostname itself, its default the label's (or the application's `dev.hostname()`); Network's migration drops a stored one equal to that default.
 - **The application's version:** `dev.settingsVersion(version, migrate)`, before `begin()`, for its own records. Its `migrate(record, version, value)` sees every stored record, `"sys"` included after TesserKIT's migration of it (an application that changes a factory default it sets, such as `defaultTz()`, drops the old one there), with the application's version the state was stored under (0 before it set one), and changes it in place; returning false drops the record. It runs only when that version differs.
 - **Stored:** one number, `(application << 16) | TesserKIT's`, TesserAPI's `@version` record, also in backups (`"@version"`). A backup without it (from before versions) is migrated from 0 as it is restored (§5.5).
 

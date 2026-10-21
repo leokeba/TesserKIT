@@ -242,7 +242,7 @@ void ArtNet::pollReply(uint32_t ip) {
     r[18] = static_cast<uint8_t>(universe_ >> 8 & 0x7F);  // NetSwitch
     r[19] = static_cast<uint8_t>(universe_ >> 4 & 0x0F);  // SubSwitch
     r[23] = 0xD0;  // Status1: indicators normal, port-address set locally
-    copyName(r + 26, dev_.label(), 18);
+    copyName(r + 26, dev_.name().c_str(), 18);
     copyName(r + 44, dev_.hostname().c_str(), 64);
     char report[64];
     snprintf(report, sizeof(report), "#0001 [%04u] %s", static_cast<unsigned>(packets_ % 10000),

@@ -133,8 +133,59 @@ TEST(device_hostname_option_and_odd_labels) {
         f.install(d);
         d.task(false);
         CHECK(d.begin());
-        CHECK_EQ(d.hostname(), "h-liostat-3-nord-a67c");
+        CHECK_EQ(d.hostname(), "heliostat-3-nord-a67c");  // accents dropped
     }
+}
+
+TEST(device_name) {
+    SysRig r;
+    r.dev.hostname("helio");  // the application's: until the user names it
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.value("/sys/name"), "\"\"");
+    CHECK_EQ(r.dev.name(), "Test Device");
+    CHECK_EQ(at(r.schema("/sys/name").body, "ui/placeholder"), "\"Test Device\"");
+    CHECK_EQ(r.dev.hostname(), "helio");
+    uint32_t hash = r.dev.api().schemaHash();
+    uint32_t gen = r.dev.hostnameGeneration();
+
+    // Named: the root's label at once (the schema's hash with it), and the
+    // hostname.
+    CHECK_EQ(r.set("/sys/name", "\"Lampe d'entrée\"").status, Status::Ok);
+    CHECK_EQ(at(r.schema("/").body, "label"), "\"Lampe d'entrée\"");
+    CHECK(r.dev.api().schemaHash() != hash);
+    CHECK_EQ(r.dev.hostname(), "lampe-d-entree");
+    CHECK(r.dev.hostnameGeneration() != gen);
+    // A name without letters or digits leaves the hostname to the default.
+    CHECK_EQ(r.set("/sys/name", "\"★ ★\"").status, Status::Ok);
+    CHECK_EQ(r.dev.hostname(), "helio");
+    // At most 32 bytes; no control characters.
+    CHECK_EQ(r.set("/sys/name", "\"123456789012345678901234567890123\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/name", "\"a\\nb\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/name", "\"12345678901234567890123456789012\"").status, Status::Ok);
+    CHECK_EQ(r.dev.hostname(), "12345678901234567890123456789012");
+    // Back to the label.
+    CHECK_EQ(r.set("/sys/name", "\"\"").status, Status::Ok);
+    CHECK_EQ(at(r.schema("/").body, "label"), "\"Test Device\"");
+    CHECK_EQ(r.dev.api().schemaHash(), hash);
+    CHECK_EQ(r.dev.hostname(), "helio");
+    CHECK_EQ(r.request(r.anon, rig::Op::Set, "/sys/name", "\"x\"").status, Status::Unauthorized);
+}
+
+TEST(device_name_persists) {
+    std::map<std::string, std::string> saved;
+    {
+        SysRig r;
+        CHECK(r.dev.begin());
+        CHECK_EQ(r.set("/sys/name", "\"Porch\"").status, Status::Ok);
+        r.run(2500);
+        saved = r.storage.records;
+    }
+    SysRig r;
+    r.storage.records = saved;
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.dev.name(), "Porch");
+    CHECK_EQ(at(r.schema("/").body, "label"), "\"Porch\"");
+    CHECK_EQ(r.dev.hostname(), "porch");
 }
 
 TEST(device_without_platform_fails) {
@@ -146,7 +197,7 @@ TEST(device_without_platform_fails) {
 TEST(device_sys_tree) {
     SysRig r;
     CHECK(r.dev.begin());
-    CHECK_EQ(r.value("/"), "{\"sys\":{\"status\":{\"state\":\"online\",\"uptime\":1,\"heap\":180000,\"minHeap\":150000,\"maxBlock\":110000,\"settings\":\"\","
+    CHECK_EQ(r.value("/"), "{\"sys\":{\"name\":\"\",\"status\":{\"state\":\"online\",\"uptime\":1,\"heap\":180000,\"minHeap\":150000,\"maxBlock\":110000,\"settings\":\"\","
                            "\"resetReason\":\"power-on\",\"chip\":\"ESP32-D0WD-V3 rev 3.0, 2 cores, 240 MHz\","
                            "\"flash\":4194304,\"appSize\":900000,\"appSlot\":2031616,\"idf\":\"v5.4\","
                            "\"mac\":\"c8:f0:9e:f4:a6:7c\"},\"coredumpPresent\":false}}");
@@ -343,7 +394,7 @@ TEST(device_settings_from_before_versions) {
     CHECK_EQ(r.demo.speed, 5);                           // the new default
     CHECK_EQ(r.value("/sys/time/tz"), "\"EST5EDT\"");    // the user's choice survives
     // Saved again, sparse, under the version.
-    CHECK_EQ(r.storage.records["@version"], "1");
+    CHECK_EQ(r.storage.records["@version"], std::to_string(tesserkit::Device::kSettingsVersion));
     const std::string& sys = r.storage.records["sys"];
     CHECK(sys.find("EST5EDT") != std::string::npos);
     CHECK(sys.find("pool.ntp.org") == std::string::npos);
@@ -388,7 +439,7 @@ TEST(device_application_settings_version) {
     CHECK_EQ(seen[1], "sys@0:-");  // TesserKIT's migration came first
     CHECK_EQ(r.level, 3);
     CHECK_EQ(r.demo.speed, 5);
-    CHECK_EQ(r.storage.records["@version"], std::to_string((2u << 16) | 1u));
+    CHECK_EQ(r.storage.records["@version"], std::to_string((2u << 16) | tesserkit::Device::kSettingsVersion));
 
     // Stored under version 1 of the application and TesserKIT's current one:
     // only the application's migration runs.
@@ -398,7 +449,7 @@ TEST(device_application_settings_version) {
         versions.push_back(version);
         return true;
     });
-    next.storage.records["@version"] = std::to_string((1u << 16) | 1u);
+    next.storage.records["@version"] = std::to_string((1u << 16) | tesserkit::Device::kSettingsVersion);
     next.storage.records["app"] = "{\"level\":6}";
     CHECK(next.dev.begin());
     CHECK_EQ(versions.size(), 1u);
@@ -430,7 +481,7 @@ TEST(device_backup_from_before_versions_migrates) {
     CHECK_EQ(r.demo.from.size(), 1u);
     // A backup taken now carries the version, and isn't migrated again.
     rig::Reply d = r.download("/sys/backup/settings");
-    CHECK_EQ(at(d.body, "@version"), std::to_string((1u << 16) | 1u));
+    CHECK_EQ(at(d.body, "@version"), std::to_string((1u << 16) | tesserkit::Device::kSettingsVersion));
     CHECK_EQ(r.upload("/sys/backup/settings", d.body).status, Status::Ok);
     CHECK_EQ(r.demo.from.size(), 1u);
 }

@@ -105,15 +105,16 @@ private:
 // section 3.1). Declare it before the services that use it.
 class Device {
 public:
-    // `label` names the device (shown by TesserUI) and makes its hostname.
-    // The string must outlive the device.
+    // `label` is the firmware's name for the device: its name until the
+    // user gives it one (/sys/name), and its hostname's start. The string
+    // must outlive the device.
     explicit Device(const char* label);
     ~Device();
     Device(const Device&) = delete;
     Device& operator=(const Device&) = delete;
 
     // Options, before begin().
-    Device& hostname(const char* name);  // default: the label and the MAC's end
+    Device& hostname(const char* name);  // default: from the name (hostname())
     Device& version(const char* version);  // default: the app description's
     Device& ui(bool on);                   // serve TesserUI at / (default true)
     Device& httpPort(uint16_t port);       // default 80; 0: no HTTP server
@@ -154,7 +155,7 @@ public:
     Device& settingsVersion(uint16_t version, Migration migrate = nullptr);
     // TesserKIT's own settings version, for /sys. Stored with the
     // application's as (application << 16) | TesserKIT's.
-    static constexpr uint16_t kSettingsVersion = 1;
+    static constexpr uint16_t kSettingsVersion = 2;
 
     // Mounts the services, loads the persisted state, starts the services,
     // the HTTP server and the task. False if the platform is missing.
@@ -167,7 +168,27 @@ public:
     // The /sys object, for an application's own system-level nodes.
     tesser::Object& sys() { return *sys_; }
     const char* label() const { return label_; }
+    // The device's name: the one the user gave it (/sys/name), else the
+    // label. It is the root's label, which TesserUI shows as the node's name
+    // and in its tabs (docs/DESIGN.md section 4.4).
+    const std::string& name() const { return name_; }
+    // The name the user gave, "" for the label. Under the API lock once
+    // begun: the root's label and the hostname follow at once.
+    const std::string& nameSetting() const { return nameSetting_; }
+    Device& name(const std::string& name);
+    // The hostname: /sys/network/hostname, else the user's name made a
+    // hostname ("Lampe d'entrée" → "lampe-d-entree"), else the application's
+    // hostname(), else the label made one, with the MAC's last two bytes
+    // ("tesserkit-a67c").
     const std::string& hostname() const { return hostname_; }
+    // /sys/network/hostname, "" for the default; as name().
+    const std::string& hostnameSetting() const { return hostnameSetting_; }
+    Device& hostnameSetting(const std::string& h);
+    // Grows whenever hostname() changes, for the services that pass it on.
+    uint32_t hostnameGeneration() const { return hostnameGeneration_; }
+    // The label made a hostname, with the MAC's end: the hostname of a device
+    // the user hasn't named, unless the application gave one.
+    std::string defaultHostname() const;
     const std::string& version() const { return version_; }
     const BootInfo& info() const { return info_; }
     // The services' platform interfaces. Tests fill it with fakes before
@@ -271,7 +292,7 @@ private:
     tesser::Storage* defaultStorage();
     void updateState(uint32_t nowMs);
     void resetNow();  // factoryReset()'s work, in the device's task under the API lock
-    std::string defaultHostname() const;
+    void updateIdentity();  // name_, the root's label and hostname_ from the settings
     // TesserAPI's migration: TesserKIT's services, then the application's.
     bool migrate(std::string_view record, uint32_t version, JsonVariant value);
 
@@ -290,7 +311,13 @@ private:
     Migration appMigrate_;
     Service* services_ = nullptr;
     Files* files_ = nullptr;
+    std::string name_;             // nameSetting_, else the label
+    std::string nameSetting_;
+    std::string hostnameOption_;   // hostname(const char*)
+    std::string hostnameSetting_;
     std::string hostname_;
+    uint32_t hostnameGeneration_ = 0;
+    bool identityReady_ = false;  // begin() has read the MAC
     std::string version_;
     bool ui_ = true;
     bool ownTask_ = true;

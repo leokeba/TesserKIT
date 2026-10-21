@@ -80,6 +80,31 @@ Service* g_registered = nullptr;
     "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
     "<path d='M4 4h24v24H4zm7 7v10h10V11zL4 4m24 0-7 7m0 10 7 7M4 28l7-7M16 0v4m0 24v4M0 16h4m24 0h4' "
     "fill='none' stroke='%232f5bd3' stroke-width='4'/></svg>";
+
+// `text` made a hostname of at most `max` characters: lowercased, Latin
+// letters' accents dropped, other characters as single hyphens, none at
+// either end. "Lampe d'entrée" → "lampe-d-entree".
+std::string hostnameOf(std::string_view text, size_t max) {
+    // U+00C0 to U+00FF, UTF-8 0xC3 0x80 to 0xC3 0xBF: "À" to "ÿ".
+    static const char kLatin1[] = "aaaaaaaceeeeiiiidnooooo-ouuuuytsaaaaaaaceeeeiiiidnooooo-ouuuuyty";
+    std::string h;
+    for (size_t i = 0; i < text.size() && h.size() < max; i++) {
+        unsigned char u = static_cast<unsigned char>(text[i]);
+        char c = '-';
+        if (u < 0x80 && isalnum(u)) {
+            c = static_cast<char>(tolower(u));
+        } else if (u == 0xC3 && i + 1 < text.size() && (static_cast<unsigned char>(text[i + 1]) & 0xC0) == 0x80) {
+            c = kLatin1[static_cast<unsigned char>(text[++i]) & 0x3F];
+        }
+        if (c != '-') {
+            h.push_back(c);
+        } else if (!h.empty() && h.back() != '-') {
+            h.push_back('-');
+        }
+    }
+    while (!h.empty() && h.back() == '-') h.pop_back();
+    return h;
+}
 }  // namespace
 
 Service::Service(Device& dev, const char* name) : dev_(dev), name_(name) {
@@ -116,8 +141,34 @@ Device::Device(const char* label)
 Device::~Device() { delete erased_; }
 
 Device& Device::hostname(const char* name) {
-    hostname_ = name ? name : "";
+    hostnameOption_ = name ? name : "";
+    if (identityReady_) updateIdentity();
     return *this;
+}
+
+Device& Device::name(const std::string& name) {
+    nameSetting_ = name;
+    if (identityReady_) updateIdentity();
+    return *this;
+}
+
+Device& Device::hostnameSetting(const std::string& h) {
+    hostnameSetting_ = h;
+    if (identityReady_) updateIdentity();
+    return *this;
+}
+
+void Device::updateIdentity() {
+    name_ = nameSetting_.empty() ? std::string(label_ ? label_ : "") : nameSetting_;
+    api_.label(name_.c_str());  // a pointer: set again with each name
+    std::string h = hostnameSetting_;
+    if (h.empty()) h = hostnameOf(nameSetting_, 32);
+    if (h.empty()) h = hostnameOption_;
+    if (h.empty()) h = defaultHostname();
+    if (h != hostname_) {
+        hostname_ = std::move(h);
+        hostnameGeneration_++;
+    }
 }
 
 Device& Device::version(const char* v) {
@@ -176,7 +227,8 @@ bool Device::migrate(std::string_view record, uint32_t version, JsonVariant valu
         // release to then (v0.1.0 to v0.1.19). So no service drops anything
         // yet, and TesserAPI drops those values as it rewrites the records.
         // A later default change raises kSettingsVersion, and its service's
-        // migrate() drops the old default.
+        // migrate() drops the old default. Version 2 (2026-10-21): the
+        // hostname's setting is empty for the default (Network's).
         for (Service* s = services_; s; s = s->next_) {
             JsonObject o;
             if (record == "sys") {
@@ -192,18 +244,9 @@ bool Device::migrate(std::string_view record, uint32_t version, JsonVariant valu
 }
 
 std::string Device::defaultHostname() const {
-    // The label lowercased, other characters as single hyphens, then the
-    // MAC's last two bytes: "Heliostat 3" → "heliostat-3-a67c".
-    std::string h;
-    for (const char* c = label_ ? label_ : ""; *c && h.size() < 26; c++) {
-        unsigned char u = static_cast<unsigned char>(*c);
-        if (isalnum(u)) {
-            h.push_back(static_cast<char>(tolower(u)));
-        } else if (!h.empty() && h.back() != '-') {
-            h.push_back('-');
-        }
-    }
-    while (!h.empty() && h.back() == '-') h.pop_back();
+    // The label made a hostname, then the MAC's last two bytes: "Heliostat 3"
+    // → "heliostat-3-a67c".
+    std::string h = hostnameOf(label_ ? label_ : "", 26);
     if (h.empty()) h = "tesser";
     char tail[8];
     snprintf(tail, sizeof(tail), "-%02x%02x", info_.mac[4], info_.mac[5]);
@@ -233,10 +276,11 @@ bool Device::begin() {
         return false;
     }
     platform_.core->info(info_);
-    if (hostname_.empty()) hostname_ = defaultHostname();
     if (version_.empty()) version_ = info_.version;
-
-    api_.label(label_);
+    // From here the settings' setters (the loading below among them) change
+    // the root's label and the hostname at once.
+    identityReady_ = true;
+    updateIdentity();
     // Without the Auth service the device is open: every client is Admin
     // (docs/DESIGN.md section 5.7). Auth replaces this check with its own.
     api_.authenticate([](std::string_view) { return tesser::Access::Admin; });

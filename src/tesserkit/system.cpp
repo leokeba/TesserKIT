@@ -4,9 +4,13 @@
 
 #include <memory>
 
+#include "tesserkit/limits.h"
+
 namespace tesserkit {
 
 using tesser::Access;
+using tesser::Check;
+using tesser::Status;
 
 namespace {
 
@@ -35,6 +39,19 @@ void System::describe(tesser::Object& o) {
     Device& dev = dev_;
     const BootInfo& info = dev.info();
     resetReason_ = info.resetReason;
+
+    // The device's name (docs/DESIGN.md section 4.4): empty, the label.
+    o.value("name", [&dev] { return dev.nameSetting(); }, [&dev](const std::string& n) { dev.name(n); })
+        .validate([](const std::string& n) {
+            for (char c : n) {
+                if (static_cast<unsigned char>(c) < 0x20) return Check::fail(Status::InvalidValue, "no control characters");
+            }
+            return limits::length<limits::kName>(n);
+        })
+        .persist()
+        .writeAccess(Access::Admin)
+        .doc("Shown by the interface and in its tabs; the hostname follows it")
+        .ui("placeholder", dev.label());
 
     auto& s = o.object("status").label("Status").ui("icon", "info");
     dev.stateNode(&s.value("state", dev.stateVar(),

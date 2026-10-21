@@ -271,18 +271,30 @@ Network& Network::ethernet(const EthernetBoard& board) {
     return *this;
 }
 
+void Network::migrate(uint32_t from, JsonObject settings) {
+    // Before version 2 the hostname's setting was the hostname itself, its
+    // default the label's (or the application's): one stored equal to it
+    // would now hold the hostname when the user names the device. Before the
+    // stored settings load, hostname() is still that default.
+    if (from < 2 && settings["hostname"].is<const char*>() && dev_.hostname() == settings["hostname"].as<const char*>()) {
+        settings.remove("hostname");
+    }
+}
+
 void Network::describe(tesser::Object& o) {
     Device& dev = dev_;
     o.label("Network").ui("icon", "wifi").writeAccess(Access::Admin);
-    hostnameNode_ = &o.value("hostname", [&dev] { return dev.hostname(); },
-                             [&dev](const std::string& h) { dev.hostname(h.c_str()); })
-                         .validate([](const std::string& h) {
-                             return validHostname(h)
-                                        ? Check::ok()
-                                        : Check::fail(Status::InvalidValue, "1 to 32 letters, digits and inner hyphens");
-                         })
-                         .persist()
-                         .ui("advanced");
+    // Empty: from the device's name (docs/DESIGN.md section 4.4).
+    o.value("hostname", [&dev] { return dev.hostnameSetting(); },
+            [&dev](const std::string& h) { dev.hostnameSetting(h); })
+        .validate([](const std::string& h) {
+            return h.empty() || validHostname(h)
+                       ? Check::ok()
+                       : Check::fail(Status::InvalidValue, "1 to 32 letters, digits and inner hyphens");
+        })
+        .persist()
+        .ui("placeholder", "from the name")
+        .ui("advanced");
 
     // First: preferred while it has an address.
     eth_ = ethWanted_ ? dev.platform().ethernet : nullptr;
@@ -422,7 +434,7 @@ void Network::start() {
         ethStatus_->changed();
     }
     networksGen_ = networksNode_->generation();
-    hostnameGen_ = hostnameNode_->generation();
+    hostnameGen_ = dev.hostnameGeneration();
     if (mdnsNode_) mdnsGen_ = mdnsNode_->generation();
     apGen_ = apFingerprint();
     ethGen_ = ethFingerprint();
@@ -932,7 +944,7 @@ void Network::setApClients(int32_t n) {
 // Every setting checkSettings() applies: generations only grow, so the sum
 // changes whenever one of them does.
 uint32_t Network::settingsFingerprint() const {
-    uint32_t sum = networksNode_->generation() + hostnameNode_->generation() + powerSaveNode_->generation() +
+    uint32_t sum = networksNode_->generation() + dev_.hostnameGeneration() + powerSaveNode_->generation() +
                    staModeNode_->generation() + apFingerprint();
     if (mdnsNode_) sum += mdnsNode_->generation();
     if (eth_) sum += ethEnabledNode_->generation() + ethFingerprint();
@@ -970,8 +982,8 @@ void Network::checkSettings(uint32_t nowMs) {
             join(nowMs);
         }
     }
-    if (hostnameNode_->generation() != hostnameGen_) {
-        hostnameGen_ = hostnameNode_->generation();
+    if (dev_.hostnameGeneration() != hostnameGen_) {  // its setting, or the name
+        hostnameGen_ = dev_.hostnameGeneration();
         wifi_->hostname(dev_.hostname().c_str());
         if (eth_) eth_->hostname(dev_.hostname().c_str());
         applyMdns();

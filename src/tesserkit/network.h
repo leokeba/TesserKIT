@@ -72,6 +72,7 @@ public:
     Network& ethernet(const EthernetBoard& board);
 
     void describe(tesser::Object& o) override;
+    void migrate(uint32_t from, JsonObject settings) override;
 
     // The station joined a network.
     bool connected() const { return sta_ == Sta::Connected; }
@@ -168,7 +169,6 @@ private:
 
     // Nodes whose writes the service follows, by generation.
     tesser::Node* networksNode_ = nullptr;
-    tesser::Node* hostnameNode_ = nullptr;
     tesser::Node* mdnsNode_ = nullptr;
     std::vector<tesser::Node*> apNodes_;
     tesser::Node* staStatus_ = nullptr;
