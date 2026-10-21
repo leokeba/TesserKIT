@@ -145,10 +145,14 @@ void Time::event(const Event& e) {
 void Time::tick(uint32_t nowMs) {
     (void)nowMs;
     if (!clock_) return;
-    // Coming online: ask SNTP again now rather than at its next retry.
+    // Coming online, or online another way (a station beside a cable with
+    // no router): ask SNTP again now rather than at its next retry, which
+    // backs off to minutes.
     bool online = dev_.state() == State::Online;
-    if (online && !online_ && !synced_) applySntp();
+    uint32_t route = dev_.routeGeneration();
+    if (online && (!online_ || route != routeGen_) && !synced_) applySntp();
     online_ = online;
+    routeGen_ = route;
     if (tzNode_->generation() != tzGen_) {
         tzGen_ = tzNode_->generation();
         applyTz();

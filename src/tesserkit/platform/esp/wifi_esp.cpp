@@ -13,11 +13,7 @@
 
 #include "esp_event.h"
 #include "esp_netif.h"
-#include "esp_netif_net_stack.h"
 #include "esp_wifi.h"
-#include "lwip/dhcp.h"
-#include "lwip/dns.h"
-#include "lwip/netif.h"
 
 namespace tesserkit {
 
@@ -161,6 +157,31 @@ public:
     }
 
 private:
+    // ESP-IDF's wifi_err_reason_t, in TesserKIT's words.
+    static StaReason staReason(uint8_t reason) {
+        switch (reason) {
+            case WIFI_REASON_ASSOC_LEAVE:
+                return StaReason::Left;
+            case WIFI_REASON_NO_AP_FOUND:
+            // NO_AP_FOUND_W_COMPATIBLE_SECURITY, _IN_AUTHMODE_THRESHOLD and
+            // _IN_RSSI_THRESHOLD, which ESP-IDF 5.1's headers don't name.
+            case 210:
+            case 211:
+            case 212:
+                return StaReason::NotFound;
+            case WIFI_REASON_AUTH_EXPIRE:
+            case WIFI_REASON_MIC_FAILURE:
+            case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+            case WIFI_REASON_AUTH_FAIL:
+            case WIFI_REASON_HANDSHAKE_TIMEOUT:
+                return StaReason::WrongPassword;
+            case WIFI_REASON_CONNECTION_FAIL:
+                return StaReason::Refused;
+            default:
+                return StaReason::Other;
+        }
+    }
+
     static void onEvent(void* arg, esp_event_base_t base, int32_t id, void* data) {
         EspWifi* self = static_cast<EspWifi*>(arg);
         Event e;
@@ -176,16 +197,15 @@ private:
         } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
             self->linked_ = false;
             e.type = Event::Type::StaDisconnected;
-            e.value = static_cast<const wifi_event_sta_disconnected_t*>(data)->reason;
+            uint8_t reason = static_cast<const wifi_event_sta_disconnected_t*>(data)->reason;
+            e.value = static_cast<int32_t>(staReason(reason));
+            e.text = "reason " + std::to_string(reason);
         } else if (id == WIFI_EVENT_AP_STACONNECTED || id == WIFI_EVENT_AP_STADISCONNECTED) {
             e.type = Event::Type::ApClients;
             e.value = self->apClients();
         } else {
             return;
         }
-        // After esp_netif's own handler (registered first), which started
-        // the station's DHCP client.
-        if (e.type == Event::Type::StaAssociated) esp::dnsRefresh();
         if (self->sink_) self->sink_(std::move(e));
     }
 
@@ -198,73 +218,6 @@ private:
     volatile bool linked_ = false;
 };
 
-// lwIP has one list of DNS servers for all its interfaces. A lease's servers
-// come in its ACK, seconds before its address (the address check, ACD), and
-// esp_netif empties the list whenever an interface starts its DHCP client (a
-// station associating, a cable's link) or takes a static address. A station
-// trying to join in those seconds left a device on Ethernet without names
-// until the lease's renewal, hours later. So an empty list is filled again
-// (DESIGN.md section 5.2). Touched only in lwIP's task.
-struct StaticDns {
-    netif* interface = nullptr;
-    uint32_t server = 0;  // network byte order; 0: none
-};
-StaticDns g_staticDns[3];  // the station, Ethernet, a spare
-NETIF_DECLARE_EXT_CALLBACK(g_netifCallback)
-
-// From an interface with an address: its static server, or its lease renewed,
-// whose ACK brings the lease's servers back.
-bool fillDns(netif* n) {
-    if (!netif_is_up(n) || ip4_addr_isany_val(*netif_ip4_addr(n))) return false;
-    for (const StaticDns& s : g_staticDns) {
-        if (s.interface == n && s.server) {
-            ip_addr_t server;
-            ip_addr_set_ip4_u32_val(server, s.server);
-            dns_setserver(0, &server);
-            return true;
-        }
-    }
-    if (!dhcp_supplied_address(n)) return false;
-    dhcp_renew(n);
-    return true;
-}
-
-// The default interface first, which routes go through.
-void fillEmptyDns() {
-    if (!ip_addr_isany(dns_getserver(0))) return;
-    if (netif_default && fillDns(netif_default)) return;
-    netif* n;
-    NETIF_FOREACH(n) {
-        if (n != netif_default && fillDns(n)) return;
-    }
-}
-
-void onNetifChange(netif*, netif_nsc_reason_t, const netif_ext_callback_args_t*) { fillEmptyDns(); }
-
-struct StaticDnsChange {
-    esp_netif_t* netif;
-    uint32_t server;
-};
-
-// Before the address changes, whose callback fills the list.
-esp_err_t setStaticDns(void* arg) {
-    const StaticDnsChange* c = static_cast<const StaticDnsChange*>(arg);
-    netif* n = static_cast<netif*>(esp_netif_get_netif_impl(c->netif));
-    StaticDns* slot = nullptr;
-    for (StaticDns& s : g_staticDns) {
-        if (s.interface == n) {
-            slot = &s;
-            break;
-        }
-        if (!s.interface && !slot) slot = &s;
-    }
-    if (slot) {
-        slot->interface = n;
-        slot->server = c->server;
-    }
-    return ESP_OK;
-}
-
 }  // namespace
 
 namespace esp {
@@ -274,48 +227,29 @@ void netifInit() {
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) tesser::logError("tesserkit: esp_netif_init: %s", esp_err_to_name(err));
     err = esp_event_loop_create_default();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) tesser::logError("tesserkit: event loop: %s", esp_err_to_name(err));
-    esp_netif_tcpip_exec(
-        [](void*) {
-            if (!g_netifCallback.callback_fn) netif_add_ext_callback(&g_netifCallback, onNetifChange);
-            return ESP_OK;
-        },
-        nullptr);
-}
-
-void dnsRefresh() {
-    esp_netif_tcpip_exec(
-        [](void*) {
-            fillEmptyDns();
-            return ESP_OK;
-        },
-        nullptr);
 }
 
 void applyIp(esp_netif_t* netif, const IpConfig& c) {
+    // Either empties the DNS servers' list, which Network refills (its
+    // IpStack, DESIGN.md section 5.2).
     if (!c.staticIp) {
         // Only a client a static address stopped is started here: esp_netif
         // starts the others on a link or an association. Starting one
-        // empties the DNS servers' list, which an attempt to join shouldn't.
-        StaticDnsChange dns = {netif, 0};
-        esp_netif_tcpip_exec(setStaticDns, &dns);
+        // empties the list, which an attempt to join shouldn't.
         esp_netif_dhcp_status_t dhcp;
         if (esp_netif_dhcpc_get_status(netif, &dhcp) == ESP_OK && dhcp == ESP_NETIF_DHCP_STOPPED) {
             esp_netif_ip_info_t none = {};
             esp_netif_set_ip_info(netif, &none);  // the static address goes
             esp_netif_dhcpc_start(netif);
-            dnsRefresh();
         }
         return;
     }
-    StaticDnsChange dns = {netif, toNetwork(c.dns)};
-    esp_netif_tcpip_exec(setStaticDns, &dns);
     esp_netif_dhcpc_stop(netif);
     esp_netif_ip_info_t ip = {};
     ip.ip.addr = toNetwork(c.ip);
     ip.netmask.addr = toNetwork(c.mask);
     ip.gw.addr = toNetwork(c.gateway);
-    esp_netif_set_ip_info(netif, &ip);  // empties the DNS servers' list
-    dnsRefresh();
+    esp_netif_set_ip_info(netif, &ip);
 }
 
 }  // namespace esp

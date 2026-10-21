@@ -134,6 +134,9 @@ private:
     void updateStatus(uint32_t nowMs);
     void updateAddress();
     void applyMdns();
+    bool routeVia(NetIf& out) const;
+    void updateRoute();
+    void refillDns(uint32_t nowMs);
     StaConfig config(const WifiNetwork& n) const;
     const WifiNetwork* find(const std::string& ssid) const;
     uint32_t apFingerprint() const;
@@ -144,6 +147,7 @@ private:
 
     Wifi* wifi_ = nullptr;
     Ethernet* eth_ = nullptr;  // with a board, on a chip that has the MAC
+    IpStack* ipStack_ = nullptr;
     Mdns* mdnsService_ = nullptr;
 
     // Settings (persisted).
@@ -213,12 +217,20 @@ private:
     bool ethOnline_ = false;  // with an address
     bool ethLease_ = false;   // from DHCP (not static, not link-local)
     bool ethStaticOn_ = false;  // a static address is applied
+    uint32_t ethGateway_ = 0;   // its address's gateway: the lease's router, or the static one
     std::string ethState_;      // ethernet/status/state
     uint32_t ethWaitUntilMs_ = 0;  // the station waits for Ethernet until then
     std::string ethIp_, ethMac_;
     uint16_t ethMbps_ = 0;
 
     uint32_t polledAtMs_ = 0;  // poll()
+    // DNS: when each interface's lease was last renewed to refill the list
+    // (by NetIf), so a silent DHCP server isn't asked again at once.
+    uint32_t renewedAtMs_[2] = {};
+    bool renewed_[2] = {};
+    // The default route's interface, as last set (updateRoute()).
+    bool routeSet_ = false;
+    NetIf route_ = NetIf::Station;
 
     // Addresses, for Device::address().
     uint32_t staAddr_ = 0, ethAddr_ = 0, apAddr_ = 0;

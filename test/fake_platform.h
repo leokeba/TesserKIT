@@ -155,9 +155,63 @@ struct Air {
     bool hidden = false;
 };
 
+// What lwIP shares between the interfaces, as esp_netif treats it: one list
+// of DNS servers, which a lease's acknowledgement writes and an interface
+// starting its DHCP client (an association, a cable's link) or taking a
+// static address empties; and the default route, as Network last set it.
+struct IpStack : tesserkit::IpStack {
+    EventSink sink;
+    Chaos* chaos = nullptr;
+    uint32_t list = 0;  // the first server
+    int sets = 0, renews = 0;
+    bool answers = true;  // the DHCP servers answer renewals
+    // The interfaces' leases (by NetIf), and the servers each one gives.
+    bool lease[2] = {};
+    uint32_t leaseDns[2] = {0xC0A801FE, 0xC0A80101};  // the station's 192.168.1.254, Ethernet's 192.168.1.1
+
+    // The default route's interface, once Network chose one.
+    bool defaultSet = false;
+    tesserkit::NetIf defaultIf = tesserkit::NetIf::Station;
+    int defaultSets = 0;
+
+    void begin(EventSink s) override { sink = std::move(s); }
+    uint32_t dnsServer() override { return list; }
+    void setDnsServer(uint32_t ip) override {
+        list = ip;
+        sets++;
+    }
+    void setDefault(tesserkit::NetIf n) override {
+        defaultSet = true;
+        defaultIf = n;
+        defaultSets++;
+    }
+    bool renewLease(tesserkit::NetIf n) override {
+        size_t i = static_cast<size_t>(n);
+        if (!lease[i]) return false;
+        renews++;
+        if (answers) list = leaseDns[i];
+        return true;
+    }
+    // A lease's acknowledgement, or a lease lost.
+    void ack(tesserkit::NetIf n) {
+        lease[static_cast<size_t>(n)] = true;
+        list = leaseDns[static_cast<size_t>(n)];
+    }
+    void release(tesserkit::NetIf n) { lease[static_cast<size_t>(n)] = false; }
+    // An interface's address came or went: lwIP's callback, which tells
+    // when the list is empty.
+    void changed() {
+        if (list) return;
+        Event e;
+        e.type = Event::Type::DnsEmpty;
+        emit(chaos, sink, std::move(e));
+    }
+};
+
 struct Wifi : tesserkit::Wifi {
     EventSink sink;
     Chaos* chaos = nullptr;
+    IpStack* ipStack = nullptr;
     std::string hostnameSet;
     int8_t tx = 0;
     tesserkit::PowerSave ps = tesserkit::PowerSave::Min;
@@ -219,7 +273,17 @@ struct Wifi : tesserkit::Wifi {
     // DHCP answers, late.
     void giveAddress() {
         linked = true;
+        if (ipStack && !last.staticIp) ipStack->ack(tesserkit::NetIf::Station);
+        if (ipStack) ipStack->changed();
         post(Event::Type::StaGotIp);
+    }
+    // StaDisconnected, with ESP-IDF's code for the reason.
+    void disconnected(tesserkit::StaReason reason, int code) {
+        Event e;
+        e.type = Event::Type::StaDisconnected;
+        e.value = static_cast<int32_t>(reason);
+        e.text = "reason " + std::to_string(code);
+        emit(chaos, sink, std::move(e));
     }
     void post(Event::Type type, int32_t value = 0) {
         Event e;
@@ -233,6 +297,7 @@ struct Wifi : tesserkit::Wifi {
 struct Ethernet : tesserkit::Ethernet {
     EventSink sink;
     Chaos* chaos = nullptr;
+    IpStack* ipStack = nullptr;
     bool starts = true;
     int begins = 0;
     tesserkit::EthernetBoard board;
@@ -240,6 +305,7 @@ struct Ethernet : tesserkit::Ethernet {
     tesserkit::IpConfig ip;
     int addressCalls = 0;
     bool dhcp = true;     // a DHCP server on the cable
+    uint32_t leaseGateway = 0xC0A80101;  // the router its lease gives: 192.168.1.1, 0 for none
     bool autoip = false;  // the stack takes a link-local address without DHCP (no event)
     bool on = true;       // enabled()
     tesserkit::EthInfo state;
@@ -713,6 +779,7 @@ struct Platform {
     Core core;
     Wifi wifi;
     Ethernet ethernet;
+    IpStack ipStack;
     Mdns mdns;
     Clock clock;
     Ota ota;
@@ -734,6 +801,8 @@ struct Platform {
         p.core = &core;
         p.wifi = &wifi;
         p.ethernet = &ethernet;
+        p.ipStack = &ipStack;
+        wifi.ipStack = ethernet.ipStack = &ipStack;
         p.mdns = &mdns;
         p.clock = &clock;
         p.ota = &ota;
@@ -749,7 +818,7 @@ struct Platform {
         p.pins = &pins;
         udpApi.clock = &core.now;
         chaos.clock = &core.now;
-        wifi.chaos = ethernet.chaos = clock.chaos = mqtt.chaos = nowtp.chaos = &chaos;
+        wifi.chaos = ethernet.chaos = ipStack.chaos = clock.chaos = mqtt.chaos = nowtp.chaos = &chaos;
         nowtp.clock = &core.now;
         p.udpApi = &udpApi;
         p.nvs = &nvs;

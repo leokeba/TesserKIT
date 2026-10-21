@@ -353,7 +353,7 @@ void Device::poll() {
 void Device::post(Event e) {
     tesser::MutexGuard guard(eventsMutex_);
     // A flag: one pending says it all.
-    if (e.type == Event::Type::PeersChanged || e.type == Event::Type::NowTpPeers) {
+    if (e.type == Event::Type::PeersChanged || e.type == Event::Type::NowTpPeers || e.type == Event::Type::DnsEmpty) {
         for (const Event& q : events_) {
             if (q.type == e.type) return;
         }
@@ -474,6 +474,7 @@ tesser::Storage* Device::nvsStorage() { return platform_.nvs; }
 Core* espCore() { return nullptr; }
 Wifi* espWifi() { return nullptr; }
 Ethernet* espEthernet() { return nullptr; }
+IpStack* espIpStack() { return nullptr; }
 Mdns* espMdns() { return nullptr; }
 Clock* espClock() { return nullptr; }
 Ota* espOta() { return nullptr; }

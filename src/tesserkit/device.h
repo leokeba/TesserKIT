@@ -229,7 +229,8 @@ public:
     // Queues a platform event for the device's task. Thread-safe. The queue
     // holds 32 events, at most 8 of them MqttMessage (the oldest is dropped
     // for a newer one, and for any other event when the queue is full), and
-    // one PeersChanged and one NowTpPeers. Drops are logged by the task.
+    // one PeersChanged, one NowTpPeers and one DnsEmpty. Drops are logged by
+    // the task.
     void post(Event e);
     // MQTT messages dropped so far because the queue was full, as of the
     // task's last period (Mqtt's status/missed).
@@ -243,6 +244,10 @@ public:
     void address(uint32_t ip, const uint8_t* mac);
     // Stations joined to the access point (Network).
     void apClients(int32_t n) { apClients_ = n; }
+    // The default route moved to another interface (Network): counted, so a
+    // service that couldn't reach the internet tries again (Time's SNTP).
+    void routeChanged() { routeGeneration_++; }
+    uint32_t routeGeneration() const { return routeGeneration_; }
     // The device is about to sleep: runs the onSleep() callbacks, then saves
     // what the persistence's debounce holds.
     void sleeping();
@@ -300,6 +305,7 @@ private:
     uint32_t onlineSinceMs_ = 0;
     bool online_ = false;
     int32_t apClients_ = 0;
+    uint32_t routeGeneration_ = 0;
     uint32_t reachableSinceMs_ = 0;
     bool reachable_ = false;
     uint32_t lastNowMs_ = 0;

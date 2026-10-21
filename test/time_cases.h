@@ -72,6 +72,32 @@ TEST(time_sntp_asks_again_when_online) {
     CHECK_EQ(r.fake.clock.sntpCalls, calls + 1);
 }
 
+// Online over a cable without a router, then the station joins: the default
+// route moves to it, and SNTP is asked again (board B, 2026-10-21).
+TEST(time_sntp_asks_again_when_the_route_moves) {
+    struct R : rig::Rig {
+        tesserkit::Network net{dev};
+        tesserkit::Time time{dev};
+        R() { net.ethernet(tesserkit::boards::gledopto()); }
+    } r;
+    r.fake.ethernet.dhcp = false;
+    r.fake.ethernet.autoip = true;
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    r.run(15000);
+    CHECK(r.dev.state() == tesserkit::State::Online);  // link-local, no station saved
+    int calls = r.fake.clock.sntpCalls;
+    fake::Air a;
+    a.ssid = "Home";
+    a.password = "pw";
+    r.fake.wifi.air.push_back(a);
+    CHECK_EQ(r.set("/sys/network/wifi/networks", "[{\"ssid\":\"Home\",\"password\":\"pw\"}]").status,
+             rig::Status::Ok);
+    r.settle();
+    CHECK(r.net.connected());
+    CHECK_EQ(r.fake.clock.sntpCalls, calls + 1);
+}
+
 TEST(time_sntp_settings) {
     TimeRig r;
     r.time.defaultServer("time.example.com");

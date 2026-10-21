@@ -141,7 +141,7 @@ bool Wifi::connect(const tesserkit::StaConfig& c) {
     if (best) {
         const Air& a = *best;
         if (a.password != c.password) {
-            post(Event::Type::StaDisconnected, 15);  // 4-way handshake timeout
+            disconnected(tesserkit::StaReason::WrongPassword, 15);  // 4-way handshake timeout
             return true;
         }
         link = tesserkit::StaInfo();
@@ -150,23 +150,32 @@ bool Wifi::connect(const tesserkit::StaConfig& c) {
         link.rssi = a.rssi;
         link.channel = a.channel;
         memcpy(link.bssid, a.bssid, sizeof(link.bssid));
+        if (ipStack) ipStack->list = 0;  // a DHCP client started, or a static address taken
         post(Event::Type::StaAssociated);
         if (!dhcpSilent) giveAddress();
         return true;
     }
-    post(Event::Type::StaDisconnected, 201);  // no AP found
+    disconnected(tesserkit::StaReason::NotFound, 201);
     return true;
 }
 
 void Wifi::disconnect() {
     if (!linked) return;
     linked = false;
-    post(Event::Type::StaDisconnected, Event::kReasonLeft);
+    if (ipStack) {
+        ipStack->release(tesserkit::NetIf::Station);
+        ipStack->changed();
+    }
+    disconnected(tesserkit::StaReason::Left, 8);
 }
 
 void Wifi::drop() {
     linked = false;
-    post(Event::Type::StaDisconnected, 200);  // beacon timeout
+    if (ipStack) {
+        ipStack->release(tesserkit::NetIf::Station);
+        ipStack->changed();
+    }
+    disconnected(tesserkit::StaReason::Other, 200);  // beacon timeout
 }
 
 // The lease, or the static address, once the link is up.
@@ -174,13 +183,28 @@ static void lease(Ethernet& e) {
     if (!e.state.link) return;
     if (e.ip.staticIp) {
         e.state.ip = e.ip.ip;
+        e.state.gateway = e.ip.gateway;
+        if (e.ipStack) e.ipStack->list = 0;  // taking a static address empties it
     } else if (e.dhcp) {
         e.state.ip = 0xC0A8013C;  // 192.168.1.60
+        e.state.gateway = e.leaseGateway;
+        if (e.ipStack) e.ipStack->ack(tesserkit::NetIf::Ethernet);
     } else {
-        if (e.autoip) e.state.ip = 0xA9FE0A0B;  // 169.254.10.11, without an event
+        if (e.autoip) {
+            e.state.ip = 0xA9FE0A0B;  // 169.254.10.11, without an event
+            e.state.gateway = 0;
+            if (e.ipStack) e.ipStack->changed();
+        }
         return;
     }
+    if (e.ipStack) e.ipStack->changed();
     e.post(Event::Type::EthGotIp);
+}
+
+static void lost(Ethernet& e) {
+    if (!e.ipStack) return;
+    e.ipStack->release(tesserkit::NetIf::Ethernet);
+    e.ipStack->changed();
 }
 
 void Ethernet::enabled(bool o) {
@@ -188,7 +212,9 @@ void Ethernet::enabled(bool o) {
     if (!o && state.link) {
         state.link = false;
         state.ip = 0;
+        state.gateway = 0;
         state.mbps = 0;
+        lost(*this);
     }
 }
 
@@ -196,6 +222,9 @@ void Ethernet::address(const tesserkit::IpConfig& c) {
     addressCalls++;
     ip = c;
     state.ip = 0;
+    state.gateway = 0;
+    lost(*this);
+    if (ipStack && !c.staticIp) ipStack->list = 0;  // a DHCP client started
     lease(*this);
 }
 
@@ -204,6 +233,7 @@ void Ethernet::plug() {
     state.link = true;
     state.mbps = 100;
     state.fullDuplex = true;
+    if (ipStack && !ip.staticIp) ipStack->list = 0;  // the link starts the DHCP client
     post(Event::Type::EthLink, 1);
     lease(*this);
 }
@@ -211,7 +241,9 @@ void Ethernet::plug() {
 void Ethernet::unplug() {
     state.link = false;
     state.ip = 0;
+    state.gateway = 0;
     state.mbps = 0;
+    lost(*this);
     post(Event::Type::EthLink, 0);
 }
 

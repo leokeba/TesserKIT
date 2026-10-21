@@ -1133,7 +1133,7 @@ TEST(network_station_joined_behind_networks_back) {
     std::vector<tesserkit::Event> late;
     tesserkit::EventSink real = r.fake.wifi.sink;
     r.fake.wifi.sink = [&late, real](tesserkit::Event e) {
-        if (e.type == Event::Type::StaDisconnected && e.value == 200) {
+        if (e.type == Event::Type::StaDisconnected && e.text == "reason 200") {
             late.push_back(e);
         } else {
             real(std::move(e));
@@ -1188,11 +1188,183 @@ TEST(network_event_gets_through_an_mqtt_flood) {
         r.dev.post(m);
     }
     // The platform still says joined (linked): only the event can tell.
-    r.fake.wifi.post(Event::Type::StaDisconnected, 200);
+    r.fake.wifi.disconnected(tesserkit::StaReason::Other, 200);
     r.step();
     CHECK(!r.net.connected());
     r.settle();
     CHECK(r.net.connected());  // joined again
+}
+
+// The IP stack's one list of DNS servers, refilled by Network when the
+// stack empties it (DESIGN.md section 5.2). Seen on board B (2026-10-14): a
+// station's attempt emptied it seconds after Ethernet's lease wrote it, and
+// the device had no names until the lease's renewal, hours later.
+TEST(network_dns_refilled_from_ethernet_while_the_station_tries) {
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    r.run(6000);
+    CHECK(r.net.ethernetConnected());
+    CHECK_EQ(r.fake.ipStack.list, 0xC0A80101u);  // the lease's
+    int renews = r.fake.ipStack.renews;
+    r.fake.wifi.dhcpSilent = true;  // the station associates, and no address comes
+    CHECK_EQ(r.set("/sys/network/wifi/mode", "\"always\"").status, Status::Ok);
+    r.run(3000);
+    CHECK(r.fake.wifi.connects > 0);
+    CHECK_EQ(r.fake.ipStack.list, 0xC0A80101u);  // emptied by the association, Ethernet's lease renewed
+    CHECK(r.fake.ipStack.renews > renews);
+}
+
+TEST(network_dns_refilled_from_a_static_server_then_the_station) {
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.set("/sys/network/wifi/mode", "\"never\"").status, Status::Ok);
+    r.fake.ethernet.plug();
+    r.run(6000);
+    CHECK_EQ(r.set("/sys/network/ethernet/static",
+                   "{\"enabled\":true,\"ip\":\"10.0.0.7\",\"gateway\":\"10.0.0.1\",\"dns\":\"10.0.0.53\"}")
+                 .status,
+             Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.ipStack.list, 0x0A000035u);  // the static address emptied it: its own server
+    // A static address with neither gateway nor server gives none: the
+    // station's lease does (whose acknowledgement writes it first).
+    CHECK_EQ(r.set("/sys/network/ethernet/static", "{\"gateway\":\"\",\"dns\":\"\"}").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/network/wifi/mode", "\"always\"").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.ipStack.list, 0xC0A801FEu);
+    CHECK(r.net.connected());
+    r.fake.ipStack.list = 0;  // emptied again, say by a renewal on the cable
+    int renews = r.fake.ipStack.renews;
+    r.fake.ipStack.changed();
+    r.step();
+    CHECK_EQ(r.fake.ipStack.list, 0xC0A801FEu);  // the station's lease renewed
+    CHECK_EQ(r.fake.ipStack.renews, renews + 1);
+}
+
+TEST(network_dns_renewals_wait_for_a_silent_server) {
+    EthRig r;
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    r.run(6000);
+    r.fake.ipStack.answers = false;
+    r.fake.ipStack.list = 0;
+    int renews = r.fake.ipStack.renews;
+    r.fake.ipStack.changed();
+    r.run(20000);
+    CHECK_EQ(r.fake.ipStack.list, 0u);
+    int asked = r.fake.ipStack.renews - renews;
+    CHECK(asked >= 3 && asked <= 5);  // every 5 s, not every poll
+    r.fake.ipStack.answers = true;
+    r.run(6000);
+    CHECK_EQ(r.fake.ipStack.list, 0xC0A80101u);
+}
+
+TEST(network_dns_refilled_though_its_event_was_lost) {
+    EthRig r;
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    r.run(6000);
+    lossy(r.fake.ipStack.sink, [](const tesserkit::Event& e) { return e.type == Event::Type::DnsEmpty; });
+    r.fake.ipStack.list = 0;
+    r.fake.ipStack.changed();
+    r.run(tesserkit::Network::kPollMs + 100);
+    CHECK_EQ(r.fake.ipStack.list, 0xC0A80101u);
+}
+
+// The platform's reasons, in words; the rest by its own code.
+TEST(network_station_failure_by_the_platforms_code) {
+    NetRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    r.fake.wifi.connectSilent = true;
+    CHECK(r.dev.begin());
+    r.step();
+    r.fake.wifi.disconnected(tesserkit::StaReason::Other, 3);
+    r.step();
+    CHECK_EQ(r.value("/sys/network/wifi/status/state"), "\"\\\"Home\\\": failed (reason 3); retrying\"");
+}
+
+// The default route: Ethernet while it has a gateway, else the station
+// (DESIGN.md section 5.2).
+TEST(network_route_follows_the_cables_gateway) {
+    using tesserkit::NetIf;
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    r.run(6000);
+    CHECK_EQ(r.set("/sys/network/wifi/mode", "\"always\"").status, Status::Ok);
+    r.settle();
+    CHECK(r.net.connected());
+    CHECK(r.fake.ipStack.defaultSet);
+    CHECK(r.fake.ipStack.defaultIf == NetIf::Ethernet);  // the lease's router
+    // Static without a gateway: the internet stays on the station.
+    CHECK_EQ(r.set("/sys/network/ethernet/static", "{\"enabled\":true,\"ip\":\"10.0.0.7\",\"gateway\":\"\"}").status,
+             Status::Ok);
+    r.settle();
+    CHECK_EQ(r.value("/sys/network/ethernet/status/ip"), "\"10.0.0.7\"");
+    CHECK(r.fake.ipStack.defaultIf == NetIf::Station);
+    // With one: Ethernet's again.
+    CHECK_EQ(r.set("/sys/network/ethernet/static/gateway", "\"10.0.0.1\"").status, Status::Ok);
+    r.settle();
+    CHECK(r.fake.ipStack.defaultIf == NetIf::Ethernet);
+    // Unplugged: the station at once.
+    r.fake.ethernet.unplug();
+    r.step();
+    CHECK(r.fake.ipStack.defaultIf == NetIf::Station);
+    int sets = r.fake.ipStack.defaultSets;
+    r.run(5000);
+    CHECK_EQ(r.fake.ipStack.defaultSets, sets);  // set on changes only
+}
+
+// Board B (2026-10-21): a cable to a computer, link-local, and the station
+// joined; with the cable as the default route every HTTPS request failed.
+TEST(network_route_leaves_a_link_local_cable_to_the_station) {
+    using tesserkit::NetIf;
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    r.fake.ethernet.dhcp = false;
+    r.fake.ethernet.autoip = true;
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    r.run(15000);
+    CHECK(r.net.ethernetConnected());
+    CHECK(r.net.connected());  // no lease on the cable: the station joins
+    CHECK(r.fake.ipStack.defaultIf == NetIf::Station);
+    CHECK_EQ(r.fake.ipStack.list, 0xC0A801FEu);  // and names are the station's
+    // The station gone: the cable is all there is.
+    r.fake.wifi.air.clear();
+    r.fake.wifi.drop();
+    r.step();
+    CHECK(r.fake.ipStack.defaultIf == NetIf::Ethernet);
+}
+
+TEST(network_route_follows_a_lost_unplug) {
+    using tesserkit::NetIf;
+    EthRig r;
+    r.air("Home", "password1");
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    r.fake.ethernet.plug();
+    r.run(6000);
+    CHECK_EQ(r.set("/sys/network/wifi/mode", "\"always\"").status, Status::Ok);
+    r.settle();
+    CHECK(r.net.connected());
+    CHECK(r.fake.ipStack.defaultIf == NetIf::Ethernet);
+    lossy(r.fake.ethernet.sink, [](const tesserkit::Event& e) { return e.type == Event::Type::EthLink; });
+    lossy(r.fake.ipStack.sink, [](const tesserkit::Event& e) { return e.type == Event::Type::DnsEmpty; });
+    r.fake.ethernet.unplug();
+    r.step();
+    CHECK(r.fake.ipStack.defaultIf == NetIf::Ethernet);  // nothing said so yet
+    r.run(tesserkit::Network::kPollMs + 100);
+    CHECK(r.fake.ipStack.defaultIf == NetIf::Station);
 }
 
 }  // namespace network_cases

@@ -38,7 +38,7 @@ struct Event {
         ScanDone,         // Wifi::scan() finished
         StaAssociated,    // the station joined a network; its address comes next (StaGotIp)
         StaGotIp,         // the station joined and has an address
-        StaDisconnected,  // value: the reason (kReasonLeft when asked to)
+        StaDisconnected,  // value: a StaReason; text: the platform's own code, for logs
         ApClients,        // value: stations joined to the access point
         TimeSynced,       // SNTP set the clock
         MqttConnected,    // value: the session
@@ -52,15 +52,22 @@ struct Event {
         PeersChanged,     // a node under /peers was mounted, got a route, or changed state or route (one queued at most)
         DeviceLost,       // text: the MAC of a device an endpoint lost (Peers::watch()); value: tesser::PeerLoss
         PeerRefused,      // text: the MAC of a device that refused this device's token
+        DnsEmpty,         // an interface changed and the DNS servers' list is empty (IpStack; one queued at most)
     };
     Type type;
     int32_t value = 0;
     std::string text;
     std::string data;
+};
 
-    // StaDisconnected's reason after Wifi::disconnect() (ESP-IDF's
-    // WIFI_REASON_ASSOC_LEAVE): not a failure.
-    static constexpr int32_t kReasonLeft = 8;
+// Why the station left a network or couldn't join it (StaDisconnected's
+// value), translated by the platform from its own codes.
+enum class StaReason : int32_t {
+    Left,           // asked to (Wifi::disconnect()): not a failure
+    NotFound,       // no access point of that name (or none that matches)
+    WrongPassword,  // the handshake failed
+    Refused,        // the access point refused the connection
+    Other,          // lost (beacons gone), or anything else: the event's text says which
 };
 using EventSink = std::function<void(Event)>;
 
@@ -209,6 +216,7 @@ struct EthernetBoard {
 struct EthInfo {
     bool link = false;
     uint32_t ip = 0;     // 0 until it has one
+    uint32_t gateway = 0;  // the lease's router, or the static one; 0 if none
     uint16_t mbps = 0;   // 10 or 100 with a link
     bool fullDuplex = false;
     uint8_t mac[6] = {};
@@ -231,6 +239,32 @@ public:
     // False before begin(). The link and the address as they are now,
     // whatever events the device's queue lost.
     virtual bool info(EthInfo& out) = 0;
+};
+
+// The interfaces whose addresses Network manages.
+enum class NetIf : uint8_t { Station, Ethernet };
+
+// What the IP stack shares between the interfaces: Network's, which decides
+// both (docs/DESIGN.md section 5.2).
+// - One list of DNS servers. A DHCP lease's acknowledgement writes its
+//   servers there; the stack empties it when an interface starts its DHCP
+//   client (a station associating, a cable's link) or takes a static address.
+// - One default route, which traffic beyond the interfaces' own subnets takes.
+class IpStack {
+public:
+    virtual ~IpStack() = default;
+    // Events go to `sink` from then on: DnsEmpty, when an interface's state
+    // changed (an address, up or down) and left the list empty.
+    virtual void begin(EventSink sink) = 0;
+    // The first server, 0 if none.
+    virtual uint32_t dnsServer() = 0;
+    virtual void setDnsServer(uint32_t ip) = 0;
+    // Renews the interface's DHCP lease now, whose acknowledgement writes the
+    // lease's servers again (asynchronously): false if it has no lease.
+    virtual bool renewLease(NetIf n) = 0;
+    // The interface the default route goes through, from now on, whatever
+    // addresses come and go: Network sets it again when it should change.
+    virtual void setDefault(NetIf n) = 0;
 };
 
 // mDNS: Network's, unless built with TESSERKIT_NO_MDNS.
@@ -563,6 +597,7 @@ struct Platform {
     Core* core = nullptr;
     Wifi* wifi = nullptr;
     Ethernet* ethernet = nullptr;
+    IpStack* ipStack = nullptr;
     Mdns* mdns = nullptr;
     Clock* clock = nullptr;
     Ota* ota = nullptr;
@@ -587,6 +622,7 @@ struct Platform {
 Core* espCore();
 Wifi* espWifi();
 Ethernet* espEthernet();  // null without the internal MAC or a W5500 driver
+IpStack* espIpStack();
 Mdns* espMdns();
 Clock* espClock();
 Ota* espOta();

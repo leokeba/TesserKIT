@@ -59,6 +59,7 @@ if(ESP_PLATFORM)
              src/tesserkit/platform/esp/core_esp.cpp
              src/tesserkit/platform/esp/wifi_esp.cpp
              src/tesserkit/platform/esp/eth_esp.cpp
+             src/tesserkit/platform/esp/ip_stack_esp.cpp
              src/tesserkit/platform/esp/mdns_esp.cpp
              src/tesserkit/platform/esp/dns_server.cpp
              src/tesserkit/platform/esp/clock_esp.cpp

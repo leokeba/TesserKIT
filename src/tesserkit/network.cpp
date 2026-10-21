@@ -110,27 +110,22 @@ bool parseMac(const char* s, uint8_t* out) {
 
 bool linkLocal(uint32_t ip) { return ip >> 16 == 0xA9FE; }  // 169.254/16
 
-// Why a join failed, from ESP-IDF's disconnection reasons (which the fake
-// platform uses too).
-std::string joinFailure(int32_t reason) {
+// Why a join failed: the platform's reason, and its own code for the rest.
+std::string joinFailure(StaReason reason, const std::string& code) {
     switch (reason) {
-        case 201:  // NO_AP_FOUND
-        case 210:  // NO_AP_FOUND_W_COMPATIBLE_SECURITY
-        case 211:  // NO_AP_FOUND_IN_AUTHMODE_THRESHOLD
-        case 212:  // NO_AP_FOUND_IN_RSSI_THRESHOLD
+        case StaReason::NotFound:
             return "not found";
-        case 2:    // AUTH_EXPIRE
-        case 14:   // MIC_FAILURE
-        case 15:   // 4WAY_HANDSHAKE_TIMEOUT
-        case 202:  // AUTH_FAIL
-        case 204:  // HANDSHAKE_TIMEOUT
+        case StaReason::WrongPassword:
             return "wrong password?";
-        case 205:  // CONNECTION_FAIL
+        case StaReason::Refused:
             return "refused the connection";
         default:
-            return "failed (reason " + std::to_string(reason) + ")";
+            return code.empty() ? std::string("failed") : "failed (" + code + ")";
     }
 }
+
+// A DHCP server that didn't answer a renewal is asked again after this.
+constexpr uint32_t kRenewMs = 5000;
 
 bool validHostname(const std::string& h) {
     if (h.empty() || h.size() > 32 || h.front() == '-' || h.back() == '-') return false;
@@ -398,6 +393,9 @@ void Network::start() {
     }
     Device& dev = dev_;
     wifi_->begin(dev.hostname().c_str(), [&dev](Event e) { dev.post(std::move(e)); });
+    if (!p.ipStack) p.ipStack = espIpStack();
+    ipStack_ = p.ipStack;
+    if (ipStack_) ipStack_->begin([&dev](Event e) { dev.post(std::move(e)); });
     if (txPower_) wifi_->txPower(txPower_);
     wifi_->powerSave(powerSave_);
     powerSaveGen_ = powerSaveNode_->generation();
@@ -699,6 +697,7 @@ void Network::ethGotIp(uint32_t nowMs) {
     // can leave to Ethernet: not a static address, nor a link-local one.
     bool lease = !ethStaticOn_ && !linkLocal(i.ip);
     bool was = ethOnline_;
+    ethGateway_ = i.gateway;
     if (was && i.ip == ethAddr_ && lease == ethLease_) return;
     ethOnline_ = ethLink_ = true;
     ethLease_ = lease;
@@ -720,6 +719,7 @@ void Network::ethDown(uint32_t nowMs, uint32_t waitMs) {
     ethWaitUntilMs_ = nowMs + waitMs;
     ethOnline_ = false;
     ethLease_ = false;
+    ethGateway_ = 0;
     ethIp_.clear();
     ethAddr_ = 0;
     ethMbps_ = 0;
@@ -754,12 +754,12 @@ void Network::event(const Event& e) {
             if (sta_ == Sta::Connecting || sta_ == Sta::Connected) connected(now);
             break;
         case Event::Type::StaDisconnected:
-            if (e.value == Event::kReasonLeft) break;
+            if (static_cast<StaReason>(e.value) == StaReason::Left) break;
             if (sta_ == Sta::Connecting) {
-                failed(joinFailure(e.value));
+                failed(joinFailure(static_cast<StaReason>(e.value), e.text));
                 connectNext(now);
             } else if (sta_ == Sta::Connected) {
-                tesser::logWarning("tesserkit: lost \"%s\" (reason %d)", linkSsid_.c_str(), static_cast<int>(e.value));
+                tesser::logWarning("tesserkit: lost \"%s\" (%s)", linkSsid_.c_str(), e.text.c_str());
                 lost(now);
                 join(now);
             }
@@ -769,6 +769,99 @@ void Network::event(const Event& e) {
             break;
         default:
             break;
+    }
+    // An interface came or went: the default route follows. And what
+    // empties the DNS servers' list: an association or a cable's link starts
+    // a DHCP client, an address comes or goes (DnsEmpty).
+    switch (e.type) {
+        case Event::Type::StaAssociated:
+        case Event::Type::StaGotIp:
+        case Event::Type::StaDisconnected:
+        case Event::Type::EthLink:
+        case Event::Type::EthGotIp:
+        case Event::Type::DnsEmpty:
+            updateRoute();
+            refillDns(now);
+            break;
+        default:
+            break;
+    }
+}
+
+// The interface traffic beyond the interfaces' own subnets goes through:
+// Ethernet while it has a gateway (its lease's router, or a static one),
+// else the station while it is joined, else Ethernet with any address (its
+// own subnet only). A cable without a router (a computer, a show network
+// without DHCP, a static address without a gateway) then leaves the internet
+// to the station: as the default, it would take every connection beyond its
+// subnet and drop them (seen on board B, 2026-10-21: a link-local cable and
+// a joined station, every HTTPS request "server unreachable").
+bool Network::routeVia(NetIf& out) const {
+    bool eth = eth_ && ethOnline_;
+    if (eth && ethGateway_) {
+        out = NetIf::Ethernet;
+    } else if (sta_ == Sta::Connected && staAddr_) {
+        out = NetIf::Station;
+    } else if (eth) {
+        out = NetIf::Ethernet;
+    } else {
+        return false;  // neither has an address: the next one decides
+    }
+    return true;
+}
+
+// The IP stack keeps the interface set until it is set again, so a change is
+// set at once: from the events above, or the next poll if one was lost.
+void Network::updateRoute() {
+    NetIf n;
+    if (!ipStack_ || !routeVia(n) || (routeSet_ && n == route_)) return;
+    ipStack_->setDefault(n);
+    routeSet_ = true;
+    route_ = n;
+    dev_.routeChanged();
+}
+
+// The IP stack has one list of DNS servers for every interface. A lease's
+// servers come in its acknowledgement, seconds before its address (the
+// address check, ACD), and the stack empties the list whenever an interface
+// starts its DHCP client (a station associating, a cable's link) or takes a
+// static address: a station trying to join in those seconds left a device
+// on Ethernet without names until the lease's renewal, hours later. So an
+// empty list is filled again from the default route's interface first, then
+// the other: its static server, or its lease renewed, whose acknowledgement
+// brings the lease's servers back (DESIGN.md section 5.2). A static address without a server
+// of its own, or a link-local one, gives none: the next interface does.
+void Network::refillDns(uint32_t nowMs) {
+    if (!ipStack_ || ipStack_->dnsServer()) return;
+    struct Option {
+        NetIf netif;
+        bool up;
+        bool staticIp;
+        uint32_t dns;
+        bool lease;
+    };
+    IpConfig eth = ethConfig();
+    Option options[] = {
+        {NetIf::Ethernet, eth_ && ethOnline_, ethStaticOn_, eth.dns, ethLease_},
+        {NetIf::Station, sta_ == Sta::Connected && staAddr_ != 0, current_.staticIp, current_.dns, !current_.staticIp},
+    };
+    NetIf first;
+    if (routeVia(first) && first == NetIf::Station) std::swap(options[0], options[1]);
+    for (const Option& o : options) {
+        if (!o.up) continue;
+        if (o.staticIp) {
+            if (!o.dns) continue;
+            ipStack_->setDnsServer(o.dns);
+            return;
+        }
+        if (!o.lease) continue;
+        size_t i = static_cast<size_t>(o.netif);
+        if (renewed_[i] && nowMs - renewedAtMs_[i] < kRenewMs) return;  // its answer is on its way
+        if (ipStack_->renewLease(o.netif)) {
+            renewed_[i] = true;
+            renewedAtMs_[i] = nowMs;
+            return;
+        }
     }
 }
 
@@ -787,6 +880,8 @@ void Network::poll(uint32_t nowMs) {
                 if (!ethLink_) ethLink(true, nowMs);
                 if (i.ip && (!ethOnline_ || i.ip != ethAddr_)) {
                     ethGotIp(nowMs);  // a new address: link-local (AutoIP posts no event), or a lost EthGotIp
+                } else if (i.ip && i.gateway != ethGateway_) {
+                    ethGateway_ = i.gateway;  // the same address, another gateway
                 } else if (!i.ip && ethOnline_) {
                     tesser::logWarning("tesserkit: Ethernet lost its address");
                     ethDown(nowMs, kEthWaitMs);  // DHCP may give it back
@@ -819,6 +914,8 @@ void Network::poll(uint32_t nowMs) {
         }
     }
     if (apUp_) setApClients(wifi_->apClients());
+    updateRoute();  // an event that would have, lost
+    refillDns(nowMs);
 }
 
 void Network::setApClients(int32_t n) {

@@ -198,10 +198,10 @@ public:
             if (esp_read_mac(addr, ESP_MAC_ETH) == ESP_OK) esp_eth_ioctl(handle_, ETH_CMD_S_MAC_ADDR, addr);
         }
         sink_ = std::move(sink);
-        // "ETH_DEF", which mDNS follows. Its default route priority (50) is
-        // below the station's (100): raised, so the default route (and the
-        // DNS servers that follow it) is Ethernet's while both have an
-        // address (DESIGN.md section 5.2).
+        // "ETH_DEF", which mDNS and the IpStack follow. Its default route
+        // priority (50) is below the station's (100): raised, so the cable
+        // is the default route from the start, until Network chooses one
+        // (IpStack::setDefault(), DESIGN.md section 5.2).
         static esp_netif_inherent_config_t inherent = ESP_NETIF_INHERENT_DEFAULT_ETH();
         inherent.route_prio = 128;
         esp_netif_config_t netifConfig = ESP_NETIF_DEFAULT_ETH();
@@ -250,7 +250,10 @@ public:
         eth_duplex_t duplex;
         if (esp_eth_ioctl(handle_, ETH_CMD_G_DUPLEX_MODE, &duplex) == ESP_OK) out.fullDuplex = duplex == ETH_DUPLEX_FULL;
         esp_netif_ip_info_t ip;
-        if (esp_netif_get_ip_info(netif_, &ip) == ESP_OK) out.ip = esp::fromNetwork(ip.ip.addr);
+        if (esp_netif_get_ip_info(netif_, &ip) == ESP_OK) {
+            out.ip = esp::fromNetwork(ip.ip.addr);
+            out.gateway = esp::fromNetwork(ip.gw.addr);
+        }
         return true;
     }
 
@@ -270,9 +273,6 @@ private:
         } else {
             return;
         }
-        // After esp_netif's own handler (registered first), which started
-        // the cable's DHCP client.
-        if (e.type == Event::Type::EthLink && e.value) esp::dnsRefresh();
         if (self->sink_) self->sink_(std::move(e));
     }
 

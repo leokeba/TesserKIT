@@ -29,11 +29,6 @@ void dnsStop();
 // DHCP, or the static address in `ip`, on an interface (wifi_esp.cpp).
 void applyIp(esp_netif_t* netif, const IpConfig& ip);
 
-// Fills lwIP's DNS servers' list again if it is empty, as esp_netif leaves
-// it when it starts an interface's DHCP client on a station's association or
-// a cable's link (wifi_esp.cpp).
-void dnsRefresh();
-
 // Initializes esp_netif and the default event loop, which applications
 // (and Arduino) may have done already (wifi_esp.cpp).
 void netifInit();
