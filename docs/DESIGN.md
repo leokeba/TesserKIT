@@ -676,7 +676,7 @@ Not a service: a class for applications, `tesserkit::PwmOutput` (`tesserkit/pwm.
   - `setTrim(steps)`: the divider moved by whole steps (1/256) from the planned one, clamped to its range, without restarting the counter (a new divider alone keeps it running, above). `timing()` is what runs, trimmed; `planned()` the timing for the frequency asked, the same on every node, the lock's target; `trim()` the steps applied. A new frequency or resolution clears it.
   - `restartAt(localUs)`: the counter reset at an instant of the local clock, a new period beginning with its high part, for the first lock. A one-shot alarm of a GPTimer (taken at the first restart, 1 MHz) whose interrupt resets the LEDC timer: a few µs late, more while the flash is written (the handler isn't in IRAM). One restart waits at a time, a new one replacing it; false for an instant past or under 200 µs away (`Pwm::kMinLeadUs`). A restart landing in the high part makes one longer pulse.
 - *(later)* A phase through `hpoint`.
-- Host-tested (`test/pwm_cases.h`, the plan's cases from ballet-photophonique); built for the ESP32, S3 and C3; not yet run on hardware from TesserKIT (ballet's and Fluante's copies run on their boards).
+- Host-tested (`test/pwm_cases.h`, the plan's cases from ballet-photophonique); built for the ESP32, S3 and C3. The phase lock's controls ran on a Fluante (2026-10-21: classic ESP32, 60.01 Hz at 12 bits, a high-speed timer, Fluante's lock against another Fluante over NowTP): the first restart landed 99 µs off at the first sample after it, the lock held within −74 to +68 µs over two minutes, its trim between −6 and +11 ppm following NowTP's drift estimate, with no jump on a trim change.
 
 ### 5.17 Later
 
