@@ -119,9 +119,10 @@ Every service and transport together (`examples/idf/full`) is 1.69 MB on ESP32 i
 | Arduino / PlatformIO | `examples/arduino/Minimal` | With TesserAPI, TesserUI and ArduinoJson 7 |
 | Bluetooth | `examples/idf/bluetooth`, `examples/arduino/Bluetooth` (ESP32-C3, ESP32-S3) | The Bluetooth service beside Wi-Fi: the launcher reaches the device from a phone with no network in common |
 | Everything | `examples/idf/full` | Every service and transport with the factory defaults each one takes, and a dashboard; needs NowTP next to TesserKIT (or `NOWTP_PATH`). Battery with `-DBATTERY_GPIO=<adc pin>`; Bluetooth on ESP32 and ESP32-S3, not the C3, whose slot it wouldn't fit. Two boards running it show each other |
-| Ethernet | `examples/idf/full -DETHERNET_BOARD=gledopto` | Or another preset of `tesserkit::boards`: the board's cable, and Wi-Fi when it is unplugged. The ESP32's internal MAC with an RMII PHY. On a Gledopto GL-C-611WL, firmware uploads run at 170 KB/s over the cable (70 KB/s over Wi-Fi) |
+| Classic ESP32 | `examples/idf/full -DPROFILE=classic` | Every service but Bluetooth, which takes about 48 KB of heap there: the profile for a classic ESP32 without PSRAM, a gateway in particular (DESIGN §11, Profiles) |
+| Ethernet | `examples/idf/full -DPROFILE=classic -DETHERNET_BOARD=gledopto` | Or another preset of `tesserkit::boards`: the board's cable, and Wi-Fi when it is unplugged. The ESP32's internal MAC with an RMII PHY. On a Gledopto GL-C-611WL, firmware uploads run at 170 KB/s over the cable (70 KB/s over Wi-Fi) |
 
-On a classic ESP32 without PSRAM, the full example is at the edge of the RAM: about 30 KB free, and HTTPS waits while an MQTT session runs (DESIGN §11).
+On a classic ESP32 without PSRAM, the full example is at the edge of the RAM: about 30 KB free, and HTTPS waits while an MQTT session runs. The classic profile leaves Bluetooth out for that (DESIGN §11). Build each profile in its own build directory (`-B <dir> -DSDKCONFIG=<dir>/sdkconfig`): a profile's settings apply to a new sdkconfig.
 
 ## Testing
 
@@ -146,7 +147,7 @@ The services are platform-independent and tested against a fake platform.
 
 ## Releases
 
-Each push to main runs the host tests. Then [`release.yml`](.github/workflows/release.yml) builds the minimal and full examples for ESP32, ESP32-C3 and ESP32-S3 and publishes a release under the next patch version: `tesserkit-minimal-<target>.bin` and `tesserkit-full-<target>.bin` for updates, and `...-<target>-factory.bin` to flash a new board at 0x0. Devices running the example built with `-DWITH_GITHUB=1` find it and offer it under Firmware. The same run publishes the launcher to GitHub Pages, with the TesserUI that the release is built with and the latest three releases' factory images, which it installs. For a minor or major release, raise the version in `library.json`; `[skip ci]` in a commit message skips the release.
+Each push to main runs the host tests. Then [`release.yml`](.github/workflows/release.yml) builds the minimal and full examples for ESP32, ESP32-C3 and ESP32-S3, and the full example's classic profile (every service but Bluetooth, for a classic ESP32: `-DPROFILE=classic`) for ESP32 with and without a Gledopto's Ethernet, and publishes a release under the next patch version: `tesserkit-minimal-<target>.bin`, `tesserkit-full-<target>.bin`, `tesserkit-classic-esp32.bin` and `tesserkit-classic-gledopto-esp32.bin` for updates, and `...-<target>-factory.bin` to flash a new board at 0x0. Devices running the example built with `-DWITH_GITHUB=1` find it and offer it under Firmware. The same run publishes the launcher to GitHub Pages, with the TesserUI that the release is built with and the latest three releases' factory images, which it installs. For a minor or major release, raise the version in `library.json`; `[skip ci]` in a commit message skips the release.
 
 Applications release their own firmware with the same workflow:
 

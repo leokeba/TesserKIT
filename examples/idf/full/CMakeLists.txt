@@ -22,5 +22,15 @@ tesserkit_check_sibling(TesserAPI "${TESSERAPI_PATH}")
 tesserkit_check_sibling(TesserUI "${TESSERUI_PATH}")
 tesserkit_check_sibling(NowTP "${NOWTP_PATH}")
 set(EXTRA_COMPONENT_DIRS "${TESSERKIT_PATH}" "${TESSERAPI_PATH}" "${TESSERUI_PATH}" "${NOWTP_PATH}")
+# -DPROFILE=classic: profiles/classic.defaults read after sdkconfig.defaults
+# (DESIGN.md 11, Profiles). Without it, every service ("full"). The settings
+# apply to a new sdkconfig: build each profile in its own build directory,
+# with -DSDKCONFIG=<build>/sdkconfig.
+if(DEFINED PROFILE AND NOT PROFILE STREQUAL "full")
+    if(NOT EXISTS "${CMAKE_CURRENT_LIST_DIR}/profiles/${PROFILE}.defaults")
+        message(FATAL_ERROR "no profile ${PROFILE}: profiles/ has the ones there are")
+    endif()
+    set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults;${CMAKE_CURRENT_LIST_DIR}/profiles/${PROFILE}.defaults")
+endif()
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(tesserkit_full)

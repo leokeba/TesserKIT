@@ -1,7 +1,8 @@
 # Each push to main: the host tests, then a release of the example firmwares
 # built against the sibling commits deps.lock pins (scripts/pin.sh),
-# (examples/idf/minimal and examples/idf/full, with firmware.github() pointing
-# here) under the next patch version, or library.json's version when it was raised above it, and
+# (examples/idf/minimal, and examples/idf/full's profiles: full, and classic
+# for the classic ESP32 with its Gledopto Ethernet variant; firmware.github()
+# points here, at the asset named as the build) under the next patch version, or library.json's version when it was raised above it, and
 # TesserUI's launcher on GitHub Pages (https://leokeba.github.io/TesserKIT/),
 # built from the same TesserUI as the firmware, with the latest three
 # releases' factory images to install. A commit message with
@@ -40,7 +41,10 @@ jobs:
     with:
       projects: |
         [{"project": "examples/idf/minimal", "name": "tesserkit-minimal", "build-args": "-DWITH_GITHUB=1"},
-         {"project": "examples/idf/full", "name": "tesserkit-full"}]
+         {"project": "examples/idf/full", "name": "tesserkit-full"},
+         {"project": "examples/idf/full", "name": "tesserkit-classic", "build-args": "-DPROFILE=classic", "targets": ["esp32"]},
+         {"project": "examples/idf/full", "name": "tesserkit-classic-gledopto",
+          "build-args": "-DPROFILE=classic -DETHERNET_BOARD=gledopto", "targets": ["esp32"]}]
       targets: '["esp32", "esp32c3", "esp32s3"]'
       version-command: jq -r .version library.json
       dependencies-file: deps.lock

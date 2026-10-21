@@ -16,10 +16,11 @@
 //                             device is open until one is added)
 //   NOWTP_PAIRING_CODE        what pairings between nodes must know
 //
-// Build options: -DBATTERY_GPIO=n adds the Battery service on that ADC pin,
-// through a divider of two equal resistors; -DETHERNET_BOARD=gledopto uses
-// that board's Ethernet; -DETHERNET_W5500="sck,miso,mosi,cs,irq" a W5500
-// module on those GPIOs.
+// Build options: -DPROFILE=classic leaves Bluetooth out, for a classic ESP32
+// without PSRAM (profiles/, DESIGN.md 11); -DBATTERY_GPIO=n adds the Battery
+// service on that ADC pin, through a divider of two equal resistors;
+// -DETHERNET_BOARD=gledopto uses that board's Ethernet;
+// -DETHERNET_W5500="sck,miso,mosi,cs,irq" a W5500 module on those GPIOs.
 #include "TesserKIT.h"
 #include "driver/ledc.h"
 #include "sdkconfig.h"
@@ -36,6 +37,22 @@ namespace {
 // restored at boot).
 #if !defined(LED_GPIO)
 #define LED_GPIO 2
+#endif
+
+// The release asset this build updates from: tesserkit-<profile>-<target>.bin,
+// with the Ethernet board after the profile (tesserkit-classic-gledopto-esp32.bin),
+// so a board never installs an image without its Ethernet.
+#if !defined(PROFILE)
+#define PROFILE "full"
+#endif
+#define TESSERKIT_STR2(x) #x
+#define TESSERKIT_STR(x) TESSERKIT_STR2(x)
+#if defined(ETHERNET_BOARD)
+#define RELEASE_BOARD "-" TESSERKIT_STR(ETHERNET_BOARD)
+#elif defined(ETHERNET_W5500)
+#define RELEASE_BOARD "-w5500"
+#else
+#define RELEASE_BOARD ""
 #endif
 
 struct Led {
@@ -85,7 +102,7 @@ tesserkit::Timers timers(dev);        // daily schedules
 tesserkit::Auth auth(dev);            // accounts and sign-in
 tesserkit::Mqtt mqtt(dev);            // a broker bridge
 tesserkit::ArtNet artnet(dev);        // lighting consoles
-#if CONFIG_BT_ENABLED  // not on the ESP32-C3 (sdkconfig.defaults.esp32c3)
+#if CONFIG_BT_ENABLED  // not on the ESP32-C3 (sdkconfig.defaults.esp32c3), nor in the classic profile
 tesserkit::Bluetooth bluetooth(dev);  // the launcher from a phone
 #endif
 tesserkit::NowTp espNow(dev);         // the nodes nearby over ESP-NOW (after Network: Wi-Fi first)
@@ -119,7 +136,7 @@ extern "C" void app_main() {
     net.apMode(tesserkit::ApMode::Fallback);  // its own network while no other is joined
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3").defaultServer("pool.ntp.org");
     // Updates from this repository's releases, and from any URL.
-    firmware.github("leokeba/TesserKIT", "tesserkit-full-{target}.bin");
+    firmware.github("leokeba/TesserKIT", "tesserkit-" PROFILE RELEASE_BOARD "-{target}.bin");
 #if defined(ADMIN_PASSWORD)
     auth.defaultAdmin("admin", ADMIN_PASSWORD);
 #endif

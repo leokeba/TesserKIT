@@ -25,6 +25,16 @@
               description: 'Every service and transport: a starting point to strip down. Bluetooth is left out on the ESP32-C3.',
             },
             {
+              label: 'Classic',
+              asset: 'tesserkit-classic-{target}-factory.bin',
+              description: 'Every service but Bluetooth, for a classic ESP32 without PSRAM: the memory a gateway, HTTPS and backups need.',
+            },
+            {
+              label: 'Classic, Gledopto Ethernet',
+              asset: 'tesserkit-classic-gledopto-{target}-factory.bin',
+              description: 'The classic firmware with the Ethernet of Gledopto controllers (LAN8720), preferred to Wi-Fi while it has an address.',
+            },
+            {
               label: 'Minimal',
               asset: 'tesserkit-minimal-{target}-factory.bin',
               description: 'Wi-Fi, time, firmware updates from these releases, backups, timers and accounts.',

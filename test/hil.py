@@ -2,13 +2,15 @@
 """Hardware in the loop: build, flash and test the boards on this machine.
 
   uv run --with requests --with websocket-client --with pyserial \\
-      python test/hil.py test/hil_boards.json [--skip-build] [--skip-flash] [--only udp,device]
+      python test/hil.py test/hil_boards.json [--skip-build] [--skip-flash] [--build-only] [--only udp,device]
 
-Builds examples/idf/full (and its Ethernet variant for boards that have one)
-against the sibling commits deps.lock pins, flashes each board after reading
-its MAC, waits for every board on the network, then runs the end-to-end
-suites (device, files, ethernet, transfers, udp). After each suite it reads every board's lowest free heap since boot
-(/sys/status/minHeap) and fails when one fell below the floor: an
+Builds examples/idf/full in each board's build (a profile, or its Ethernet
+variant: the boards file's "builds") against the sibling commits deps.lock
+pins, flashes each board after reading its MAC, waits for every board on the
+network, then runs the end-to-end suites (device, files, ethernet, transfers,
+udp). After each suite it reads every board's lowest free heap since boot
+(/sys/status/minHeap) and fails when one fell below its build's floor
+("heapFloors", by build; "heapFloor" for the others, 8 KB): an
 out-of-memory abort is usually one allocation away from there (DESIGN.md
 section 12, docs/review-2026-10-14-open.md, Roadmap › Phase 1).
 
@@ -150,8 +152,9 @@ def wait_up(boards, settle):
     time.sleep(settle)
 
 
-def check_heap(boards, floor, after):
+def check_heap(boards, floors, after):
     for b in boards:
+        floor = floors(b)
         s = status(b)
         if not s:
             FAILURES.append(f'{after}: {b["name"]} not answering')
@@ -165,7 +168,7 @@ def check_heap(boards, floor, after):
             FAILURES.append(f'{after}: {b["name"]} restarted by {s["resetReason"]}')
 
 
-def suite(name, cmd, boards, floor, work):
+def suite(name, cmd, boards, floors, work):
     logf = os.path.join(work, f'suite-{name}.log')
     rc = run(['uv', 'run', '-q', '--with', 'requests', '--with', 'websocket-client', '--with', 'pyserial',
               'python', '-u'] + cmd, out=logf, timeout=1800)
@@ -178,7 +181,7 @@ def suite(name, cmd, boards, floor, work):
             log('  ' + line[:200])
     if rc:
         FAILURES.append(f'{name}: exit {rc}')
-    check_heap(boards, floor, name)
+    check_heap(boards, floors, name)
 
 
 def main():
@@ -189,7 +192,11 @@ def main():
         cfg = json.load(f)
     only = set(args[args.index('--only') + 1].split(',')) if '--only' in args else None
     work = os.path.expanduser(cfg.get('work', '/tmp/tesserkit-hil'))
-    floor = cfg.get('heapFloor', 8192)
+    # A profile's floor: the classic one, without Bluetooth, keeps far more
+    # headroom than the full one on the same board (DESIGN.md 11, Profiles).
+    def floors(b):
+        build = b.get('build', 'full')
+        return cfg.get('heapFloors', {}).get(build, cfg.get('heapFloor', 8192))
     boards = cfg['boards']
     # A board may hold several roles ("role": ["gateway", "ethernet"]) when
     # fewer boards are plugged in.
@@ -203,6 +210,8 @@ def main():
             variant = b.get('build', 'full')
             if variant not in images:
                 images[variant] = build(work, siblings, variant, cfg.get('builds', {}).get(variant, []))
+    if '--build-only' in args:
+        return 0
     if '--skip-flash' not in args:
         log('== flash')
         for b in boards:
@@ -211,7 +220,7 @@ def main():
             flash(b, image)
     log('== boards')
     wait_up(boards, cfg.get('settle', 60))
-    check_heap(boards, floor, 'boot')
+    check_heap(boards, floors, 'boot')
 
     def want(n):
         return only is None or n in only
@@ -220,14 +229,14 @@ def main():
     if gw and want('device'):
         suite('device', ['test/e2e_device.py', gw['url'], '--only',
                          'test_status,test_ui,test_websocket,test_time,test_persistence,test_backup,test_auth,test_timers'],
-              boards, floor, work)
+              boards, floors, work)
     if gw and want('files'):
-        suite('files', ['test/e2e_files.py', gw['url']], boards, floor, work)
+        suite('files', ['test/e2e_files.py', gw['url']], boards, floors, work)
     if eth and want('ethernet'):
         cmd = ['test/e2e_ethernet.py', eth['url']]
         if eth.get('staticIp'):
             cmd += ['--static', eth['staticIp']]
-        suite('ethernet', cmd, boards, floor, work)
+        suite('ethernet', cmd, boards, floors, work)
     if gw and peer and want('transfers'):
         cmd = ['test/e2e_transfers.py', '--http', gw['url'], '--peer', peer['hostname'],
                '--image', images.get(gw.get('build', 'full'), os.path.join(work, 'build-full', 'tesserkit_full.bin'))]
@@ -236,9 +245,9 @@ def main():
                                                os.path.join(work, f"build-{peer.get('build', 'full')}", 'tesserkit_full.bin'))]
         if gw.get('port'):
             cmd += ['--serial', gw['port']]
-        suite('transfers', cmd, boards, floor, work)
+        suite('transfers', cmd, boards, floors, work)
     if len(boards) >= 2 and want('udp'):
-        suite('udp', ['test/e2e_udp.py'] + [b['url'] for b in boards], boards, floor, work)
+        suite('udp', ['test/e2e_udp.py'] + [b['url'] for b in boards], boards, floors, work)
 
     log('== result')
     for f in FAILURES:

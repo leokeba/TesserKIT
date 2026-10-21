@@ -1,0 +1,7 @@
+# The classic profile (-DPROFILE=classic): every service but Bluetooth, for a
+# classic ESP32 without PSRAM, as a node or a gateway, on Wi-Fi or Ethernet.
+# Bluetooth's controller and NimBLE take about 48 KB of heap: with them, a
+# Gledopto with Ethernet and every service had 12 KB free, too little for
+# HTTPS or a backup, and as a gateway it fell to 92 bytes; without them it had
+# 60 KB, and as a gateway 58 KB at the lowest (DESIGN.md 11, Profiles).
+CONFIG_BT_ENABLED=n
