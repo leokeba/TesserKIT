@@ -78,6 +78,15 @@ Timing plan(const Chip& chip, double hz, uint8_t bits) {
     return t;
 }
 
+Timing trimmed(const Timing& t, int32_t steps) {
+    int64_t d = static_cast<int64_t>(t.divider) + steps;
+    d = d < kMinDivider ? kMinDivider : d > kMaxDivider ? kMaxDivider : d;
+    Timing r = t;
+    r.divider = static_cast<uint32_t>(d);
+    r.frequency = t.clockHz * (1 << kFractionBits) / (static_cast<double>(d) * static_cast<double>(1u << t.bits));
+    return r;
+}
+
 uint32_t dutyCounts(float percent, uint8_t bits) {
     uint32_t full = 1u << bits;
     if (!(percent > 0)) return 0;  // NaN too
@@ -93,7 +102,8 @@ bool PwmOutput::begin() {
     int n = pwm_.attach(pin_);
     if (n < 0) return false;
     output_ = n;
-    timing_ = pwm::plan(pwm_.chip(), frequency_, resolution_);
+    if (!(planned_.frequency > 0)) planned_ = pwm::plan(pwm_.chip(), frequency_, resolution_);
+    timing_ = pwm::trimmed(planned_, trim_);
     pwm_.timing(output_, timing_);
     applyDuty();
     return true;
@@ -113,15 +123,29 @@ void PwmOutput::setDuty(float percent) {
 }
 
 void PwmOutput::setFrequency(double hz) {
-    if (hz == frequency_ && timing_.frequency > 0) return;
+    if (hz == frequency_ && planned_.frequency > 0) return;
     frequency_ = hz;
-    retime();
+    replan();
 }
 
 void PwmOutput::setResolution(uint8_t bits) {
-    if (bits == resolution_ && timing_.frequency > 0) return;
+    if (bits == resolution_ && planned_.frequency > 0) return;
     resolution_ = bits;
+    replan();
+}
+
+void PwmOutput::setTrim(int32_t steps) {
+    if (!(planned_.frequency > 0)) planned_ = pwm::plan(pwm_.chip(), frequency_, resolution_);
+    trim_ = steps;
     retime();
+}
+
+bool PwmOutput::sample(uint32_t& count, int64_t& localUs) const {
+    return output_ >= 0 && pwm_.sample(output_, count, localUs);
+}
+
+bool PwmOutput::restartAt(int64_t localUs) {
+    return output_ >= 0 && pwm_.restartAt(output_, localUs);
 }
 
 double PwmOutput::appliedDuty() const {
@@ -132,8 +156,17 @@ double PwmOutput::pulseUs() const {
     return static_cast<double>(counts()) * timing_.stepUs();
 }
 
+void PwmOutput::replan() {
+    planned_ = pwm::plan(pwm_.chip(), frequency_, resolution_);
+    trim_ = 0;
+    retime();
+}
+
+// Applies the planned timing with its trim. The same resolution keeps the
+// counter running (Pwm::timing()), so a trim never restarts it.
 void PwmOutput::retime() {
-    pwm::Timing t = pwm::plan(pwm_.chip(), frequency_, resolution_);
+    pwm::Timing t = pwm::trimmed(planned_, trim_);
+    trim_ = static_cast<int32_t>(t.divider) - static_cast<int32_t>(planned_.divider);
     if (t == timing_ && timing_.frequency > 0) return;
     // The duty's counts follow the resolution: written after the timer.
     bool bitsChanged = t.bits != timing_.bits;

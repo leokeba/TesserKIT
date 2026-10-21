@@ -31,6 +31,11 @@ struct FakePwm : tesserkit::Pwm {
     const tesserkit::pwm::Chip* chipUsed = &kEsp32;
     size_t limit = 8;
     std::vector<Output> outputs;
+    // What sample() reads, and the local clock restartAt() measures from.
+    uint32_t count = 0;
+    int64_t nowUs = 0;
+    int restartOutput = -1;
+    int64_t restartUs = 0;
     const tesserkit::pwm::Chip& chip() const override { return *chipUsed; }
     int attach(int pin) override {
         if (outputs.size() >= limit) return -1;
@@ -46,6 +51,17 @@ struct FakePwm : tesserkit::Pwm {
     void duty(int n, uint32_t counts) override {
         outputs[static_cast<size_t>(n)].counts = counts;
         outputs[static_cast<size_t>(n)].duties++;
+    }
+    bool sample(int, uint32_t& c, int64_t& localUs) override {
+        c = count;
+        localUs = nowUs;
+        return true;
+    }
+    bool restartAt(int n, int64_t localUs) override {
+        if (localUs - nowUs < kMinLeadUs) return false;
+        restartOutput = n;
+        restartUs = localUs;
+        return true;
     }
 };
 
@@ -227,6 +243,96 @@ TEST(pwm_output_without_a_timer_left) {
     CHECK(!b.begun());
     b.setOn(true);  // stored, nothing written
     CHECK_EQ(pwm.outputs.size(), 1u);
+}
+
+TEST(pwm_trimmed_moves_the_divider) {
+    auto t = plan(kEsp32, 60.01, 12);
+    auto up = tesserkit::pwm::trimmed(t, 3);
+    CHECK_EQ(up.divider, t.divider + 3);
+    CHECK_EQ(int(up.bits), int(t.bits));
+    CHECK_EQ(int(up.clock), int(t.clock));
+    CHECK(up.frequency < t.frequency);  // a larger divider, a longer period
+    CHECK(near(up.frequency, 80e6 * 256 / (double(t.divider + 3) * 4096), 1e-9));
+    CHECK(tesserkit::pwm::trimmed(t, 0) == t);
+    // Within the divider's range.
+    CHECK_EQ(tesserkit::pwm::trimmed(t, -1000000).divider, tesserkit::pwm::kMinDivider);
+    CHECK_EQ(tesserkit::pwm::trimmed(t, 1000000).divider, tesserkit::pwm::kMaxDivider);
+}
+
+TEST(pwm_output_trim_keeps_the_plan) {
+    FakePwm pwm;
+    tesserkit::PwmOutput out(pwm, 4);
+    out.setFrequency(60.01);
+    out.setTrim(-2);  // before begin(): stored
+    CHECK(pwm.outputs.empty());
+    CHECK(out.begin());
+    auto planned = plan(kEsp32, 60.01, 12);
+    CHECK(out.planned() == planned);
+    CHECK_EQ(pwm.outputs[0].timing.divider, planned.divider - 2);
+    CHECK(out.timing() == pwm.outputs[0].timing);
+    CHECK(out.timing().frequency > planned.frequency);
+    // The timer only, at the same resolution: the LEDC keeps counting.
+    out.setOn(true);
+    int timings = pwm.outputs[0].timings, duties = pwm.outputs[0].duties;
+    out.setTrim(5);
+    CHECK_EQ(pwm.outputs[0].timings, timings + 1);
+    CHECK_EQ(pwm.outputs[0].duties, duties);
+    CHECK_EQ(pwm.outputs[0].timing.divider, planned.divider + 5);
+    CHECK_EQ(int(pwm.outputs[0].timing.bits), int(planned.bits));
+    CHECK_EQ(out.trim(), 5);
+    out.setTrim(5);  // unchanged
+    CHECK_EQ(pwm.outputs[0].timings, timings + 1);
+    // Clamped to the divider's range, and reported as applied.
+    out.setTrim(1000000);
+    CHECK_EQ(pwm.outputs[0].timing.divider, tesserkit::pwm::kMaxDivider);
+    CHECK_EQ(out.trim(), int32_t(tesserkit::pwm::kMaxDivider - planned.divider));
+    CHECK(out.planned() == planned);
+    // A new frequency clears it.
+    out.setFrequency(50);
+    CHECK_EQ(out.trim(), 0);
+    CHECK(out.timing() == plan(kEsp32, 50, 12));
+    CHECK(out.planned() == out.timing());
+    out.setTrim(1);
+    out.setResolution(10);
+    CHECK_EQ(out.trim(), 0);
+    CHECK(out.timing() == plan(kEsp32, 50, 10));
+}
+
+TEST(pwm_output_sample_and_restart) {
+    FakePwm pwm;
+    tesserkit::PwmOutput a(pwm, 4), b(pwm, 5);
+    uint32_t count = 0;
+    int64_t at = 0;
+    CHECK(!b.sample(count, at));  // before begin()
+    CHECK(!b.restartAt(1000000));
+    CHECK(a.begin());
+    CHECK(b.begin());
+    pwm.count = 1234;
+    pwm.nowUs = 5000000;
+    CHECK(b.sample(count, at));
+    CHECK_EQ(count, 1234u);
+    CHECK_EQ(at, int64_t(5000000));
+    // Past, or too near: refused.
+    CHECK(!b.restartAt(4000000));
+    CHECK(!b.restartAt(pwm.nowUs + tesserkit::Pwm::kMinLeadUs - 1));
+    CHECK_EQ(pwm.restartOutput, -1);
+    CHECK(b.restartAt(5100000));
+    CHECK_EQ(pwm.restartOutput, 1);
+    CHECK_EQ(pwm.restartUs, int64_t(5100000));
+}
+
+// A Pwm that can't do either: the defaults refuse.
+TEST(pwm_defaults_refuse_sample_and_restart) {
+    struct Plain : FakePwm {
+        bool sample(int o, uint32_t& c, int64_t& t) override { return tesserkit::Pwm::sample(o, c, t); }
+        bool restartAt(int o, int64_t t) override { return tesserkit::Pwm::restartAt(o, t); }
+    } pwm;
+    tesserkit::PwmOutput out(pwm, 4);
+    CHECK(out.begin());
+    uint32_t count = 0;
+    int64_t at = 0;
+    CHECK(!out.sample(count, at));
+    CHECK(!out.restartAt(1000000));
 }
 
 }  // namespace pwm_cases

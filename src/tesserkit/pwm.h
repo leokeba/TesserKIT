@@ -67,6 +67,10 @@ struct Timing {
 // reaches, the closest end.
 Timing plan(const Chip& chip, double hz, uint8_t bits);
 
+// `t` with its divider moved by `steps` (1/256 each), kept within the
+// divider's range, and the frequency that gives: a period trim.
+Timing trimmed(const Timing& t, int32_t steps);
+
 // The compare value for `percent` (0–100) of a period at `bits`: 0 to 2^bits,
 // 2^bits being always on.
 uint32_t dutyCounts(float percent, uint8_t bits);
@@ -94,6 +98,24 @@ public:
     // Applies the duties that were waiting. Often (every tick of the
     // device), under the same lock as the other calls.
     virtual void poll() {}
+
+    // For a phase lock (section 5.20): where the output is in its period,
+    // its counter (0 to 2^bits - 1) and the local clock
+    // (esp_timer_get_time(), µs) read together, a few µs apart at most.
+    // False where the chip can't tell.
+    virtual bool sample(int output, uint32_t& count, int64_t& localUs) {
+        (void)output, (void)count, (void)localUs;
+        return false;
+    }
+    // Restarts the output's counter at `localUs` on the local clock: a new
+    // period begins, its high part first. One restart waits at a time, a new
+    // one replacing it, whatever its output. False when the instant is past
+    // or nearer than kMinLeadUs, or the chip can't.
+    static constexpr int64_t kMinLeadUs = 200;
+    virtual bool restartAt(int output, int64_t localUs) {
+        (void)output, (void)localUs;
+        return false;
+    }
 };
 
 #if defined(ESP_PLATFORM)
@@ -128,8 +150,22 @@ public:
 
     // What the timer runs: the frequency the divider gives, and a resolution
     // that may differ from the one asked when the frequency doesn't allow it.
-    // Planned by begin() and the setters (zeros before).
+    // Planned by begin() and the setters (zeros before), then trimmed.
     const pwm::Timing& timing() const { return timing_; }
+    // The timing planned for the frequency asked, without the trim: the same
+    // on every node asked the same frequency, so a phase lock's target.
+    const pwm::Timing& planned() const { return planned_; }
+
+    // A phase lock's controls (section 5.20). The trim moves the divider by
+    // whole steps (1/256) from the planned one without restarting the
+    // counter, clamped to the divider's range; trim() is what was applied. A
+    // new frequency or resolution clears it. Stored before begin().
+    void setTrim(int32_t steps);
+    int32_t trim() const { return trim_; }
+    // Pwm::sample() and Pwm::restartAt() for this output; false before
+    // begin(). A restart that lands in the high part makes one longer pulse.
+    bool sample(uint32_t& count, int64_t& localUs) const;
+    bool restartAt(int64_t localUs);
     // The compare value applied: 0 while off.
     uint32_t counts() const { return on_ ? pwm::dutyCounts(duty_, timing_.bits) : 0; }
     // The duty applied, in percent, and the length of the high part in µs.
@@ -140,6 +176,7 @@ public:
     int output() const { return output_; }  // the Pwm's number, -1 before begin()
 
 private:
+    void replan();
     void retime();
     void applyDuty();
 
@@ -150,6 +187,8 @@ private:
     float duty_ = kDuty;
     double frequency_ = kFrequency;
     uint8_t resolution_ = kResolution;
+    int32_t trim_ = 0;
+    pwm::Timing planned_;
     pwm::Timing timing_;
 };
 

@@ -8,11 +8,19 @@
 // sets a timer up; plan()'s divider, resolution and clock are then written to
 // the timer's registers through the low-level layer, which the driver reads
 // back for its duty checks (ledc_get_max_duty()).
+//
+// A phase lock's restart (restartAt()) is a one-shot alarm of a GPTimer,
+// taken at the first restart: its interrupt resets the LEDC timer, a few µs
+// late, more while the flash is written (the handler isn't in IRAM).
 #if defined(ESP_PLATFORM)
 
+#include "driver/gptimer.h"
 #include "driver/ledc.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
 #include "hal/ledc_ll.h"
+#include "sdkconfig.h"
 #include "soc/ledc_struct.h"
 #include "soc/soc_caps.h"
 #include "tesserkit/pwm.h"
@@ -27,6 +35,13 @@ const char* kTag = "tesserkit";
 constexpr int kOutputs = 2 * SOC_LEDC_TIMER_NUM;
 #else
 constexpr int kOutputs = SOC_LEDC_TIMER_NUM;
+#endif
+
+// The chips whose timers' counters read at LEDC.timer_group[mode].timer[n]
+// .value.timer_cnt.
+#if CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C3 || \
+    CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32H2
+#define TESSERKIT_LEDC_COUNTER 1
 #endif
 
 struct Slot {
@@ -125,7 +140,78 @@ public:
         for (int i = 0; i < next_; i++) flush(i);
     }
 
+    bool sample(int output, uint32_t& count, int64_t& localUs) override {
+#if TESSERKIT_LEDC_COUNTER
+        if (output < 0 || output >= next_) return false;
+        Slot s = slot(output);
+        portENTER_CRITICAL(&lock_);
+        count = LEDC.timer_group[s.mode].timer[s.timer].value.timer_cnt;
+        localUs = esp_timer_get_time();
+        portEXIT_CRITICAL(&lock_);
+        return true;
+#else
+        (void)output, (void)count, (void)localUs;
+        return false;
+#endif
+    }
+
+    // The GPTimer counts µs from its own start: the alarm is its count now
+    // plus the lead, both read with the local clock.
+    bool restartAt(int output, int64_t localUs) override {
+        if (output < 0 || output >= next_) return false;
+        if (!alarm_ && !startAlarm()) return false;
+        uint64_t count = 0;
+        portENTER_CRITICAL(&lock_);
+        pending_ = false;  // an earlier restart, replaced
+        int64_t lead = localUs - esp_timer_get_time();
+        gptimer_get_raw_count(alarm_, &count);
+        portEXIT_CRITICAL(&lock_);
+        if (lead < kMinLeadUs) return false;
+        gptimer_alarm_config_t a = {};
+        a.alarm_count = count + static_cast<uint64_t>(lead);
+        if (gptimer_set_alarm_action(alarm_, &a) != ESP_OK) return false;
+        portENTER_CRITICAL(&lock_);
+        restart_ = slot(output);
+        pending_ = true;
+        portEXIT_CRITICAL(&lock_);
+        return true;
+    }
+
 private:
+    bool startAlarm() {
+        gptimer_config_t c = {};
+        c.clk_src = GPTIMER_CLK_SRC_DEFAULT;
+        c.direction = GPTIMER_COUNT_UP;
+        c.resolution_hz = 1000000;
+        gptimer_handle_t t = nullptr;
+        if (gptimer_new_timer(&c, &t) != ESP_OK) {
+            ESP_LOGE(kTag, "PWM: no timer left for a restart");
+            return false;
+        }
+        gptimer_event_callbacks_t cb = {};
+        cb.on_alarm = onAlarm;
+        if (gptimer_register_event_callbacks(t, &cb, this) != ESP_OK || gptimer_enable(t) != ESP_OK ||
+            gptimer_start(t) != ESP_OK) {
+            ESP_LOGE(kTag, "PWM: the restart timer didn't start");
+            gptimer_del_timer(t);
+            return false;
+        }
+        alarm_ = t;
+        return true;
+    }
+
+    // Without auto-reload, the alarm fires once.
+    static bool onAlarm(gptimer_handle_t, const gptimer_alarm_event_data_t*, void* self) {
+        auto* p = static_cast<EspPwm*>(self);
+        portENTER_CRITICAL_ISR(&p->lock_);
+        if (p->pending_) {
+            p->pending_ = false;
+            ledc_ll_timer_rst(&LEDC, p->restart_.mode, p->restart_.timer);
+        }
+        portEXIT_CRITICAL_ISR(&p->lock_);
+        return false;
+    }
+
     void flush(int output) {
         if (!waiting_[output]) return;
         Slot s = slot(output);
@@ -136,6 +222,10 @@ private:
     }
 
     int next_ = 0;
+    portMUX_TYPE lock_ = portMUX_INITIALIZER_UNLOCKED;
+    gptimer_handle_t alarm_ = nullptr;
+    volatile bool pending_ = false;
+    Slot restart_ = {};
     bool waiting_[kOutputs] = {};
     uint32_t counts_[kOutputs] = {};
 };

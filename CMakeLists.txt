@@ -47,9 +47,9 @@ if(ESP_PLATFORM)
                             "(https://github.com/leokeba/TesserUI): add them to EXTRA_COMPONENT_DIRS or as "
                             "component manager dependencies.")
     endif()
-    # The temperature sensor, GPIO and SPI drivers left "driver" in ESP-IDF 5.3.
+    # The temperature sensor, GPIO, SPI, LEDC and GPTimer drivers left "driver" in ESP-IDF 5.3.
     if(IDF_VERSION_MAJOR GREATER 5 OR (IDF_VERSION_MAJOR EQUAL 5 AND IDF_VERSION_MINOR GREATER_EQUAL 3))
-        set(TESSERKIT_DRIVER_REQS esp_driver_tsens esp_driver_gpio esp_driver_spi esp_driver_ledc)
+        set(TESSERKIT_DRIVER_REQS esp_driver_tsens esp_driver_gpio esp_driver_spi esp_driver_ledc esp_driver_gptimer)
     else()
         set(TESSERKIT_DRIVER_REQS driver)
     endif()
