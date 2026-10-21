@@ -109,6 +109,13 @@ bool PwmOutput::begin() {
     return true;
 }
 
+void PwmOutput::end() {
+    if (output_ < 0) return;
+    pwm_.detach(output_);
+    output_ = -1;
+    timing_ = pwm::Timing();  // applied again by the next begin()
+}
+
 void PwmOutput::setOn(bool on) {
     if (on == on_) return;
     on_ = on;

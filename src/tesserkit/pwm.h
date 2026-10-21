@@ -98,6 +98,9 @@ public:
     // Applies the duties that were waiting. Often (every tick of the
     // device), under the same lock as the other calls.
     virtual void poll() {}
+    // Stops the output and gives its timer back: the pin left low, a plain
+    // GPIO output, for another (a PulseOutput) to take.
+    virtual void detach(int output) { (void)output; }
 
     // For a phase lock (section 5.20): where the output is in its period,
     // its counter (0 to 2^bits - 1) and the local clock
@@ -137,6 +140,9 @@ public:
     // Attaches the pin and applies the settings; false if no timer is left
     // or the pin was refused.
     bool begin();
+    // Stops and gives the timer back, the pin left low: another output may
+    // take it, and begin() takes a timer again. Settings are kept.
+    void end();
     bool begun() const { return output_ >= 0; }
 
     bool on() const { return on_; }

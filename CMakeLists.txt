@@ -23,6 +23,7 @@ set(TESSERKIT_CORE_SRCS
     src/tesserkit/udp_api.cpp
     src/tesserkit/peers.cpp
     src/tesserkit/pwm.cpp
+    src/tesserkit/pulses.cpp
     src/tesserkit/settings_store.cpp)
 
 if(ESP_PLATFORM)
@@ -75,6 +76,7 @@ if(ESP_PLATFORM)
              src/tesserkit/platform/esp/power_esp.cpp
              src/tesserkit/platform/esp/pins_esp.cpp
              src/tesserkit/platform/esp/pwm_esp.cpp
+             src/tesserkit/platform/esp/pulses_esp.cpp
              src/tesserkit/platform/esp/udp_api_esp.cpp
         INCLUDE_DIRS "src"
         REQUIRES esp_http_server esp_wifi esp_netif nvs_flash

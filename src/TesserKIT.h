@@ -23,6 +23,7 @@
 #include "tesserkit/network.h"
 #include "tesserkit/nowtp.h"
 #include "tesserkit/peers.h"
+#include "tesserkit/pulses.h"
 #include "tesserkit/pwm.h"
 #include "tesserkit/sequencer.h"
 #include "tesserkit/sleep.h"
