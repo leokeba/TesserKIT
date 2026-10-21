@@ -156,6 +156,13 @@ def check_heap(boards, floors, after):
     for b in boards:
         floor = floors(b)
         s = status(b)
+        # A suite may end with a restart (transfers: the peer's new image),
+        # so a board away is waited for a minute before it counts.
+        waited = 0
+        while not s and waited < 60:
+            time.sleep(5)
+            waited += 5
+            s = status(b)
         if not s:
             FAILURES.append(f'{after}: {b["name"]} not answering')
             log(f'  {b["name"]}: not answering')
@@ -239,7 +246,8 @@ def main():
         suite('ethernet', cmd, boards, floors, work)
     if gw and peer and want('transfers'):
         cmd = ['test/e2e_transfers.py', '--http', gw['url'], '--peer', peer['hostname'],
-               '--image', images.get(gw.get('build', 'full'), os.path.join(work, 'build-full', 'tesserkit_full.bin'))]
+               '--image', images.get(gw.get('build', 'full'),
+                                     os.path.join(work, f"build-{gw.get('build', 'full')}", 'tesserkit_full.bin'))]
         if peer.get('build', 'full') != gw.get('build', 'full'):
             cmd += ['--peer-image', images.get(peer.get('build', 'full'),
                                                os.path.join(work, f"build-{peer.get('build', 'full')}", 'tesserkit_full.bin'))]
