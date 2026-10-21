@@ -153,7 +153,7 @@ Platform callbacks (Wi-Fi events, SNTP sync) only post to a small queue that the
 ### 4.4 Identity
 
 - **Label:** `Device("Heliostat")` is the firmware's name for the device: its name until the user gives it one, and its hostname's start.
-- **Name:** `/sys/name` (§5.1), the user's name for this device ("Heliostat 3", "Lampe d'entrée"); empty, the label. It is the root's label (`api.label()`), which TesserUI shows as the node's name: the header, and the node's tab in a gateway's or the launcher's tab bar (TesserUI §6.5), where every node of one firmware would otherwise read the same. A change applies at once: the label is part of the schema's hash, which the node advertises over NowTP and UDP, so a gateway's UI reads the new name. Art-Net's short name and Home Assistant's device name are the name too. `dev.name()` reads it, `dev.nameSetting()` the setting.
+- **Name:** `/sys/name` (§5.1), the user's name for this device ("Heliostat 3", "Lampe d'entrée"); empty, the label. It is the root's label (`api.label()`), which TesserUI shows as the node's name: the header, and the node's tab in a gateway's or the launcher's tab bar (TesserUI §6.5), where every node of one firmware would otherwise read the same. A change applies at once: the label is part of the schema's hash, which the node advertises over NowTP and UDP, so a gateway's UI reads the new name. Art-Net's short name and Home Assistant's device name are the name too. `dev.name()` reads it, `dev.nameSetting()` the setting. Its `ui.nodeName` hint has TesserUI read the root's label again after writing it (the hash already new when the setter returns) and leave it out of apply to all (TesserUI §6.6), which would otherwise give every node one name and one hostname.
 - **Hostname:** `/sys/network/hostname` when set; else the name the user gave, made a hostname (lowercased, Latin letters' accents dropped, other characters as single hyphens, at most 32: "Lampe d'entrée" → `lampe-d-entree`); else `dev.hostname("helio")`, the application's; else the label made one (at most 26), plus the last two MAC bytes (`heliostat-a67c`), so devices of one firmware differ until named. It is the DHCP hostname, the mDNS name, the NowTP and UDP discovery name (their nodes' names under a gateway's `/peers`; a new one from the next restart), the Bluetooth name and the files' download names. A name with neither letters nor digits ("★") leaves the hostname to the next rule. Two devices given the same name get the same hostname: give one a hostname of its own.
 - **Version:** `dev.version("1.4.0")`, else the ESP-IDF app description's version. Shown in `/sys/firmware/version`, advertised over mDNS.
 
@@ -164,7 +164,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 ### 5.1 System
 
 ```
-/sys/name *(p)      string ≤ 32, Admin, ui.placeholder the label, no control characters: the device's name (§4.4); empty, the label
+/sys/name *(p)      string ≤ 32, Admin, ui.placeholder the label, ui.nodeName, no control characters: the device's name (§4.4); empty, the label
 /sys/status
   state        enum: booting, provisioning, connecting, online, updating, error
   uptime       integer, s, watched
@@ -752,6 +752,7 @@ Storage holds only what differs from the defaults (§6.2), so a changed default 
 The UI is TesserUI's generic renderer, self-hosted by the device (TesserUI §9.4): `/` and `/ui.js`, about 41 KB of flash. Nothing is TesserKIT-specific in the bundle:
 
 - **Menu:** `/sys` has `ui.page`, so TesserUI's menu (TesserUI §6.3) shows it as one entry with a sub-entry, and a page, per service. Each service names its icon (`ui.icon`): Status `info`, Network `wifi`, Time `clock`, Firmware `download`, Backup `refresh`, Timers `play`, Users `lock`, MQTT `link`, Art-Net `bulb`, Log `menu`, Battery `battery`, Sleep `moon`, UDP `bolt`, Nodes `target`.
+- **This node's own:** `ui.perNode` marks what TesserUI's apply to all (§6.6 there) leaves out: the hostname, the access point's name, the static addresses (Ethernet's, and each saved network's), MQTT's client ID and topic prefix (a broker drops a client whose ID another takes). `/sys/name` has it through `ui.nodeName`. Art-Net's universe and mappings don't: a show's nodes may share them.
 - **Services' pages** are their trees with hints: labels, units, `confirm` on destructive actions, `style danger`, `advanced` on rarely used settings, `form` where several fields must change together (the access point), `visibleWhen` for conditional fields (static IP), `chart` on heap and RSSI.
 - **The application's pages** are its tree, plus TesserUI views (§8 there) for dashboards and custom elements (§9.8 there) for what generic widgets can't draw.
 - **Notifications:** what happens in the background, after any reply, is an event with `ui.toast` (TesserUI §7.8) and `ui.hidden`: a toast, not an events log on the service's page. Network's `joined`, Firmware's `updateFailed` and `newRelease`, `timerFailed`, Mqtt's `lost`, ArtNet's `refused`, the Sequencer's `failed`, Battery's `lowBattery`, and Peers' `lost` and `reached`. TesserUI shows them on any page, as "<parent's label> › <label>: <payload>" ("Wi-Fi › Joined: 192.168.1.50 on Workshop"), so their labels don't repeat their parent's. A moment a reply or a widget already shows isn't one: a failed upload, a manual release check, a pairing (its state is on the page), a restore. Clients only hear events while subscribed, so what a device does at boot (a rollback, a crash) stays a value (`resetReason`, `coredumpPresent`).
@@ -992,6 +993,7 @@ Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presentin
 | The events subscription over plain HTTP, streamed (TesserUI 2bfebb6, 2026-10-12), for the launcher on HTTPS | §8 |
 | File widgets over serial and Bluetooth (and a serial port through the bridge), with TesserAPI's `upload` and `download` envelopes; HTTP wherever there is one (TesserUI 4e54d75, 2026-10-13) | §5.4, §5.5, §5.12 from the launcher with no network |
 | Files below a remote node in WebSocket envelopes, so a relay never holds the gateway's HTTP task (TesserUI d8934b6, 2026-10-13) | §5.4 fleet updates |
+| `ui.nodeName` (the root's label read again after a rename) and `ui.perNode` (left out of apply to all); a peer's tab label read again with each advertised hash (TesserUI 42f58bd, 2026-10-21) | §4.4 |
 
 ## 15. Roadmap
 

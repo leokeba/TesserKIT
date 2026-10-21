@@ -53,10 +53,11 @@ tesser::ValueNode& ipField(tesser::Object& o, const char* name, const char* labe
     return o.value(name, field).validate(check).label(label).ui("visibleWhen", "enabled=true");
 }
 
-// A static address's settings, collapsed: DHCP unless enabled. Its values'
-// nodes go to `nodes` when given.
+// A static address's settings, collapsed: DHCP unless enabled; this node's
+// own, which TesserUI's apply to all leaves out. Its values' nodes go to
+// `nodes` when given.
 tesser::Object& describeStatic(tesser::Object& parent, StaticIp& ip, std::vector<tesser::Node*>* nodes = nullptr) {
-    auto& s = parent.object("static").label("Static IP").ui("collapsed");
+    auto& s = parent.object("static").label("Static IP").ui("collapsed").ui("perNode");
     tesser::Node* n[] = {
         &s.value("enabled", ip.enabled).label("Use a static address"),
         &ipField(s, "ip", "Address", ip.ip, checkAddress),
@@ -294,6 +295,7 @@ void Network::describe(tesser::Object& o) {
         })
         .persist()
         .ui("placeholder", "from the name")
+        .ui("perNode")
         .ui("advanced");
 
     // First: preferred while it has an address.
@@ -373,7 +375,12 @@ void Network::describe(tesser::Object& o) {
         .persist()
         .ui("labels", "Always,When offline,Never");
     apNodes_.clear();
-    apNodes_.push_back(&ap.value("ssid", apSsid_).validate(limits::atMost<32>).persist().label("Name").ui("placeholder", "the hostname"));
+    apNodes_.push_back(&ap.value("ssid", apSsid_)
+                            .validate(limits::atMost<32>)
+                            .persist()
+                            .label("Name")
+                            .ui("placeholder", "the hostname")
+                            .ui("perNode"));
     apNodes_.push_back(&ap.value("password", apPassword_)
                            .validate([](const std::string& v) {
                                return v.empty() || (v.size() >= 8 && v.size() <= 63)

@@ -41,6 +41,8 @@ void System::describe(tesser::Object& o) {
     resetReason_ = info.resetReason;
 
     // The device's name (docs/DESIGN.md section 4.4): empty, the label.
+    // TesserUI's nodeName: it reads the root's label again after a write,
+    // and apply to all leaves it out.
     o.value("name", [&dev] { return dev.nameSetting(); }, [&dev](const std::string& n) { dev.name(n); })
         .validate([](const std::string& n) {
             for (char c : n) {
@@ -51,7 +53,8 @@ void System::describe(tesser::Object& o) {
         .persist()
         .writeAccess(Access::Admin)
         .doc("Shown by the interface and in its tabs; the hostname follows it")
-        .ui("placeholder", dev.label());
+        .ui("placeholder", dev.label())
+        .ui("nodeName");
 
     auto& s = o.object("status").label("Status").ui("icon", "info");
     dev.stateNode(&s.value("state", dev.stateVar(),

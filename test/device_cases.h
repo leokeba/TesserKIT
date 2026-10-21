@@ -144,6 +144,7 @@ TEST(device_name) {
     CHECK_EQ(r.value("/sys/name"), "\"\"");
     CHECK_EQ(r.dev.name(), "Test Device");
     CHECK_EQ(at(r.schema("/sys/name").body, "ui/placeholder"), "\"Test Device\"");
+    CHECK_EQ(at(r.schema("/sys/name").body, "ui/nodeName"), "true");
     CHECK_EQ(r.dev.hostname(), "helio");
     uint32_t hash = r.dev.api().schemaHash();
     uint32_t gen = r.dev.hostnameGeneration();

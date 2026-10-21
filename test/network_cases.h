@@ -471,6 +471,7 @@ TEST(network_hostname_follows_the_name) {
     CHECK(r.dev.begin());
     r.settle();
     CHECK_EQ(r.value("/sys/network/hostname"), "\"\"");
+    CHECK_EQ(at(r.schema("/sys/network/hostname").body, "ui/perNode"), "true");  // not applied to all
     CHECK_EQ(r.fake.mdns.host, "test-device-a67c");
     CHECK_EQ(r.set("/sys/name", "\"Stage left\"").status, Status::Ok);
     r.settle();

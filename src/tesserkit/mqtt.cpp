@@ -153,12 +153,14 @@ void Mqtt::describe(tesser::Object& o) {
                              .persist()
                              .label("Client ID")
                              .ui("placeholder", "the hostname")
+                             .ui("perNode")
                              .ui("advanced"));
     settings_.push_back(&o.value("prefix", prefix_)
                              .validate(topicPart)
                              .persist()
                              .label("Topic prefix")
                              .ui("placeholder", "tesser/<hostname>")
+                             .ui("perNode")
                              .ui("advanced"));
     publishNode_ = &o.list("publish", publish_,
                            [this](tesser::Object& e, MqttPublish& p) {
