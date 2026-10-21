@@ -72,6 +72,14 @@ namespace {
 // constructor runs: services are often globals, and so is their Device,
 // whose own members a constructor in another translation unit can't use.
 Service* g_registered = nullptr;
+
+// TesserKIT's favicon, every device's unless the application names its own:
+// TesserUI's tesseract (its colour, its strokes) on a chip, a pin on each
+// side. Inlined in the page TesserUI generates, as TesserUI's own is.
+[[maybe_unused]] const char kIcon[] =
+    "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+    "<path d='M4 4h24v24H4zm7 7v10h10V11zL4 4m24 0-7 7m0 10 7 7M4 28l7-7M16 0v4m0 24v4M0 16h4m24 0h4' "
+    "fill='none' stroke='%232f5bd3' stroke-width='4'/></svg>";
 }  // namespace
 
 Service::Service(Device& dev, const char* name) : dev_(dev), name_(name) {
@@ -98,6 +106,11 @@ Device::Device(const char* label)
       http_(api_)
 #endif
 {
+#if defined(ESP_PLATFORM)
+    // Only a pointer kept: nothing another translation unit owns is touched,
+    // and an application's dev.web().icon() still replaces it.
+    web_.icon(kIcon);
+#endif
 }
 
 Device::~Device() { delete erased_; }
