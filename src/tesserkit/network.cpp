@@ -165,6 +165,9 @@ std::string formatIpv4(uint32_t ip) {
 }
 
 void describe(tesser::Object& o, WifiNetwork& n) {
+    // A form: a network is saved whole, its password with it, not field by
+    // field as it is typed.
+    o.ui("form");
     o.value("ssid", n.ssid).label("Network");
     o.value("password", n.password).secret();
     o.value("bssid", n.bssid)
@@ -343,7 +346,8 @@ void Network::describe(tesser::Object& o) {
                          .readAccess(Access::User)
                          .writeAccess(Access::Admin)
                          .persist()
-                         .label("Saved networks");
+                         .label("Saved networks")
+                         .ui("suggest", "scan");
     w.action("scan", [this](tesser::Call& call) {
          tesser::Pending p = call.defer();
          if (!p) return;

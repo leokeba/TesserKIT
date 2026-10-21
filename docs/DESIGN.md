@@ -202,7 +202,9 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
     powerSave *(p)     enum none, min, max (default min, ESP-IDF's), Admin, advanced
     networks *(p)      keyed list (key "ssid"), ≤ 5, Admin, readAccess User:
                          ssid ≤ 32, password (secret) ≤ 64, bssid (advanced: this access point only; empty: any),
-                         static/ { enabled, ip, mask, gateway, dns } ui.collapsed
+                         static/ { enabled, ip, mask, gateway, dns } ui.collapsed;
+                         elements are ui.form (saved whole, with Apply); ui.suggest "scan" (a scan's networks
+                         are offered as new elements)
     scan               deferred action, Admin → [{ssid, rssi, channel, secure, accessPoints: [{bssid, rssi, channel}]}]
     status/            state (in words), connected, ssid, ip, rssi (watched, dBm), channel, bssid
     joined             event, ok toast: "192.168.1.50 on Workshop", the address clients on the AP must follow
