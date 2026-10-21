@@ -121,6 +121,8 @@ Several defaults are "open until someone sets it up", and the gaps add up across
 - **Explained and fixed (2026-10-16): a relayed firmware lost the peer's upload at its last chunk** ("no upload in progress at this path", V3 gateway, R1 peer). NowTP declared the gateway lost after 7 s without discovery announcements, although its data kept arriving, and TesserAPI then dropped the peer's file session. NowTP 7586949 counts any accepted message or ack as heard; TesserAPI 65ee017 keeps a peer's calls and transfers through a link loss within 5 s of hearing it. Reproduced and checked by tesserapi-72 by silencing the gateway's announcements mid-upload.
 - **The Gledopto as gateway with Bluetooth on runs out of memory** (2026-10-16, V3 browning out so the Gledopto took its role): lowest heap 92 bytes; the settings download, serial file and firmware transfers refused `low_memory`; HTTP stopped answering for a while. Built without Bluetooth it had 106 KB free (58 KB at the lowest) and passed every suite. Evidence for Phase 2's classic gateway profile.
 
+- **A board's saved Wi-Fi network was lost once** (Gledopto B, 2026-10-21, unexplained): after a day of tests (e2e_device and e2e_files, route checks, reflashes that kept its settings), B came up at its factory defaults' network (the example's `secrets.h`), as if it read NVS's copy from before its settings moved to the filesystem. The same reflash on the other board kept its settings. Watch for it; the log (warnings only) said nothing at boot.
+
 ## Never tried on hardware
 
 From AGENTS.md and this round:
@@ -230,7 +232,7 @@ Goal: defaults stay open; one switch (per device, or per fleet) turns on a coher
 
 **Status (2026-10-21):**
 - Done: per-Api remote-node hooks (TesserAPI 82c45b6; TesserKIT's Peers on them in a3821f5); remembered file probe below remote nodes (6640d46); gateways send `"v":2` with forwarded options (fca7629, tested end to end in 0440024).
-- In progress: the `RemoteNode`/`DatagramEndpoint` split, with tesserapi-c0.
+- Done: the `RemoteNode`/`DatagramEndpoint` split (TesserAPI ecbe068..4d19b82, by tesserapi-c0; pinned in b9ce456, +8.8 KB of flash). Checked on two Gledoptos (2026-10-21, classic-gledopto, LE SAMPLE's Wi-Fi, their Ethernet cabled to each other): e2e_device 37/37, e2e_files 39/39, e2e_transfers 17/17 (firmware over serial in 207 s, through the gateway in 72 s), e2e_udp 24/24; lowest heap 47 KB on the gateway, 57 KB on the peer.
 
 1. **TesserAPI's structure (API):** split `RemoteNode` (routing, upstream cache, streamer, relay); per-instance hooks instead of process-wide statics (TesserKIT's Peers follows); cache remote schemas so requests below a remote node skip the probe.
 2. **Protocol (API, UI):** gateways send `"v":2` with forwarded options; TesserUI does once an option needs it.

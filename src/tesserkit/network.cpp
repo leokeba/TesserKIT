@@ -737,7 +737,7 @@ void Network::ethDown(uint32_t nowMs, uint32_t waitMs) {
 
 void Network::event(const Event& e) {
     if (!wifi_) return;
-    uint32_t now = static_cast<uint32_t>(dev_.core().uptimeMs());
+    uint32_t now = dev_.loopMs();  // the tick()'s time, which these are compared with
     switch (e.type) {
         case Event::Type::EthLink:
             if (eth_) ethLink(e.value != 0, now);

@@ -244,6 +244,12 @@ public:
     void address(uint32_t ip, const uint8_t* mac);
     // Stations joined to the access point (Network).
     void apClients(int32_t n) { apClients_ = n; }
+    // The time of the device task's current round: what every tick() is
+    // given. A service's event() takes its time from here too, never from
+    // the clock: events are handled after the round read it, so a time read
+    // then is ahead of the tick() that follows, and `nowMs - then` wraps
+    // (seen on a gateway: every Wi-Fi attempt timed out as it associated).
+    uint32_t loopMs() const { return lastNowMs_; }
     // The default route moved to another interface (Network): counted, so a
     // service that couldn't reach the internet tries again (Time's SNTP).
     void routeChanged() { routeGeneration_++; }

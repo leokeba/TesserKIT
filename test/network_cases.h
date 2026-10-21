@@ -1367,4 +1367,35 @@ TEST(network_route_follows_a_lost_unplug) {
     CHECK(r.fake.ipStack.defaultIf == NetIf::Station);
 }
 
+// Events are handled after the device's round read the clock, and a busy
+// task (a gateway's) handles them a few milliseconds later: a time Network
+// stamped from the clock then was ahead of the next tick's, `now - then`
+// wrapped, and every attempt timed out "no address (DHCP)" as it
+// associated (Gledopto ce48 as a peer, 2026-10-21).
+TEST(network_event_times_are_the_rounds) {
+    struct Slow : tesserkit::Service {
+        fake::Platform& fake;
+        Slow(tesserkit::Device& d, fake::Platform& f) : Service(d, "slow"), fake(f) {}
+        void describe(tesser::Object&) override {}
+
+    protected:
+        void event(const tesserkit::Event&) override { fake.core.now += 3; }  // each event takes 3 ms
+    };
+    rig::Rig r;
+    Slow slow{r.dev, r.fake};  // before Network: its events come later in the round
+    tesserkit::Network net{r.dev};
+    fake::Air a;
+    a.ssid = "Home";
+    a.password = "password1";
+    r.fake.wifi.air.push_back(a);
+    net.defaultNetwork("Home", "password1");
+    r.fake.wifi.dhcpSilent = true;  // associated, the address late
+    CHECK(r.dev.begin());
+    r.run(3000);
+    CHECK_EQ(r.fake.wifi.connects, 1);  // still waiting for its address, not failed and tried again
+    r.fake.wifi.giveAddress();
+    r.run(1000);
+    CHECK(net.connected());
+}
+
 }  // namespace network_cases
