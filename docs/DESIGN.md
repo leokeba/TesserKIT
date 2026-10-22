@@ -479,7 +479,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
   pairing/              secured (paired), state (text), pair, accept, forget (confirm, danger)
   nodes                 read-only keyed list (key "mac") of {name, mac, rssi, channel, tesser, authenticated}
   time/                 label "Network time"
-    reference *(p)      "auto" (default), "this", or a node's MAC (either case)
+    reference *(p)      "auto" (default), "this", or a node's MAC (either case), ui.perNode (one reference, not every node)
     interval *(p)       1–600 s (default 5): between synchronization rounds once synchronized, advanced
     synced, isReference, source (the reference's MAC)
     offset (µs), roundTrip (µs), drift (ppm), rounds, age (ms)   advanced

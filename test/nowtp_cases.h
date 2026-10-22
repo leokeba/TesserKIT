@@ -5,6 +5,7 @@
 
 namespace nowtp_cases {
 
+using rig::at;
 using rig::Status;
 
 struct NowTpRig : rig::Rig {
@@ -193,6 +194,8 @@ TEST(nowtp_network_time_settings_reach_the_radio) {
     CHECK_EQ(r.fake.nowtp.config.timeIntervalMs, 2000u);
     CHECK_EQ(r.value("/sys/nowtp/time/reference"), "\"this\"");
     CHECK_EQ(r.value("/sys/nowtp/time/interval"), "2");
+    // TesserUI's apply to all leaves it out: one reference, not every node.
+    CHECK_EQ(at(r.schema("/sys/nowtp/time/reference").body, "ui/perNode"), "true");
 }
 
 TEST(nowtp_network_time_reference_changes_at_runtime) {

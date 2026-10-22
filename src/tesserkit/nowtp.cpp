@@ -166,7 +166,9 @@ void NowTp::describe(tesser::Object& o) {
                               .persist()
                               .label("Reference")
                               .doc("auto: the nodes elect one among themselves; this: this node's clock; or the "
-                                   "MAC of the node to follow");
+                                   "MAC of the node to follow")
+                              // "this" applied to all would make every node the reference.
+                              .ui("perNode");
     timeIntervalNode_ = &t.value("interval", timeInterval_)
                              .range(1, 600)
                              .unit("s")
