@@ -194,6 +194,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 ```
 /sys/network
   hostname *(p)        string ≤ 32, Admin, ui.placeholder "from the name": empty, from the device's name (§4.4)
+  host                 string, read-only, watched, advanced: the hostname in use, the setting or the one made from the name (<host>.local)
   ethernet/            with a board (below)
     enabled *(p)       boolean (default true), Admin: off stops the MAC and the PHY
     status/            state (in words), link, connected, ip, speed (Mbps), mac

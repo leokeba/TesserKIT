@@ -126,7 +126,7 @@ def main():
     check('online', d.value('/sys/status/state') == 'online')
     heap = d.value('/sys/status/heap')
     print(f'  free heap: {heap} B, lowest: {d.value("/sys/status/minHeap")} B')
-    hostname = d.value('/sys/network/hostname')
+    hostname = d.value('/sys/network/host') or d.value('/sys/network/hostname')
     if d.value('/sys/network/mdns'):
         got = wait_for(f'{hostname}.local', lambda: resolve(f'{hostname}.local'), timeout=15, step=2)
         check('mdns', got == eth_ip, got)

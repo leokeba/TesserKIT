@@ -76,7 +76,7 @@ def main():
         sys.exit(__doc__)
     devs = [Device(u) for u in sys.argv[1:]]
     for d in devs:
-        d.name = d.value('/sys/network/hostname')
+        d.name = d.value('/sys/network/host') or d.value('/sys/network/hostname')
         st = d.value('/sys/udp/status')
         check(f'running_{d.name}', st and st['running'], st)
         # Failures before this run (a peer restarted by another test) don't count.

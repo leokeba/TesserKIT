@@ -473,6 +473,8 @@ TEST(network_hostname_follows_the_name) {
     CHECK_EQ(r.value("/sys/network/hostname"), "\"\"");
     CHECK_EQ(at(r.schema("/sys/network/hostname").body, "ui/perNode"), "true");  // not applied to all
     CHECK_EQ(r.fake.mdns.host, "test-device-a67c");
+    CHECK_EQ(r.value("/sys/network/host"), "\"test-device-a67c\"");  // the one in use
+    CHECK_EQ(r.set("/sys/network/host", "\"x\"").status, Status::ReadOnly);
     CHECK_EQ(r.set("/sys/name", "\"Stage left\"").status, Status::Ok);
     r.settle();
     CHECK_EQ(r.fake.wifi.hostnameSet, "stage-left");
@@ -481,6 +483,7 @@ TEST(network_hostname_follows_the_name) {
     CHECK_EQ(r.set("/sys/network/hostname", "\"rig-7\"").status, Status::Ok);
     r.settle();
     CHECK_EQ(r.fake.mdns.host, "rig-7");
+    CHECK_EQ(r.value("/sys/network/host"), "\"rig-7\"");
     CHECK_EQ(r.set("/sys/name", "\"Stage right\"").status, Status::Ok);
     r.settle();
     CHECK_EQ(r.fake.mdns.host, "rig-7");

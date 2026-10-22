@@ -181,7 +181,7 @@ def test_log(dev):
 # ---- Home Assistant discovery ----------------------------------------------
 
 def test_discovery(dev, host, port):
-    hostname = dev.value('/sys/network/hostname')
+    hostname = dev.value('/sys/network/host') or dev.value('/sys/network/hostname')
     before = dev.value('/sys/mqtt') or {}
     b = Broker(host, port)
     b.subscribe('homeassistant/#')

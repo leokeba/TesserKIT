@@ -297,6 +297,13 @@ void Network::describe(tesser::Object& o) {
         .ui("placeholder", "from the name")
         .ui("perNode")
         .ui("advanced");
+    // What the network knows the device as (<host>.local): the setting, or the
+    // one made from the name.
+    o.value("host", [&dev] { return dev.hostname(); })
+        .readOnly()
+        .label("Hostname in use")
+        .watch()
+        .ui("advanced");
 
     // First: preferred while it has an address.
     eth_ = ethWanted_ ? dev.platform().ethernet : nullptr;

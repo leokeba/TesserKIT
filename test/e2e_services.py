@@ -179,7 +179,7 @@ class Broker:
 
 
 def test_mqtt(dev, host, port):
-    hostname = dev.value('/sys/network/hostname')
+    hostname = dev.value('/sys/network/host') or dev.value('/sys/network/hostname')
     pre = f'tesser/{hostname}'
     st = wait_for(lambda: (lambda v: v if v and v['connected'] else None)(dev.value('/sys/mqtt/status')), 15)
     check('mqtt_connected', st and st['connected'], st)
