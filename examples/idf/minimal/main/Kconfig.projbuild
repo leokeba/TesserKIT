@@ -1,0 +1,23 @@
+menu "TesserKIT minimal example"
+
+# The options this example adds to its services, in Kconfig like the full
+# example's (DESIGN.md 11, Profiles); idf.py's -DWITH_<X>=1 sets them too
+# (../CMakeLists.txt). An application chooses in its own code.
+
+config MINIMAL_DOWNLOADS
+    bool "Updates from a URL (firmware.downloads(): TLS and an HTTP client, about 130 KB)"
+    default n
+
+config MINIMAL_GITHUB
+    bool "Updates from GitHub releases (firmware.github(), with downloads)"
+    default n
+
+config MINIMAL_ARTNET
+    bool "ArtNet: lighting consoles"
+    default n
+
+config MINIMAL_MQTT
+    bool "Mqtt: a broker bridge"
+    default n
+
+endmenu

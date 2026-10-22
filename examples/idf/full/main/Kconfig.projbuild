@@ -1,0 +1,135 @@
+menu "TesserKIT full example"
+
+# What this firmware runs, chosen here rather than in main.cpp, so a profile
+# (profiles/<name>.defaults, -DPROFILE=<name>) is a configuration file
+# (DESIGN.md 11, Profiles). An application chooses in its own code: it
+# instantiates the services it wants.
+
+config FULL_PROFILE
+    string "Profile"
+    default "full"
+    help
+        Named in the release asset this build updates from:
+        tesserkit-<profile>[-<board>]-<target>.bin. Set by the profile's
+        defaults file.
+
+config FULL_LED_GPIO
+    int "LED's GPIO"
+    default 2
+    help
+        The LED the example dims (GPIO 2: the blue LED of most ESP32 devkits).
+
+menu "Services"
+
+config FULL_TIMERS
+    bool "Timers: daily schedules"
+    default y
+
+config FULL_AUTH
+    bool "Auth: accounts and sign-in"
+    default y
+
+config FULL_MQTT
+    bool "Mqtt: a broker bridge"
+    default y
+
+config FULL_ARTNET
+    bool "ArtNet: lighting consoles"
+    default y
+
+config FULL_BLUETOOTH
+    bool "Bluetooth: the launcher from a phone"
+    depends on BT_ENABLED && BT_NIMBLE_ENABLED
+    default y
+    help
+        Needs NimBLE (CONFIG_BT_ENABLED, CONFIG_BT_NIMBLE_ENABLED): off with
+        Bluetooth, as in the classic profile and on the ESP32-C3.
+
+config FULL_NOWTP
+    bool "NowTp: the nodes nearby over ESP-NOW"
+    default y
+
+config FULL_UDP
+    bool "UdpApi: the nodes on the LAN over UDP"
+    default y
+
+config FULL_PEERS
+    bool "Peers: how the nodes are reached"
+    depends on FULL_NOWTP || FULL_UDP
+    default y
+
+config FULL_SEQUENCER
+    bool "Sequencer: steps played in turn"
+    default y
+
+config FULL_LOG
+    bool "Log: the firmware's log as events and a file"
+    default y
+
+config FULL_SLEEP
+    bool "Sleep: deep sleep, woken by a timer or the BOOT button"
+    default y
+
+config FULL_BATTERY_GPIO
+    int "Battery: its ADC1 pin (-1: none)"
+    default -1
+    help
+        The Battery service on this ADC1 pin, through a divider of two equal
+        resistors.
+
+endmenu
+
+choice FULL_ETHERNET
+    prompt "Ethernet"
+    default FULL_ETHERNET_NONE
+    help
+        The board's Ethernet (tesserkit::boards), preferred to the station
+        while it has an address. A build with Ethernet updates from its own
+        release asset, so it never installs an image without it.
+
+config FULL_ETHERNET_NONE
+    bool "None"
+config FULL_ETHERNET_GLEDOPTO
+    bool "Gledopto (LAN8720)"
+config FULL_ETHERNET_WT32_ETH01
+    bool "WT32-ETH01"
+config FULL_ETHERNET_OLIMEX_ESP32_POE
+    bool "Olimex ESP32-POE"
+config FULL_ETHERNET_ESP32_ETHERNET_KIT
+    bool "ESP32-Ethernet-Kit"
+config FULL_ETHERNET_W5500
+    bool "A W5500 module on SPI"
+endchoice
+
+# The board's name in the release asset (tesserkit-classic-gledopto-esp32.bin).
+config FULL_ETHERNET_BOARD
+    string
+    default "gledopto" if FULL_ETHERNET_GLEDOPTO
+    default "wt32Eth01" if FULL_ETHERNET_WT32_ETH01
+    default "olimexEsp32Poe" if FULL_ETHERNET_OLIMEX_ESP32_POE
+    default "esp32EthernetKit" if FULL_ETHERNET_ESP32_ETHERNET_KIT
+    default "w5500" if FULL_ETHERNET_W5500
+    default ""
+
+if FULL_ETHERNET_W5500
+config FULL_W5500_SCK
+    int "W5500 SCK"
+    default 7
+config FULL_W5500_MISO
+    int "W5500 MISO"
+    default 8
+config FULL_W5500_MOSI
+    int "W5500 MOSI"
+    default 9
+config FULL_W5500_CS
+    int "W5500 CS"
+    default 44
+config FULL_W5500_IRQ
+    int "W5500 INT (-1: polled)"
+    default 43
+config FULL_W5500_RESET
+    int "W5500 RST (-1: none)"
+    default -1
+endif
+
+endmenu

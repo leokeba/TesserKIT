@@ -9,6 +9,7 @@
 // WIFI_PASSWORD (the factory default network), WIFI_TX_POWER (dBm) for
 // boards with a weak supply, MQTT_URI (a broker, with -DWITH_MQTT=1), and
 // GITHUB_REPO and GITHUB_ASSET (another release feed, with -DWITH_GITHUB=1).
+// Its options are in Kconfig (main/Kconfig.projbuild, or -DWITH_<X>=1).
 #include "TesserKIT.h"
 
 #if __has_include("secrets.h")
@@ -16,6 +17,7 @@
 #endif
 
 #include "driver/ledc.h"
+#include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -122,10 +124,10 @@ tesserkit::Auth auth(dev);  // open until an admin account exists
 // Admin access (physical access). Logs stay at warnings, so that few land in
 // the middle of a reply (sdkconfig.defaults).
 tesser::UartTransport serialApi(dev.api(), UART_NUM_0);
-#if WITH_ARTNET
+#if CONFIG_MINIMAL_ARTNET
 tesserkit::ArtNet artnet(dev);
 #endif
-#if WITH_MQTT
+#if CONFIG_MINIMAL_MQTT
 tesserkit::Mqtt mqtt(dev);
 #endif
 
@@ -144,12 +146,12 @@ extern "C" void app_main() {
     net.txPower(WIFI_TX_POWER);
 #endif
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");
-#if WITH_GITHUB
+#if CONFIG_MINIMAL_GITHUB
     firmware.github(GITHUB_REPO, GITHUB_ASSET);  // and from a URL, as downloads()
-#elif WITH_DOWNLOADS
+#elif CONFIG_MINIMAL_DOWNLOADS
     firmware.downloads();  // updates from a URL: TLS and an HTTP client, about 130 KB
 #endif
-#if WITH_ARTNET
+#if CONFIG_MINIMAL_ARTNET
     // Universe 0: channel 1 is the brightness, channel 2 above half turns it on.
     tesserkit::ArtNetMapping brightness;
     brightness.path = "/led/brightness";
@@ -161,7 +163,7 @@ extern "C" void app_main() {
     on.threshold = 128;
     artnet.map(brightness).map(on);
 #endif
-#if WITH_MQTT
+#if CONFIG_MINIMAL_MQTT
     mqtt.publish("/led", 0).publish("/sys/status", 10000);
 #if defined(MQTT_URI)
     mqtt.broker(MQTT_URI).enable(true);

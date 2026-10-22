@@ -15,8 +15,27 @@ foreach(dep TESSERAPI TESSERUI)
     endif()
 endforeach()
 include("${TESSERKIT_PATH}/cmake/deps.cmake")
+include("${TESSERKIT_PATH}/cmake/example.cmake")
 tesserkit_check_sibling(TesserAPI "${TESSERAPI_PATH}")
 tesserkit_check_sibling(TesserUI "${TESSERUI_PATH}")
 set(EXTRA_COMPONENT_DIRS "${TESSERKIT_PATH}" "${TESSERAPI_PATH}" "${TESSERUI_PATH}")
+# Options (main/Kconfig.projbuild), also as -D: -DWITH_DOWNLOADS=1 adds
+# updates from a URL (firmware.downloads()), -DWITH_GITHUB=1 those and updates
+# from GitHub releases (firmware.github()), -DWITH_ARTNET=1 the ArtNet service,
+# -DWITH_MQTT=1 the Mqtt bridge. Written as a defaults file
+# (cmake/example.cmake): build each variant in its own build directory.
+set(TESSERKIT_MINIMAL_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
+set(TESSERKIT_MINIMAL_ARGS "")
+foreach(option DOWNLOADS GITHUB ARTNET MQTT)
+    if(DEFINED WITH_${option})
+        if(WITH_${option})
+            list(APPEND TESSERKIT_MINIMAL_ARGS "CONFIG_MINIMAL_${option}=y")
+        else()
+            list(APPEND TESSERKIT_MINIMAL_ARGS "CONFIG_MINIMAL_${option}=n")
+        endif()
+    endif()
+endforeach()
+tesserkit_example_defaults(TESSERKIT_MINIMAL_DEFAULTS ${TESSERKIT_MINIMAL_ARGS})
+set(SDKCONFIG_DEFAULTS "${TESSERKIT_MINIMAL_DEFAULTS}")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(tesserkit_minimal)
