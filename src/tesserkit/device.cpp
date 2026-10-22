@@ -8,6 +8,10 @@
 
 #include <utility>
 
+#if defined(ESP_PLATFORM)
+#include "sdkconfig.h"
+#endif
+
 namespace tesserkit {
 
 const char* toString(State s) {
@@ -58,11 +62,22 @@ bool resolves(const tesser::Object& root, std::string_view path) {
     return opaque || (node && node != &root);
 }
 
+namespace {
+// Where TLS's buffers go: PSRAM when mbedTLS allocates there
+// (CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC, the full example's psram profile), else
+// internal RAM, as malloc gives them (DESIGN.md section 11).
+#if defined(CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC)
+constexpr tesser::Pool kTlsPool = tesser::Pool::Large;
+#else
+constexpr tesser::Pool kTlsPool = tesser::Pool::Internal;
+#endif
+}  // namespace
+
 bool reserveTls(std::string_view uri, tesser::Reservation& held) {
     held.release();
     bool tls = uri.substr(0, 8) == "https://" || uri.substr(0, 8) == "mqtts://" || uri.substr(0, 6) == "wss://";
     if (!tls) return true;
-    held = tesser::reserveBytes(kTlsBytes);
+    held = tesser::reserveBytes(kTlsBytes, false, kTlsPool);
     return static_cast<bool>(held);
 }
 

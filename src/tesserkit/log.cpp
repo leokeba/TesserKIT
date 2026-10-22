@@ -81,7 +81,7 @@ void Log::describe(tesser::Object& o) {
         .download([this](tesser::FileRequest& r) -> std::unique_ptr<tesser::FileSource> {
             // A copy taken under the API lock: the ring goes on filling
             // while the download is sent. Refused when the heap can't hold it.
-            tesser::Reservation held = tesser::reserveBytes(kept_ + 1, true);
+            tesser::Reservation held = tesser::reserveBytes(kept_ + 1, true, tesser::mallocPool(kept_ + 1));
             char* copy = held ? static_cast<char*>(malloc(kept_ + 1)) : nullptr;
             if (!copy) {
                 r.refuse(Status::Busy, "not enough free memory for the log now");

@@ -89,8 +89,9 @@ bool Device::startServer() {
     config.stack_size = 6144;  // measured: 3 KB used serving the interface, uploads and schemas
     config.lru_purge_enable = true;
     // What is used, never set by hand: the API (4, CORS 1, WebSocket 1), the
-    // page and the bundle (2), and the application's (assets included).
-    config.max_uri_handlers = static_cast<uint16_t>(4 + (cors_ ? 1 : 0) + 1 + (ui_ ? 2 : 0) + extraHandlers_);
+    // page, the bundle and its widgets' chunks (3), and the application's
+    // (assets included).
+    config.max_uri_handlers = static_cast<uint16_t>(4 + (cors_ ? 1 : 0) + 1 + (ui_ ? 3 : 0) + extraHandlers_);
     if (cors_) http_.enableCors(cors_);
     http_.enableWebSocket("/ws");
     esp_err_t err = http_.begin(config, "/api");

@@ -46,7 +46,7 @@ Check Backup::state(std::string& out, tesser::Reservation& held) {
     // set to the block it took.
     uint32_t last = lastStateBytes_.load();
     size_t estimate = last ? last : kFirstEstimate;
-    held = tesser::reserveBytes(2 * estimate, true);
+    held = tesser::reserveBytes(2 * estimate, true, tesser::mallocPool(2 * estimate));
     if (!held) return Check::fail(Status::Busy, "not enough free memory for the settings now");
     out = dev_.api().persistedState();
     lastStateBytes_ = static_cast<uint32_t>(out.size());
@@ -66,8 +66,9 @@ Check Backup::restore(std::string_view text, std::vector<std::string>& skipped, 
     // Undoable: the settings it replaces are stored first.
     if (Files* files = dev_.files()) files->storeBackup(*this, Files::kBeforeRestore, nullptr);
     // The parsed document: ArduinoJson's pools, about as large as the text
-    // or less, taken twice for safety, in pieces.
-    tesser::Reservation doc = tesser::reserveBytes(2 * text.size(), false);
+    // or less, taken twice for safety, in pieces. TesserAPI parses a backup
+    // in PSRAM where there is some (jsonAllocator(Pool::Large)).
+    tesser::Reservation doc = tesser::reserveBytes(2 * text.size(), false, tesser::Pool::Large);
     if (!doc) return Check::fail(Status::Busy, "not enough free memory to restore the settings now");
     Status s = dev_.api().restore(text, &skipped);
     if (s == Status::BadRequest) return Check::fail(s, "not a settings file");

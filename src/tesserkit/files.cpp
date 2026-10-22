@@ -248,7 +248,8 @@ Check Files::read(std::string_view rel, std::string& out, size_t max, tesser::Re
     if (static_cast<uint64_t>(st.st_size) > max) return Check::fail(Status::TooLarge, "the file is too large");
     // One block, from TesserAPI's byte budget: a short heap refuses rather
     // than aborts.
-    tesser::Reservation r = tesser::reserveBytes(static_cast<size_t>(st.st_size) + 1, true);
+    size_t bytes = static_cast<size_t>(st.st_size) + 1;
+    tesser::Reservation r = tesser::reserveBytes(bytes, true, tesser::mallocPool(bytes));
     if (!r) return Check::fail(Status::Busy, "not enough free memory to read the file now");
     FILE* f = fopen(p.c_str(), "rb");
     if (!f) return Check::fail(Status::Internal, "the file couldn't be read");

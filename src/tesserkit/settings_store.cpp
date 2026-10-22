@@ -58,7 +58,7 @@ bool SettingsStore::load(std::string_view key, std::string& out) {
 bool SettingsStore::reserve(tesser::Reservation& held) {
     if (!writeBytes_) return true;
     // One block: the stdio buffer is the largest piece.
-    held = tesser::reserveBytes(writeBytes_, true);
+    held = tesser::reserveBytes(writeBytes_, true, tesser::mallocPool(writeBytes_));
     return static_cast<bool>(held);
 }
 
@@ -147,7 +147,8 @@ bool moveSettings(tesser::Storage* from, tesser::Storage& to, const std::vector<
         if (!from || !from->load(key, data)) continue;
         // The write's buffers and the copy read back: a short heap stops the
         // move rather than aborts it.
-        tesser::Reservation held = tesser::reserveBytes(kFileWriteBytes + data.size() + 1, true);
+        size_t bytes = kFileWriteBytes + data.size() + 1;
+        tesser::Reservation held = tesser::reserveBytes(bytes, true, tesser::mallocPool(bytes));
         if (!held) return fail("no memory to move \"" + key + "\"");
         if (!to.save(key, data)) return fail("\"" + key + "\" couldn't be written");
         back.clear();
