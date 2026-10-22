@@ -110,7 +110,7 @@ Several defaults are "open until someone sets it up", and the gaps add up across
 - **`idf_component.yml` doesn't list TesserAPI or TesserUI.** ESP-IDF users add them by hand (the file says so).
 - **Four mechanisms decide which features are built:** instantiation, builder opt-ins (`downloads()`, `github()`, `ethernet()`), Kconfig (mDNS, Home Assistant) and `-D`/sdkconfig detection. DESIGN §1 says "there are no feature flags". Direction: one documented scheme (Kconfig, mirrored as `-D` on Arduino).
 - **The size budgets of DESIGN §11** (60 KB for the core services, 12 KB of RAM at rest, ...) are measured by hand. CI now only checks the room left in each released image's slot.
-- **CI runs host tests and ESP-IDF builds only.** No Arduino build of TesserKIT, no hardware in the loop; the e2e scripts are run by hand. Direction: a nightly self-hosted runner with a devkit running e2e_device and e2e_udp against the pinned commits.
+- **CI has no hardware in the loop;** the e2e scripts (`test/hil.py`) are run by hand. Direction: a nightly self-hosted runner with a devkit running e2e_device and e2e_udp against the pinned commits. (The Arduino examples are built in CI since 2026-10-22.)
 
 ## Found during the board runs, not yet explained
 
@@ -251,6 +251,9 @@ Goal: defaults stay open; one switch (per device, or per fleet) turns on a coher
 - Done: per-Api remote-node hooks (TesserAPI 82c45b6; TesserKIT's Peers on them in a3821f5); remembered file probe below remote nodes (6640d46); gateways send `"v":2` with forwarded options (fca7629, tested end to end in 0440024).
 - Done: the `RemoteNode`/`DatagramEndpoint` split (TesserAPI ecbe068..4d19b82, by tesserapi-c0; pinned in b9ce456, +8.8 KB of flash). Checked on two Gledoptos (2026-10-21, classic-gledopto, LE SAMPLE's Wi-Fi, their Ethernet cabled to each other): e2e_device 37/37, e2e_files 39/39, e2e_transfers 17/17 (firmware over serial in 207 s, through the gateway in 72 s), e2e_udp 24/24; lowest heap 47 KB on the gateway, 57 KB on the peer.
 - Done: applications pinned with `deps.lock` (item 5, decision 1), in tiny-heliostat, ballet-photophonique and fluante-firmware.
+- Done: TesserAPI's structure (item 1: the split, per-Api hooks, and the remote file probe remembered under the peer's advertised hash, 6640d46) and the protocol (item 2).
+- Item 5: the Arduino examples built in CI (2026-10-22).
+- Launched 2026-10-22 (Leo): item 3 to nowtp-5c, item 4 to tesserui-fa.
 
 1. **TesserAPI's structure (API):** split `RemoteNode` (routing, upstream cache, streamer, relay); per-instance hooks instead of process-wide statics (TesserKIT's Peers follows); cache remote schemas so requests below a remote node skip the probe.
 2. **Protocol (API, UI):** gateways send `"v":2` with forwarded options; TesserUI does once an option needs it.
@@ -271,4 +274,4 @@ Goal: defaults stay open; one switch (per device, or per fleet) turns on a coher
    - ~~applications pinned with `deps.lock` (decision 1)~~ done;
    - manifest versions that mean something;
    - siblings listed in `idf_component.yml`;
-   - an Arduino build of TesserKIT in CI.
+   - ~~an Arduino build of TesserKIT in CI~~ done (release.yml's `arduino` job).
