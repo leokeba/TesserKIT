@@ -17,49 +17,22 @@ Line references are from the reviewed commits: TesserKIT c0e8b9f, TesserAPI 5842
 
 ## Security
 
-Several defaults are "open until someone sets it up", and the gaps add up across layers. Leo's policy (2026-10-15): most security features stay **opt-in**, so deployment stays simple on secure or low-stakes networks. The roadmap therefore makes them easy to switch on, rather than on by default; the few changes that cost nothing in deployment are the exception.
+Leo's policy (2026-10-15): most security features stay **opt-in**, so deployment stays simple on secure or low-stakes networks. Since 2026-10-22 the first admin account turns on a coherent secure mode (TesserKIT's DESIGN §7, Roadmap › Phase 3), which closes most of what this section listed: the open access point, UDP nodes at User, never-expiring clockless tokens, the global lockout, the signing key in backups, CSRF and DNS rebinding, WebSocket levels outliving revocation, TokenCheck without the client, and the bridge's and launcher's gaps. What is left:
 
-### TesserKIT defaults
+### Held: the fleet key (Leo, 2026-10-22: memory and performance first)
 
-- **Open access point.** The fallback AP defaults to `fallback` mode with an empty password (`network.h:138-140`). It comes up 15 s after the device goes offline, for example when a router reboots. Direction: a random per-device AP password (printed on serial, shown in the launcher), or AP fallback only while unprovisioned.
-- **Release images are open.** Without `defaultAdmin` every client on every transport is Admin, OTA included. The release images CI publishes, which the launcher flashes onto new boards, are built without `secrets.h`, so they ship open. Direction: require claiming (first admin) on release images.
-- **UDP `peerAccess` defaults to User** (`udp_api.h:76`) on every interface, the AP included. Spoofed datagrams can run User actions such as `/sequencer/play`. Direction: Public when Auth has an admin.
-- **Tokens issued before the clock is set never expire** (`auth.cpp:203-207`). Show networks without SNTP get permanent bearer tokens, which travel in clear over HTTP and UDP. Direction: expire by uptime and boot count.
-- **The Peers fleet password and the token key travel and persist widely.** Peers sends its fleet account password in clear over UDP to sign in (`peers.cpp:370-380`), stores it in every node's NVS and in backups. Backups also carry `/sys/auth/key`, which clones the token signing key. Direction: exclude `/sys/auth/key` from backups (or re-key on restore); a challenge rather than a password over UDP.
-- **The login lockout is global** (`auth.cpp:224-232`): anyone can keep the admin locked out with five bad logins every 30 s. Direction: per client, or exponential per source.
+- **Datagram transports trust source addresses** (TesserAPI `datagram.cpp`, `remote.cpp`): spoofing an authenticated UDP peer's address inherits its level, writes need no reply, notifications are accepted from the route's address, call ids are sequential, and spoofed adverts compete for the peer caps. In secure mode unauthenticated nodes are Public, which limits the first. Direction: HMAC with a fleet key, random call ids.
+- **NowTP content isn't encrypted,** even with a key (integrity only), so tokens cross ESP-NOW in clear; its discovery frames (goodbyes, move notices, anchors, announcements) are spoofable without a key and partly with one; the message id isn't covered by the tag; the capabilities byte can be downgraded (documented in PROTOCOL.md).
+- **Peers signs in with a password** sent over UDP and NowTP (`peers.cpp`): a challenge would keep it off the air.
+- **Tokens and sign-in passwords travel in clear** over HTTP, WebSocket, UDP and relays (no TLS on the device: DESIGN §1, non-goals).
 
-### TesserAPI
+### Open, not held
 
-- **Datagram transports trust source addresses** (`datagram.cpp:565-600`, `:711-770`, `remote.cpp:832-870`). A token is bound to the sender's IP or MAC, so spoofing an authenticated peer's address inherits its level. Writes need no reply, and notifications are accepted from the route's address, which lets forged state into mirrors. Call ids are sequential. Direction: per-session nonces and a MAC (HMAC with a fleet key), random call ids.
-- **Spoofed advertisements compete for the peer caps.** Mounted nodes, routes and file sessions are capped and offline auto-mounted nodes evicted since b5a2c1c (Phase 1, so the heap is safe), but adverts with random names can still take the slots real peers would use (reasoned). Fixed by authenticated datagrams (Phase 3's fleet key).
-- **`TokenCheck` sees only the token**, not the client (`api.h`). TesserKIT's "open until an account exists" therefore applies equally to HTTP on the soft-AP and to UDP, ESP-NOW and BLE from strangers. Direction: pass `const Client&`.
-- **HTTP and WebSocket have no CSRF or DNS-rebinding defences** (`http_server.cpp:705-730`). Sets accept any Content-Type, so a web page can POST `text/plain` without a preflight. WebSocket checks no Origin, nothing checks the Host header, so any page the user visits can change an open device, and DNS rebinding lets it read. (Token comparison is constant-time since 4e383c7.) A WebSocket's level is fixed at the handshake, so a revoked token keeps working on an open socket. Direction: require `application/json` for sets, check Origin against the CORS allowlist and Host against known names, re-check tokens on revocation.
-- **Tokens and the sign-in password travel in clear over relays** (and NowTP below).
-
-### NowTP
-
-- **Discovery is still spoofable without a key, and partly with one.**
-  - A spoofed goodbye triggers `Lost`, which fails TesserAPI's pending calls and drops subscriptions.
-  - A spoofed "moving" notice, or an anchor stating another channel (`channel.cpp:83-86`), herds every free node off-channel.
-  - Discovery's peer list now evicts silent peers (bafbcde), but live spoofed announcements still compete for its 20 slots.
-- **Content isn't encrypted, even with a key.** NowTP authenticates (integrity) but doesn't encrypt, so TesserAPI's sign-in tokens cross ESP-NOW in clear. The pairing already derives keys. Direction: document "integrity only" prominently, or encrypt.
-- **The message id still isn't covered by the tag.** The replay fix (20b1ced) makes an id-flipped replay fail the sequence check, so this is defence in depth. Binding the id would change every message's tag, a larger wire break.
-- **Downgrade of the new capabilities byte.** Stripping the challenge response's extension needs selective jamming of the real response plus injection. That's documented in PROTOCOL.md as residual risk.
-
-### TesserUI
-
-- **The launcher's origin runs node code where every token lives.** Tokens for every saved device sit in `localStorage` on `leokeba.github.io`, an origin shared by all of that account's Pages sites. f6b26fa stops foreign script URLs, but a node still serves its own `ui.script` path, and through the bridge every mDNS host becomes a live session without a click (`Workspace.svelte:238-241`). A malicious LAN host serving its own `/ext/x.js` gets code running next to every token. Direction: load node scripts only for nodes the user added or clicked; a dedicated origin for the launcher; or tokens out of the origin that runs node code.
-- **Node identity is the URL, not anything authenticated.** A host that takes over the same IP is the node, and receives its token.
-- **One Web Serial token for every port.** The key is always `tesserui:token:serial` (`session.svelte.ts:247`), so board A's token is sent to board B. The serial schema cache shares that key too.
-- **The token travels in the WebSocket URL** (`?token=`, `session.svelte.ts:303`) and is forwarded in URLs by the bridge's proxy. Low risk.
-
-### TesserUI's bridge (`bridge/bridge.mjs`)
-
-- **No Host check, and requests without an Origin are allowed** (`:49-53`). A DNS-rebinding page sends same-origin GETs, which carry no Origin, so it can read `/nodes` and `/n/<id>/api/*`. Chrome's Local Network Access probably blocks this; Firefox and Safari don't (reasoned).
-- **The allowlist is broad:** all of `https://leokeba.github.io` and any `http://localhost:*`.
-- **`/s/<path>` opens any path**, not only the ports it lists, and takes over a port another page holds (`:289-316`).
-- **mDNS targets are proxied whatever they are**, 127.0.0.1 included: a request-forgery path to local services. `describe()` fetches each target unprompted.
-- Direction: check Host; restrict serial to listed ports; accept only private, non-loopback mDNS targets.
+- **The launcher's origin runs node code where every token lives** (TesserUI): node scripts now load only for nodes the user opened, but an opened malicious node still runs code beside every saved token. tesserui-71's recommendation: node-supplied custom elements in sandboxed iframes with an opaque origin, the tesser handle passed over postMessage.
+- **Node identity is the URL** (TesserUI): a host that takes over the same IP is the node, and receives its token.
+- **The token travels in the WebSocket URL** (`?token=`) and in the bridge's proxied URLs. Low risk (localhost or the node; the bridge doesn't log it); moving it into an envelope needs every firmware to accept `auth` over WebSocket.
+- **Backups carry the accounts' password hashes** (PBKDF2, 2000 rounds), testable offline by whoever holds one.
+- **Physical access** is Admin (the serial console), and flash isn't encrypted.
 
 ## Reliability and robustness
 
@@ -210,16 +183,19 @@ Goal: documented service combinations per target, each with flash and heap headr
 
 **Status (2026-10-22, launched by Leo):** constant-time token comparison done (TesserAPI 4e383c7). The switch is the first admin account: secure mode (`Device::secure()`, DESIGN §7, with the threat model of both modes, item 5).
 - KIT done: the access point's own password in secure mode (`securePassword`); UDP `peerAccess` auto (Public in secure mode); clockless tokens bound to the boot and its uptime (`/sys/auth/boots`); the sign-in lockout per client.
-- Dispatched: TesserAPI items A–D to tesserapi-57 (TokenCheck with the client, the strict HTTP/WebSocket option, tokens re-checked on revocation, persisted-not-in-backups); TesserUI items 1 and 4 to tesserui-71 (the bridge's Host, Origin, port and mDNS checks, a Web Serial token per port, node scripts only for nodes the user opened, claiming in the launcher). TesserKIT switches B on in secure mode, calls C on revocations and marks its keys with D once they land.
+- API done (TesserAPI v0.2.0, fd077c5, tesserapi-57): TokenCheck with the client; `HttpServer::strict()`, which TesserKIT switches on in secure mode (JSON bodies, Origin, Host against DNS rebinding); `tokensChanged()`, which Auth calls on every account change, `logoutAll` and the device closing; `.backup(false)`, on `/sys/auth/key`, the boot count, the AP's `securePassword` and the Peers passwords.
+- UI done (TesserUI v0.2.0, 9141685, tesserui-71): the bridge's Host, Origin, port and mDNS checks; a Web Serial token per node; node scripts only for nodes the user opened; claiming in the launcher (`claim: "/sys/auth"` in pages/index.html). tesserui-71 recommends sandboxed iframes for node scripts as the real fix for tokens beside node code (not built).
+- Checked on DEVKIT-R1: `test/e2e_secure.py` 20/20 (in hil.py as the `secure` suite); the access point WPA2 with its generated password; every hil suite on the secure-mode build. Released: TesserKIT v0.2.3, then v0.3.0 with the TesserUI pin.
+- Cost noted in DESIGN §7: in secure mode a phone joining the access point gets no captive portal page by itself (strict Host check); 192.168.4.1 still works.
 - **Held (Leo, 2026-10-22: memory and performance first, especially when complex):** item 3, the fleet key (HMAC on UDP datagrams with replay windows, NowTP encryption, authenticated discovery frames, the challenge sign-in for Peers). DESIGN §7 lists what that leaves open.
 
 Goal: defaults stay open; one switch (per device, or per fleet) turns on a coherent secure mode, and its threat model is documented.
 
-1. **Free hardening, made by default.**
+1. ~~**Free hardening, made by default.**~~ done (TesserUI v0.2.0, TesserAPI 4e383c7):
    - UI bridge: Host check; serial only on listed ports; no loopback mDNS targets.
    - API: constant-time token comparison.
    - UI: one Web Serial token per port. The launcher loads a node's own scripts only for nodes the user added or opened, not for every node the bridge finds.
-2. **The secure mode bundle**, switched on with the first admin account or one setting (KIT, API):
+2. ~~**The secure mode bundle**~~ done, switched on with the first admin account (KIT, API):
    - an AP password;
    - UDP `peerAccess` Public;
    - clockless tokens expired by uptime and boot count;
@@ -228,12 +204,12 @@ Goal: defaults stay open; one switch (per device, or per fleet) turns on a coher
    - HTTP sets only as JSON, with Origin and Host checks;
    - WebSocket levels re-checked when a token is revoked;
    - `TokenCheck` given the client.
-3. **A fleet key** (API, NowTP, KIT):
+3. **A fleet key** (API, NowTP, KIT), held (Leo, 2026-10-22: memory and performance):
    - HMAC on UDP datagrams, with random call ids;
    - encrypted NowTP content once paired;
    - a challenge instead of a password for Peers' sign-in.
-4. **Claiming in the launcher (UI, KIT):** an optional first-admin step after flashing a release image.
-5. **A threat model** per mode in DESIGN (KIT), including NowTP's spoofable discovery and the downgrade risk of its capabilities byte.
+4. ~~**Claiming in the launcher (UI, KIT):**~~ done: an optional first-admin step after flashing a release image.
+5. ~~**A threat model** per mode in DESIGN (KIT)~~ done (DESIGN §7), including NowTP's spoofable discovery and the downgrade risk of its capabilities byte.
 
 ### Phase 4: architecture, protocol and packaging
 
