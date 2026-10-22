@@ -7,13 +7,13 @@
 Builds examples/idf/full in each board's build (a profile, or its Ethernet
 variant: the boards file's "builds") against the sibling commits deps.lock
 pins, flashes each board after reading its MAC, waits for every board on the
-network, then runs the end-to-end suites (device, files, ethernet, transfers,
-udp). After each suite it reads every board's lowest free heap since boot
-(/sys/status/minHeap) and fails when one fell below its build's floor
-("heapFloors", by build; "heapFloor" for the others, 8 KB; internal RAM, PSRAM
-apart): an
-out-of-memory abort is usually one allocation away from there (DESIGN.md
-section 12, docs/review-2026-10-14-open.md, Roadmap › Phase 1).
+network, then runs the end-to-end suites (device, files, secure, ethernet,
+transfers, udp). After each suite it reads every board's lowest free heap
+since boot (/sys/status/minHeap) and fails when one fell below its build's
+floor ("heapFloors", by build; "heapFloor" for the others, 8 KB; internal
+RAM, PSRAM apart): an out-of-memory abort is usually one allocation away
+from there (DESIGN.md section 12, docs/review-2026-10-14-open.md, Roadmap ›
+Phase 1).
 
 The boards file (test/hil_boards.example.json) names each board's role, MAC,
 serial port, address and build; a build for another chip than the ESP32 names
@@ -243,6 +243,9 @@ def main():
               boards, floors, work)
     if gw and want('files'):
         suite('files', ['test/e2e_files.py', gw['url']], boards, floors, work)
+    # Secure mode, on and off again: the board is open when it ends.
+    if gw and want('secure'):
+        suite('secure', ['test/e2e_secure.py', gw['url']], boards, floors, work)
     if eth and want('ethernet'):
         cmd = ['test/e2e_ethernet.py', eth['url']]
         if eth.get('staticIp'):
