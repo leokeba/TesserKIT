@@ -190,19 +190,17 @@ Goal: documented service combinations per target, each with flash and heap headr
   - With NowTP polled (ed83249, item 4): every suite again, the gateway's lowest 51 KB.
 - Item 2 done (9743a29): the examples choose their services, Ethernet board and pins in Kconfig (`main/Kconfig.projbuild`). The `-D` options are written as a defaults file, and a reused build directory that disagrees stops the build. The library's own options stay Kconfig, or `-DTESSERKIT_NO_*` on Arduino. DESIGN §1 and §11 describe the one scheme.
 - Item 3:
-  - KIT: the `psram` profile; `/sys/status/heap`, `minHeap` and `maxBlock` count internal RAM only, with `minPsram` beside `psram` (fa5d59c). Reservations name their pool on branch `pending/phase2-siblings`: TLS from PSRAM under `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC`, a restore's document from PSRAM, string buffers where malloc puts them.
-  - API: done (TesserAPI 2ceda41, by tesserapi-06, local). The budget counts internal RAM and PSRAM apart (`Pool`); JSON documents and NowTP's owned replies go to PSRAM.
+  - KIT: the `psram` profile; `/sys/status/heap`, `minHeap` and `maxBlock` count internal RAM only, with `minPsram` beside `psram` (fa5d59c). Reservations name their pool (5757e78): TLS from PSRAM under `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC`, a restore's document from PSRAM, string buffers where malloc puts them.
+  - API: done (TesserAPI 2ceda41, by tesserapi-06, pinned in 5757e78). The budget counts internal RAM and PSRAM apart (`Pool`); JSON documents and NowTP's owned replies go to PSRAM.
   - NowTP: done (NowTP 94eb400, by nowtp-0f, pushed, pinned). Blocks of 256 B and more (message copies, reassembly, stream chunks, the event ring's storage) go to PSRAM when there is some.
   - Not run on a board with PSRAM: none is connected.
 - Item 4:
-  - UI done (TesserUI dde641f, by tesserui-49, local): the rarely used widgets in one chunk under `/ui/`. ui.js.gz went from 64.3 KB to 54.1 KB, 67.3 KB with the chunk. WebUi takes 3 handlers. A total budget of 80 KB is for Leo to confirm.
+  - UI done (TesserUI dde641f, by tesserui-49, pinned in 5757e78): the rarely used widgets in one chunk under `/ui/`. ui.js.gz went from 64.3 KB to 54.1 KB, 67.3 KB with the chunk. WebUi takes 3 handlers. The total (ui.js and the chunk) is budgeted at 70 KB (Leo).
   - NowTP's wake hook and next-deadline query: done (NowTP e980851, by nowtp-0f). TesserKIT polls NowTP from the device's task and no longer runs NowTP's own: about 3–4 KB more free heap on both boards. With the device task at priority 5, a relayed firmware update takes 49 s, against 48 s with NowTP's task and 80 s polled at priority 3 (DESIGN §4.2).
   - Partition tables per profile: `psram` uses the 8 MB table; `full` and `classic` keep the 4 MB files table.
   - Silent assertions (decision 4): kept in `full`, removed in `classic` and `psram`.
 - Item 5 done (2026-10-21): DNS refill, the default route and disconnect reasons moved into Network (see Reliability › TesserKIT).
 - Open:
-  - pushing TesserKIT's main (a8824f0..ed83249, local): its release.yml adds `tesserkit-psram-esp32s3` (Leo);
-  - pushing TesserAPI 2ceda41 and TesserUI dde641f, then pinning them and merging `pending/phase2-siblings` (Leo);
   - the `psram` profile on a board;
   - DEVKIT-V3's supply.
 
