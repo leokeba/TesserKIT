@@ -156,6 +156,12 @@ private:
     ApMode apMode_ = ApMode::Fallback;
     std::string apSsid_;  // empty: the hostname
     std::string apPassword_;
+    // The access point's password in secure mode while apPassword_ is empty:
+    // random, made once per device, readable by admins (docs/DESIGN.md
+    // section 5.2).
+    std::string apSecret_;
+    tesser::Node* apSecretNode_ = nullptr;
+    std::string apPasswordInUse();
     uint8_t apChannel_ = 1;
     bool apHidden_ = false;
     bool mdns_ = true;

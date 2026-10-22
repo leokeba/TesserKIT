@@ -169,6 +169,7 @@ TEST(auth_tokens_survive_restarts) {
     std::string token;
     {
         AuthRig r;
+        r.fake.clock.epoch = 1782907200000;  // a clock: the token's expiry is a date
         r.auth.defaultAdmin("admin", "pw");
         CHECK(r.dev.begin());
         token = r.login("admin", "pw");
@@ -180,6 +181,7 @@ TEST(auth_tokens_survive_restarts) {
     // The same firmware: the same default account, whose changed password
     // was stored.
     AuthRig r;
+    r.fake.clock.epoch = 1782907200000;
     r.auth.defaultAdmin("admin", "pw");
     r.storage.records = saved;
     CHECK(r.dev.begin());
@@ -187,6 +189,87 @@ TEST(auth_tokens_survive_restarts) {
     CHECK(!r.auth.open());
     CHECK(r.login("admin", "pw").empty());  // the stored account, not the default
     CHECK_EQ(r.login("admin", "changed").empty(), false);
+}
+
+TEST(auth_tokens_without_a_clock_end_with_the_boot) {
+    // A show network without SNTP: a token is valid for this boot, and for
+    // sessionHours of its uptime, no longer forever.
+    std::map<std::string, std::string> saved;
+    std::string token;
+    {
+        AuthRig r;
+        r.auth.defaultAdmin("admin", "pw");
+        CHECK(r.dev.begin());
+        token = r.login("admin", "pw");
+        CHECK(token.find(".b1:") != std::string::npos);  // the first boot
+        CHECK_EQ(r.dev.api().tokenAccess(token), Access::Admin);
+        r.fake.core.now += 169ULL * 3600 * 1000;  // past 168 h of uptime
+        CHECK_EQ(r.dev.api().tokenAccess(token), Access::Public);
+        r.fake.core.now -= 169ULL * 3600 * 1000;
+        CHECK_EQ(r.dev.api().tokenAccess(token), Access::Admin);
+        // A token made before this change, which never expired.
+        std::string old = "admin.0." + token.substr(token.rfind('.') + 1);
+        CHECK_EQ(r.dev.api().tokenAccess(old), Access::Public);
+        r.run(2500);
+        saved = r.storage.records;
+    }
+    AuthRig r;
+    r.auth.defaultAdmin("admin", "pw");
+    r.storage.records = saved;
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.dev.api().tokenAccess(token), Access::Public);  // another boot
+    CHECK(r.login("admin", "pw").find(".b2:") != std::string::npos);
+}
+
+// A reply that can be detached (a deferred action, as a sign-in is),
+// whatever client the request comes from.
+struct DetachedReply : tesser::StringReply {
+    std::shared_ptr<rig::Reply> out;
+    explicit DetachedReply(std::shared_ptr<rig::Reply> o) : out(std::move(o)) {}
+    void end() override {
+        tesser::StringReply::end();
+        out->status = status;
+        out->body = body;
+        out->done = true;
+    }
+    tesser::Reply* detach() override { return new DetachedReply(out); }
+    void release() override { delete this; }
+};
+
+TEST(auth_lockout_is_per_client) {
+    // Five bad passwords lock that client out for 30 s, not the others: one
+    // stranger can't keep the admin out.
+    AuthRig r;
+    r.auth.defaultAdmin("admin", "hunter22");
+    CHECK(r.dev.begin());
+    auto loginFrom = [&r](uint8_t host, const char* password) {
+        tesser::Client c;
+        c.transport = tesser::TransportKind::Http;
+        c.address[0] = 192;
+        c.address[1] = 168;
+        c.address[2] = 1;
+        c.address[3] = host;
+        c.addressLength = 4;
+        std::string body = std::string("{\"name\":\"admin\",\"password\":\"") + password + "\"}";
+        JsonDocument doc;
+        deserializeJson(doc, body);
+        tesser::Request req;
+        req.op = Op::Set;
+        req.path = "/sys/auth/login";
+        req.body = doc.as<JsonVariantConst>();
+        req.client = c;
+        auto out = std::make_shared<rig::Reply>();
+        DetachedReply reply(out);
+        r.dev.api().handle(req, reply);
+        CHECK(rig::drainBackground());
+        r.run(20);
+        return out->status;
+    };
+    for (int i = 0; i < tesserkit::Auth::kMaxFailures; i++) CHECK_EQ(loginFrom(66, "wrong"), Status::Unauthorized);
+    CHECK_EQ(loginFrom(66, "hunter22"), Status::Busy);  // locked out
+    CHECK_EQ(loginFrom(10, "hunter22"), Status::Ok);    // the admin, from elsewhere
+    r.fake.core.now += tesserkit::Auth::kLockoutMs + 1;
+    CHECK_EQ(loginFrom(66, "hunter22"), Status::Ok);
 }
 
 TEST(auth_brute_force_delay) {

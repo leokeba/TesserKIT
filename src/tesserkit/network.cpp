@@ -400,7 +400,18 @@ void Network::describe(tesser::Object& o) {
                            })
                            .secret()
                            .persist()
-                           .ui("placeholder", "none: an open network"));
+                           .ui("placeholder", "none: open, or securePassword in secure mode"));
+    apSecretNode_ = &ap.value("securePassword", apSecret_)
+                         .validate(limits::atMost<63>)
+                         .readOnly()
+                         .persist()
+                         .readAccess(Access::Admin)
+                         .label("Password in secure mode")
+                         .doc("The access point's password while the device has an admin account and no password "
+                              "is set above: made once for this device, printed on the serial console when the "
+                              "access point comes up")
+                         .ui("perNode")
+                         .ui("advanced");
     apNodes_.push_back(&ap.value("channel", apChannel_).range(1, 13).persist());
     apNodes_.push_back(&ap.value("hidden", apHidden_).persist().ui("advanced"));
     auto& as = ap.object("status").label("Status");
@@ -466,11 +477,25 @@ void Network::start() {
     reportState();  // from the start: services waiting for the network see it
 }
 
+std::string Network::apPasswordInUse() {
+    if (!apPassword_.empty() || !dev_.secure()) return apPassword_;
+    if (apSecret_.empty()) {
+        // 12 characters of a 32-letter alphabet without look-alikes (60
+        // bits), typed from a phone.
+        static const char kAlphabet[] = "abcdefghijkmnpqrstuvwxyz23456789";
+        uint8_t r[12];
+        dev_.core().random(r, sizeof(r));
+        for (uint8_t b : r) apSecret_ += kAlphabet[b % (sizeof(kAlphabet) - 1)];
+        apSecretNode_->changed();
+    }
+    return apSecret_;
+}
+
 uint32_t Network::apFingerprint() const {
     // Generations only grow, so the sum changes whenever one of them does.
     uint32_t sum = 0;
     for (const tesser::Node* n : apNodes_) sum += n->generation();
-    return sum;
+    return sum + dev_.secureGeneration();  // secure mode changes the password
 }
 
 uint32_t Network::ethFingerprint() const {
@@ -1073,7 +1098,7 @@ void Network::updateAp(uint32_t nowMs) {
     if (want && !apUp_) {
         ApConfig c;
         c.ssid = apSsid();
-        c.password = apPassword_;
+        c.password = apPasswordInUse();
         c.channel = apChannel_;
         c.hidden = apHidden_;
         if (wifi_->startAp(c)) {
@@ -1083,7 +1108,12 @@ void Network::updateAp(uint32_t nowMs) {
             apClients_ = 0;
             dev_.apClients(0);
             apStatus_->changed();
-            tesser::logWarning("tesserkit: access point \"%s\" at %s", c.ssid.c_str(), apIp_.c_str());
+            if (apPassword_.empty() && !c.password.empty()) {
+                tesser::logWarning("tesserkit: access point \"%s\" at %s, password %s (secure mode)", c.ssid.c_str(),
+                                   apIp_.c_str(), c.password.c_str());
+            } else {
+                tesser::logWarning("tesserkit: access point \"%s\" at %s", c.ssid.c_str(), apIp_.c_str());
+            }
         }
     } else if (!want && apUp_) {
         wifi_->stopAp();

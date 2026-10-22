@@ -429,6 +429,40 @@ TEST(network_access_point_settings) {
     CHECK_EQ(at(s.body, "children/password/secret"), "true");
 }
 
+TEST(network_access_point_password_in_secure_mode) {
+    // With an admin account and no password set, the access point gets one
+    // of its own: made once, readable by admins, kept across restarts of
+    // the access point; a password set wins; open again without the admin.
+    NetRig r;
+    tesserkit::Auth auth{r.dev};
+    auth.defaultAdmin("admin", "secret-pass");
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK(r.dev.secure());
+    CHECK(r.fake.wifi.apUp);  // recovery: no network yet
+    std::string made = r.fake.wifi.ap.password;
+    CHECK_EQ(made.size(), 12u);
+    CHECK_EQ(r.value("/sys/network/ap/securePassword"), "\"" + made + "\"");
+    CHECK_EQ(r.value("/sys/network/ap/password"), "null");  // the setting is still empty
+    CHECK_EQ(r.set("/sys/network/ap/password", "\"chosen-one\"").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.wifi.ap.password, "chosen-one");
+    CHECK_EQ(r.set("/sys/network/ap/password", "\"\"").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.wifi.ap.password, made);  // the same one again
+    CHECK_EQ(r.set("/sys/auth/users", "[]").status, Status::Ok);  // no admin: open mode
+    r.settle();
+    CHECK(!r.dev.secure());
+    CHECK(r.fake.wifi.apUp);
+    CHECK_EQ(r.fake.wifi.ap.password, "");
+    CHECK_EQ(r.set("/sys/auth/users", R"([{"name":"ada","password":"secret-pass","role":"admin"}])").status,
+             Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.wifi.ap.password, made);  // kept for this device
+    CHECK_EQ(r.get("/sys/network/ap/securePassword", tesser::Query(), false).status,
+             Status::Unauthorized);  // admins only
+}
+
 TEST(network_access_point_modes) {
     NetRig r;
     r.air("Home", "pw");

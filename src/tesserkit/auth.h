@@ -51,13 +51,14 @@ public:
     tesser::Access check(std::string_view token);
     // True while no admin account exists.
     bool open() const;
-    // A token for `name`, valid sessionHours (no expiry while the clock
-    // isn't set).
+    // A token for `name`, valid sessionHours: by the clock, or while the
+    // clock isn't set, by this boot's uptime (it dies with the boot).
     std::string token(const std::string& name);
 
     static constexpr uint32_t kIterations = 2000;   // PBKDF2 rounds
-    static constexpr int kMaxFailures = 5;          // then login is busy...
+    static constexpr int kMaxFailures = 5;          // then a client's login is busy...
     static constexpr uint32_t kLockoutMs = 30000;   // ...this long
+    static constexpr size_t kClients = 8;           // clients whose failures are counted
 
     // A stored password hash for `password`, with a random salt.
     std::string hash(std::string_view password);
@@ -86,9 +87,20 @@ private:
     std::atomic<int> jobs_{0};      // on the background task
     tesser::Node* openNode_ = nullptr;
     bool wasOpen_ = true;
-    int failures_ = 0;
-    int checking_ = 0;  // sign-ins on TesserAPI's background task
-    uint32_t lockedUntilMs_ = 0;
+    // Failed sign-ins, per client (its transport and address): one client
+    // can't lock the others out (docs/DESIGN.md section 5.7).
+    struct Attempts {
+        uint8_t client[17] = {};  // the transport, then the address
+        uint8_t length = 0;
+        int failures = 0;
+        int checking = 0;  // on TesserAPI's background task
+        uint32_t lockedUntilMs = 0;
+        uint32_t lastMs = 0;
+    };
+    Attempts* attemptsOf(const tesser::Client& c, uint32_t nowMs);
+    std::vector<Attempts> attempts_;
+    uint32_t boots_ = 0;  // persisted: a clockless token belongs to its boot
+    tesser::Node* bootsNode_ = nullptr;
     const char* defaultName_ = nullptr;
     const char* defaultPassword_ = nullptr;
 };

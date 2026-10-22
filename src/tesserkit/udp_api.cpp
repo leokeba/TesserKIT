@@ -46,6 +46,11 @@ UdpApi& UdpApi::peerAccess(Access level) {
     return *this;
 }
 
+Access UdpApi::effectiveAccess() const {
+    if (peerAccess_ == Level::Auto) return dev_.secure() ? Access::Public : Access::User;
+    return static_cast<Access>(peerAccess_);
+}
+
 UdpApi& UdpApi::interfaces(uint8_t mask) {
     interfaces_ = mask & kAllInterfaces ? mask & kAllInterfaces : kAllInterfaces;
     return *this;
@@ -81,11 +86,12 @@ void UdpApi::describe(tesser::Object& o) {
                            .ui("widget", "flags")
                            .ui("labels", "Ethernet,Wi-Fi,Access point")
                            .ui("advanced");
-    accessNode_ = &o.value("peerAccess", peerAccess_, {"public", "user", "admin"})
+    accessNode_ = &o.value("peerAccess", peerAccess_, {"public", "user", "admin", "auto"})
                        .persist()
                        .label("Nodes' level")
                        .doc("What a node on the network may do without signing in: UDP carries no proof of who "
-                            "sends it");
+                            "sends it. Auto: user while the device is open, public once it has an admin account")
+                       .ui("labels", "Public,User,Admin,Auto");
     mountNode_ = &o.value("mountPeers", mountPeers_)
                       .persist()
                       .label("Show nodes")
@@ -156,7 +162,8 @@ void UdpApi::begin() {
         return;
     }
     tesser::UdpLink* link = transport_->link();
-    link->endpoint().setPeerAccess(static_cast<Access>(peerAccess_));
+    link->endpoint().setPeerAccess(effectiveAccess());
+    secureGen_ = dev_.secureGeneration();
     link->advertise();
     if (peersObject_ && !mounted_) {
         mounted_ = true;
@@ -218,10 +225,11 @@ void UdpApi::tick(uint32_t nowMs) {
             begin();
         }
     }
-    if ((gen = accessNode_->generation()) != accessGen_) {
+    if ((gen = accessNode_->generation()) != accessGen_ || dev_.secureGeneration() != secureGen_) {
         accessGen_ = gen;
+        secureGen_ = dev_.secureGeneration();
         if (tesser::UdpLink* link = transport_ ? transport_->link() : nullptr) {
-            link->endpoint().setPeerAccess(static_cast<Access>(peerAccess_));
+            link->endpoint().setPeerAccess(effectiveAccess());
         }
     }
     if ((gen = mountNode_->generation()) != mountGen_) {

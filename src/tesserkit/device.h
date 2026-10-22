@@ -204,6 +204,17 @@ public:
     Files* files() const { return files_; }
     // A service needs the Wi-Fi station awake (Service::needsStationAwake()).
     bool stationAwake() const { return stationAwake_; }
+    // Secure mode (docs/DESIGN.md section 7): on while an admin account
+    // exists, set by Auth. Services with a secure default read it (the access
+    // point's password, UDP's peers' level); the generation grows when it
+    // changes, for those that apply it at run time.
+    bool secure() const { return secure_; }
+    uint32_t secureGeneration() const { return secureGen_; }
+    void secure(bool on) {
+        if (on == secure_) return;
+        secure_ = on;
+        secureGen_++;
+    }
 #if defined(ESP_PLATFORM)
     tesser::HttpServer& http() { return http_; }
     tesserui::WebUi& web() { return web_; }
@@ -318,6 +329,8 @@ private:
     Service* services_ = nullptr;
     Files* files_ = nullptr;
     bool stationAwake_ = false;
+    bool secure_ = false;
+    uint32_t secureGen_ = 0;
     std::string name_;             // nameSetting_, else the label
     std::string nameSetting_;
     std::string hostnameOption_;   // hostname(const char*)

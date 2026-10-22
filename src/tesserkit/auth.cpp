@@ -191,6 +191,7 @@ void Auth::describe(tesser::Object& o) {
         .persist()
         .ui("advanced");
     keyNode_ = &o.value("key", key_).validate(limits::atMost<64>).readOnly().secret().persist().readAccess(Access::Admin).ui("hidden");
+    bootsNode_ = &o.value("boots", boots_).readOnly().persist().readAccess(Access::Admin).ui("hidden");
 
     if (defaultName_ && defaultPassword_) {
         User u;
@@ -204,7 +205,10 @@ void Auth::describe(tesser::Object& o) {
 
 void Auth::start() {
     if (key_.size() != 64) newKey();
+    boots_++;  // a token made without a clock is valid in its boot only
+    bootsNode_->changed();
     wasOpen_ = open();
+    dev_.secure(!wasOpen_);
 }
 
 void Auth::tick(uint32_t nowMs) {
@@ -212,6 +216,7 @@ void Auth::tick(uint32_t nowMs) {
     bool o = open();
     if (o != wasOpen_) {  // an admin account was added or removed
         wasOpen_ = o;
+        dev_.secure(!o);
         openNode_->changed();
     }
 }
@@ -251,8 +256,16 @@ std::string Auth::sign(std::string_view payload) const {
 
 std::string Auth::token(const std::string& name) {
     int64_t now = nowSeconds();
-    char expiry[24];
-    snprintf(expiry, sizeof(expiry), "%lld", now ? static_cast<long long>(now + sessionHours_ * 3600LL) : 0LL);
+    char expiry[32];
+    if (now) {
+        snprintf(expiry, sizeof(expiry), "%lld", static_cast<long long>(now + sessionHours_ * 3600LL));
+    } else {
+        // No clock (a show network without SNTP): "b<boot>:<uptime deadline>",
+        // so the token dies with this boot or after sessionHours of uptime.
+        // It used to say 0, never expiring.
+        long long deadline = static_cast<long long>(dev_.core().uptimeMs() / 1000) + sessionHours_ * 3600LL;
+        snprintf(expiry, sizeof(expiry), "b%lu:%lld", static_cast<unsigned long>(boots_), deadline);
+    }
     std::string payload = name + "." + expiry;
     return payload + "." + sign(payload);
 }
@@ -267,9 +280,21 @@ Access Auth::check(std::string_view token) {
     if (exp == std::string_view::npos || exp == 0) return Access::Public;
     std::string_view payload = token.substr(0, sig);
     if (!crypto::equal(sign(payload), token.substr(sig + 1))) return Access::Public;
-    long long expiry = strtoll(std::string(token.substr(exp + 1, sig - exp - 1)).c_str(), nullptr, 10);
-    int64_t now = nowSeconds();
-    if (expiry && now && now > expiry) return Access::Public;
+    std::string expiry(token.substr(exp + 1, sig - exp - 1));
+    if (expiry[0] == 'b') {
+        // Made without a clock: this boot, before its uptime deadline.
+        unsigned long boot = 0;
+        long long deadline = 0;
+        if (sscanf(expiry.c_str(), "b%lu:%lld", &boot, &deadline) != 2 || boot != boots_ ||
+            static_cast<long long>(dev_.core().uptimeMs() / 1000) > deadline) {
+            return Access::Public;
+        }
+    } else {
+        long long at = strtoll(expiry.c_str(), nullptr, 10);
+        if (!at) return Access::Public;  // an old clockless token, which never expired
+        int64_t now = nowSeconds();
+        if (now && now > at) return Access::Public;
+    }
     const User* u = find(token.substr(0, exp));
     if (!u) return Access::Public;
     return u->role == Role::Admin ? Access::Admin : Access::User;
@@ -281,23 +306,26 @@ void Auth::login(const Credentials& c, tesser::Call& call) {
     // TesserAPI's background task without the lock, so every transport goes
     // on meanwhile (docs/DESIGN.md section 5.7).
     uint32_t now = static_cast<uint32_t>(dev_.core().uptimeMs());
-    if (lockedUntilMs_ && static_cast<int32_t>(now - lockedUntilMs_) < 0) {
+    Attempts* a = attemptsOf(call.client(), now);
+    if (!a) return call.fail(Status::Busy, "too many clients signing in: try again");
+    if (a->lockedUntilMs && static_cast<int32_t>(now - a->lockedUntilMs) < 0) {
         return call.fail(Status::Busy, "too many failed sign-ins: wait 30 s");
     }
-    lockedUntilMs_ = 0;
+    a->lockedUntilMs = 0;
     // Sign-ins being checked count as failures to come, so no more than
     // kMaxFailures are tried before the lockout.
-    if (failures_ + checking_ >= kMaxFailures) return call.fail(Status::Busy, "sign-ins being checked: try again");
+    if (a->failures + a->checking >= kMaxFailures) return call.fail(Status::Busy, "sign-ins being checked: try again");
+    Attempts who = *a;  // its client, found again when the check is done
     const User* u = find(c.name);
     std::string stored = u ? u->password : std::string();
     std::string pending = u ? u->pending : std::string();  // a new password not hashed yet
     uint32_t write = u ? u->write : 0;
     tesser::Pending p = call.defer();
     if (!p) return;  // refused (too many pending, or a transport that can't wait): the call says why
-    checking_++;
+    a->checking++;
     jobs_++;
     bool queued = tesser::background([this, p, name = c.name, password = c.password, stored, pending, write,
-                                      now]() mutable {
+                                      now, who]() mutable {
         // A hash is computed even for an unknown name, or a password not
         // hashed yet, so timing doesn't tell which names exist.
         bool ok;
@@ -311,17 +339,21 @@ void Auth::login(const Credentials& c, tesser::Call& call) {
         const char* level = "user";
         {
             tesser::Lock lock(dev_.api());
-            checking_--;
+            Attempts* client = nullptr;
+            for (Attempts& e : attempts_) {
+                if (e.length == who.length && memcmp(e.client, who.client, who.length) == 0) client = &e;
+            }
+            if (client) client->checking--;
             const User* user = find(name);
             ok = ok && user && user->write == write;  // the password wasn't written meanwhile
             if (ok) {
-                failures_ = 0;
+                if (client) client->failures = 0;
                 t = token(user->name);
                 if (user->role == Role::Admin) level = "admin";
-            } else if (++failures_ >= kMaxFailures) {
-                failures_ = 0;
-                lockedUntilMs_ = now + kLockoutMs;
-                if (!lockedUntilMs_) lockedUntilMs_ = 1;
+            } else if (client && ++client->failures >= kMaxFailures) {
+                client->failures = 0;
+                client->lockedUntilMs = now + kLockoutMs;
+                if (!client->lockedUntilMs) client->lockedUntilMs = 1;
             }
         }
         // Answered without the lock: a Pending may be answered from any task.
@@ -340,10 +372,45 @@ void Auth::login(const Credentials& c, tesser::Call& call) {
         jobs_--;
     });
     if (!queued) {
-        checking_--;
+        a->checking--;
         jobs_--;
         p.fail(Status::Busy, "busy");
     }
+}
+
+Auth::Attempts* Auth::attemptsOf(const tesser::Client& c, uint32_t nowMs) {
+    // The client: its transport and its address (an IP, a MAC; none for a
+    // local or serial client, which share one entry).
+    uint8_t key[sizeof(Attempts::client)];
+    key[0] = static_cast<uint8_t>(c.transport);
+    uint8_t n = c.addressLength < sizeof(key) - 1 ? c.addressLength : static_cast<uint8_t>(sizeof(key) - 1);
+    memcpy(key + 1, c.address, n);
+    uint8_t length = static_cast<uint8_t>(n + 1);
+    for (Attempts& e : attempts_) {
+        if (e.length == length && memcmp(e.client, key, length) == 0) {
+            e.lastMs = nowMs;
+            return &e;
+        }
+    }
+    // A new client: a free entry, or the oldest one that is neither locked
+    // nor being checked. None: every entry is in use, refused for now.
+    Attempts* slot = nullptr;
+    if (attempts_.size() < kClients) {
+        attempts_.emplace_back();
+        slot = &attempts_.back();
+    } else {
+        for (Attempts& e : attempts_) {
+            bool locked = e.lockedUntilMs && static_cast<int32_t>(nowMs - e.lockedUntilMs) < 0;
+            if (locked || e.checking) continue;
+            if (!slot || static_cast<int32_t>(e.lastMs - slot->lastMs) < 0) slot = &e;
+        }
+        if (!slot) return nullptr;
+        *slot = Attempts();
+    }
+    memcpy(slot->client, key, length);
+    slot->length = length;
+    slot->lastMs = nowMs;
+    return slot;
 }
 
 }  // namespace tesserkit

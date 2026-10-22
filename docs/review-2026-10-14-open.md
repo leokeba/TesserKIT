@@ -208,7 +208,10 @@ Goal: documented service combinations per target, each with flash and heap headr
 
 ### Phase 3: security as an opt-in mode
 
-**Status (2026-10-21):** constant-time token comparison done (TesserAPI 4e383c7, pinned since a3821f5). Everything else open.
+**Status (2026-10-22, launched by Leo):** constant-time token comparison done (TesserAPI 4e383c7). The switch is the first admin account: secure mode (`Device::secure()`, DESIGN §7, with the threat model of both modes, item 5).
+- KIT done: the access point's own password in secure mode (`securePassword`); UDP `peerAccess` auto (Public in secure mode); clockless tokens bound to the boot and its uptime (`/sys/auth/boots`); the sign-in lockout per client.
+- Dispatched: TesserAPI items A–D to tesserapi-57 (TokenCheck with the client, the strict HTTP/WebSocket option, tokens re-checked on revocation, persisted-not-in-backups); TesserUI items 1 and 4 to tesserui-71 (the bridge's Host, Origin, port and mDNS checks, a Web Serial token per port, node scripts only for nodes the user opened, claiming in the launcher). TesserKIT switches B on in secure mode, calls C on revocations and marks its keys with D once they land.
+- **Held (Leo, 2026-10-22: memory and performance first, especially when complex):** item 3, the fleet key (HMAC on UDP datagrams with replay windows, NowTP encryption, authenticated discovery frames, the challenge sign-in for Peers). DESIGN §7 lists what that leaves open.
 
 Goal: defaults stay open; one switch (per device, or per fleet) turns on a coherent secure mode, and its threat model is documented.
 

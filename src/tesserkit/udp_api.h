@@ -65,7 +65,11 @@ protected:
     void tick(uint32_t nowMs) override;
 
 private:
-    enum class Level : uint8_t { Public, User, Admin };
+    // Auto: User while the device is open, Public in secure mode (an admin
+    // account exists): UDP carries no proof of who sends it.
+    enum class Level : uint8_t { Public, User, Admin, Auto };
+
+    tesser::Access effectiveAccess() const;
 
     void begin();
     void end();
@@ -73,7 +77,7 @@ private:
 
     bool enabled_ = true;
     uint16_t port_ = kDefaultPort;
-    Level peerAccess_ = Level::User;
+    Level peerAccess_ = Level::Auto;
     bool mountPeers_ = true;
     size_t maxCalls_ = 8;
     uint8_t interfaces_ = kAllInterfaces;
@@ -98,7 +102,7 @@ private:
     tesser::Node* restartNode_ = nullptr;
     tesser::Node* statusNode_ = nullptr;
     uint32_t interfacesGen_ = 0;
-    uint32_t enabledGen_ = 0, portGen_ = 0, accessGen_ = 0, mountGen_ = 0;
+    uint32_t enabledGen_ = 0, portGen_ = 0, accessGen_ = 0, mountGen_ = 0, secureGen_ = 0;
 };
 
 }  // namespace tesserkit

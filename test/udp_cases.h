@@ -155,15 +155,34 @@ TEST(udp_open_device_serves_everyone) {
     CHECK_EQ(r.fromPeer(Op::Set, "/sys/udp/mountPeers", "false").status, Status::Ok);
 }
 
+TEST(udp_nodes_go_public_when_an_admin_appears) {
+    // Auto follows secure mode at run time, both ways.
+    UdpRig r;
+    tesserkit::Auth auth{r.dev};
+    r.online();
+    CHECK_EQ(r.fromPeer(Op::Get, "/sys/udp/peerAccess").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/auth/users", R"([{"name":"ada","password":"secret-pass","role":"admin"}])").status, Status::Ok);
+    r.pump();
+    CHECK(r.dev.secure());
+    CHECK_EQ(r.fromPeer(Op::Get, "/lamp/on").status, Status::Ok);  // Public still reads what Public may
+    CHECK_EQ(r.fromPeer(Op::Set, "/lamp/on", "true").status, Status::Unauthorized);
+}
+
 TEST(udp_serves_the_tree_at_the_nodes_level) {
     LockedRig r;
     r.online();
     rig::Reply got = r.fromPeer(Op::Get, "/lamp/on");
     CHECK_EQ(got.status, Status::Ok);
     CHECK_EQ(got.body, "false");
+    // Secure mode (an admin account): auto gives the nodes Public, since
+    // UDP carries no proof of who sends it.
+    CHECK_EQ(r.value("/sys/udp/peerAccess"), "\"auto\"");
+    CHECK_EQ(r.fromPeer(Op::Set, "/lamp/on", "true").status, Status::Unauthorized);
+    CHECK_EQ(r.set("/sys/udp/peerAccess", "\"user\"").status, Status::Ok);
+    r.pump();
     CHECK_EQ(r.fromPeer(Op::Set, "/lamp/on", "true").status, Status::Ok);
     CHECK(r.lamp);
-    // User by default: /sys stays the admin's.
+    // User: /sys stays the admin's.
     CHECK_EQ(r.fromPeer(Op::Set, "/sys/udp/mountPeers", "false").status, Status::Unauthorized);
     CHECK_EQ(r.set("/sys/udp/peerAccess", "\"admin\"").status, Status::Ok);
     r.pump();
