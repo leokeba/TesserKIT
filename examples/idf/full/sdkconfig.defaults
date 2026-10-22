@@ -42,6 +42,10 @@ CONFIG_BT_NIMBLE_GATT_CLIENT=n
 CONFIG_BT_NIMBLE_SECURITY_ENABLE=n
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 CONFIG_BTDM_CTRL_BLE_MAX_CONN=1
+# NimBLE's own log keeps its errors only: its info lines are compiled in
+# whatever the console's level (about 9 KB of flash), and the console is at
+# warnings anyway.
+CONFIG_BT_NIMBLE_LOG_LEVEL_ERROR=y
 # TLS (GitHub releases, downloads, mqtts://) allocates its buffers as it needs
 # them and frees the certificates once verified: with Bluetooth, NowTP and
 # MQTT, a handshake doesn't fit in what a classic ESP32 has left otherwise.
@@ -54,6 +58,12 @@ CONFIG_MBEDTLS_DYNAMIC_FREE_CA_CERT=y
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
 CONFIG_ESP_WIFI_RX_BA_WIN=6
 CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE=n
+
+# The access point is open or WPA2 (Network's fallback and provisioning):
+# its WPA3 (SAE) and Enhanced Open (OWE) support is never used, and takes
+# about 16 KB of flash. The station still joins WPA3 networks.
+CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT=n
+CONFIG_ESP_WIFI_ENABLE_WPA3_OWE_SOFTAP=n
 
 # Ethernet without a DHCP server (a cable straight to a computer): a
 # link-local address (169.254/16) while DHCP keeps asking (DESIGN.md 5.2).
