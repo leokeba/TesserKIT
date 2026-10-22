@@ -47,6 +47,10 @@
           ],
           wifi: '/sys/network/wifi',
         },
+        // A node still open (no admin account, /sys/auth/open) is offered a
+        // first admin account, which turns on its secure mode (TesserKIT's
+        // DESIGN.md section 7). "Not now" is remembered per node.
+        claim: '/sys/auth',
         // Nearby links to the bridge's executables on this repository's
         // latest release (release.yml's bridge job).
         bridge: { repo: 'leokeba/TesserKIT', name: 'tesserkit-bridge' },
