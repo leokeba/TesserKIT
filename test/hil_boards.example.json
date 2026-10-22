@@ -1,13 +1,15 @@
 {
   "work": "/tmp/tesserkit-hil",
   "heapFloor": 8192,
-  "heapFloors": {"classic": 32768, "classic-gledopto": 32768},
+  "heapFloors": {"classic": 32768, "classic-gledopto": 32768, "psram": 32768},
   "settle": 60,
   "builds": {
     "full": [],
     "classic": ["-DPROFILE=classic"],
-    "classic-gledopto": ["-DPROFILE=classic", "-DETHERNET_BOARD=gledopto"]
+    "classic-gledopto": ["-DPROFILE=classic", "-DETHERNET_BOARD=gledopto"],
+    "psram": ["-DPROFILE=psram"]
   },
+  "targets": {"psram": "esp32s3"},
   "boards": [
     {"name": "DEVKIT-V3", "role": "gateway", "mac": "c8:f0:9e:f4:a6:7c", "port": "/dev/cu.usbserial-3",
      "url": "http://192.168.1.59", "hostname": "tesserkit-a67c", "build": "classic"},

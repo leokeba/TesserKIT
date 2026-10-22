@@ -1,0 +1,24 @@
+# The psram profile (-DPROFILE=psram): every service, for an ESP32-S3 with
+# 8 MB of flash and 8 MB of octal PSRAM (N8R8 modules: the ESP32-S3-DevKitC-1
+# N8R8, Seeed's XIAO ESP32-S3 Sense). The full set targets such boards
+# (DESIGN.md 11, Profiles): large buffers go to PSRAM, internal RAM keeps what
+# needs it (Wi-Fi, DMA, stacks), and the 8 MB table gives the app 3 MB slots.
+CONFIG_FULL_PROFILE="psram"
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../partitions/tesserkit_8mb_files.csv"
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_SPEED_80M=y
+# A board without it still boots, on internal RAM alone.
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+# malloc() takes PSRAM for allocations of 4 KB and more (ESP-IDF's default:
+# 16 KB): replies, reassembled messages, JSON documents, file buffers. It
+# keeps 32 KB of internal RAM for what must be internal.
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# TLS and NimBLE's buffers in PSRAM.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+# What the classic ESP32 gives up for room, back.
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE=y
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10

@@ -44,11 +44,13 @@ jobs:
          {"project": "examples/idf/full", "name": "tesserkit-full"},
          {"project": "examples/idf/full", "name": "tesserkit-classic", "build-args": "-DPROFILE=classic", "targets": ["esp32"]},
          {"project": "examples/idf/full", "name": "tesserkit-classic-gledopto",
-          "build-args": "-DPROFILE=classic -DETHERNET_BOARD=gledopto", "targets": ["esp32"]}]
+          "build-args": "-DPROFILE=classic -DETHERNET_BOARD=gledopto", "targets": ["esp32"]},
+         {"project": "examples/idf/full", "name": "tesserkit-psram", "build-args": "-DPROFILE=psram", "targets": ["esp32s3"]}]
       targets: '["esp32", "esp32c3", "esp32s3"]'
       version-command: jq -r .version library.json
       dependencies-file: deps.lock
-      # Room for the next update in the 1.75 MB slot of the files table.
+      # Room for the next update in the 1.75 MB slot of the files table (3 MB
+      # in the psram profile's 8 MB table).
       min-free: 16384
 
   # TesserUI's bridge as a macOS executable for each architecture

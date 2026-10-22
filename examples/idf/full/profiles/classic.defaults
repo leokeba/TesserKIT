@@ -6,3 +6,9 @@
 # 60 KB, and as a gateway 58 KB at the lowest (DESIGN.md 11, Profiles).
 CONFIG_BT_ENABLED=n
 CONFIG_FULL_PROFILE="classic"
+# Its own memory settings (2026-10-22): with Bluetooth out, the classic ESP32
+# has room for what the full example gives up. Assertions print their file and
+# line again (about 59 KB of flash), and Wi-Fi gets ESP-IDF's ten receive
+# buffers rather than six (about 6.4 KB of heap): more throughput under load.
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE=y
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10

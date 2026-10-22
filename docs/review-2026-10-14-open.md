@@ -128,8 +128,7 @@ Several defaults are "open until someone sets it up", and the gaps add up across
 From AGENTS.md and this round:
 
 - File transfers over Bluetooth, and NowTP uploads from TesserKIT's services.
-- A link-local Ethernet cable (needs a cable without DHCP).
-- Ethernet as default route with the station on `always` and both on routers (route priority 8326587 was checked only with a dead static subnet).
+- Ethernet as default route with the station on `always` and both on routers (checked with a link-local cable beside a DHCP station on board B, 2026-10-21, not with two routers).
 - Firmware auto-confirmation through the access point (5ccaeb8; needs a phone on the AP for a minute).
 - NowTP pairing between two TesserKIT nodes (NowTP's own pair test passed).
 - The C3's GPIO wake-up, a real battery and charger pin, a real Home Assistant.
@@ -181,11 +180,31 @@ Goal: every allocation a client can trigger is reserved or refused, and the boar
 
 Goal: documented service combinations per target, each with flash and heap headroom checked in CI and on the boards.
 
-**Status (2026-10-21):**
-- Item 1, first step: two profiles rather than the three sketched below, since the measurements put almost the whole difference on Bluetooth (DESIGN §11, Profiles). `full` (every service; as released before) and `classic` (every service but Bluetooth, ESP32 only, also as `classic-gledopto` with Ethernet), selected with `-DPROFILE=classic` (`examples/idf/full/profiles/classic.defaults`). `firmware.yml` takes `targets` per firmware; release.yml builds all four under the 16 KB gate, the Ethernet variant included. Local sizes: classic 227 KB free, classic-gledopto 190 KB, full 65 KB. Each build updates from its own asset, `tesserkit-<profile>[-<board>]-<target>.bin`: an Ethernet build no longer updates itself to an image without Ethernet. `test/hil.py` takes a heap floor per build (32 KB proposed for classic).
-- Released in v0.1.32 (CI, IDF 5.5): classic 214 KB free, classic-gledopto 168 KB, full 44 KB (esp32), 42 KB (s3), 81 KB (c3). On Gledopto B (2026-10-21, the release's classic-gledopto, Ethernet link-local to the Mac, no Wi-Fi network): 105 KB free at rest; e2e_device 34/36 and e2e_files 37/39, every failure the environment's (no clock without internet, no saved network); 89 KB lowest since the suites' last restart.
-- Item 5 (policy out of the platform layer): DNS refill, the default route and disconnect reasons moved into Network (see Reliability › TesserKIT).
-- Open: a hil run of the classic profile on the three boards, to confirm the floor; whether `classic` restores the assertions' strings (decision 4) or ten Wi-Fi receive buffers with its room.
+**Status (2026-10-22):**
+- Item 1 done: three profiles (DESIGN §11, Profiles).
+  - `full` is every service, as released before.
+  - `classic` is every service but Bluetooth, on ESP32, also as `classic-gledopto`. It now has its own memory settings: assertions print their file and line (about 59 KB of flash), and Wi-Fi has ten receive buffers (about 10 KB of heap measured).
+  - `psram` is every service on an ESP32-S3 with 8 MB of flash and octal PSRAM. Large allocations, Wi-Fi's and lwIP's buffers, TLS and NimBLE go to PSRAM, with the 8 MB table. It is built in release.yml and offered by the launcher.
+  - Gateway limits: `classic` keeps the default message limits (NowTP's and UDP's 16 KB messages, 8 KB replies), since the hil runs below leave a gateway more than 32 KB at its lowest. `full` on a classic ESP32 is a node profile, not a gateway's.
+- Hil runs of `classic` (2026-10-22, Gledopto C as gateway and Ethernet board, on DHCP; DEVKIT-R1 as peer; DEVKIT-V3 still browning out). Both runs on the pinned siblings.
+  - Before its memory settings: device 37/37, files 39/39, transfers 17/17. Ethernet and UDP failed in the scripts, which read the empty hostname setting since node names: fixed by `/sys/network/host` (a8824f0). Lowest heap 54.6 KB (gateway), 78 KB (peer).
+  - After them: device 37/37, files 39/39, ethernet 16/16, transfers 17/17, udp 24/24, no restart by panic or brownout. Free at rest 88–92 KB (gateway) and 77–107 KB (peer), about 10 KB less than before (the receive buffers). Lowest 42.9 KB on the gateway during the relayed transfers, 67 KB on the peer. The 32 KB floor holds.
+- Item 2 done (9743a29): the examples choose their services, Ethernet board and pins in Kconfig (`main/Kconfig.projbuild`). The `-D` options are written as a defaults file, and a reused build directory that disagrees stops the build. The library's own options stay Kconfig, or `-DTESSERKIT_NO_*` on Arduino. DESIGN §1 and §11 describe the one scheme.
+- Item 3:
+  - KIT: the `psram` profile; `/sys/status/heap`, `minHeap` and `maxBlock` count internal RAM only, with `minPsram` beside `psram` (fa5d59c). Reservations name their pool on branch `pending/phase2-siblings`: TLS from PSRAM under `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC`, a restore's document from PSRAM, string buffers where malloc puts them.
+  - API: done (TesserAPI 2ceda41, by tesserapi-06, local). The budget counts internal RAM and PSRAM apart (`Pool`); JSON documents and NowTP's owned replies go to PSRAM.
+  - NowTP: dispatched to nowtp-0f.
+  - Not run on a board with PSRAM: none is connected.
+- Item 4:
+  - UI done (TesserUI dde641f, by tesserui-49, local): the rarely used widgets in one chunk under `/ui/`. ui.js.gz went from 64.3 KB to 54.1 KB, 67.3 KB with the chunk. WebUi takes 3 handlers. A total budget of 80 KB is for Leo to confirm.
+  - NowTP's wake hook and next-deadline query: dispatched to nowtp-0f. TesserKIT drops the `nowtp` task once they land.
+  - Partition tables per profile: `psram` uses the 8 MB table; `full` and `classic` keep the 4 MB files table.
+  - Silent assertions (decision 4): kept in `full`, removed in `classic` and `psram`.
+- Item 5 done (2026-10-21): DNS refill, the default route and disconnect reasons moved into Network (see Reliability › TesserKIT).
+- Open:
+  - pushing TesserAPI 2ceda41 and TesserUI dde641f, then pinning them and merging `pending/phase2-siblings` (Leo);
+  - the `psram` profile on a board;
+  - DEVKIT-V3's supply.
 
 1. **Define the profiles (KIT).** For example:
    - **classic node:** classic ESP32 4 MB without PSRAM. Network, Time, Firmware, Backup, Auth, and one of UDP or NowTP. Bluetooth off on Ethernet boards (decision 2).

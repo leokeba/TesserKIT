@@ -10,13 +10,16 @@ pins, flashes each board after reading its MAC, waits for every board on the
 network, then runs the end-to-end suites (device, files, ethernet, transfers,
 udp). After each suite it reads every board's lowest free heap since boot
 (/sys/status/minHeap) and fails when one fell below its build's floor
-("heapFloors", by build; "heapFloor" for the others, 8 KB): an
+("heapFloors", by build; "heapFloor" for the others, 8 KB; internal RAM, PSRAM
+apart): an
 out-of-memory abort is usually one allocation away from there (DESIGN.md
 section 12, docs/review-2026-10-14-open.md, Roadmap › Phase 1).
 
 The boards file (test/hil_boards.example.json) names each board's role, MAC,
-serial port, address and build. Waits are bounded; every step prints what it
-saw. Exit status: 0 when every suite passed and no board fell below the floor.
+serial port, address and build; a build for another chip than the ESP32 names
+it in "targets" ({"psram": "esp32s3"}), and esptool finds the chip itself.
+Waits are bounded; every step prints what it saw. Exit status: 0 when every
+suite passed and no board fell below the floor.
 """
 import json
 import os
@@ -70,7 +73,7 @@ def fetch_siblings(work):
     return paths
 
 
-def build(work, siblings, variant, args):
+def build(work, siblings, variant, args, target='esp32'):
     """examples/idf/full built into work/build-<variant>; returns the app image."""
     out = os.path.join(work, f'build-{variant}')
     env = dict(os.environ, TESSERAPI_PATH=siblings['TesserAPI'], TESSERUI_PATH=siblings['TesserUI'],
@@ -83,7 +86,7 @@ def build(work, siblings, variant, args):
                                   if not (venv and p.startswith(venv)) and os.sep + 'uv' + os.sep not in p)
     idf = os.path.expanduser('~/esp/esp-idf/export.sh')
     cmd = ['bash', '-c', f'. "{idf}" > /dev/null && idf.py -C examples/idf/full -B "{out}" '
-           f'-DSDKCONFIG="{out}/sdkconfig" {" ".join(args)} set-target esp32 build']
+           f'-DSDKCONFIG="{out}/sdkconfig" {" ".join(args)} set-target {target} build']
     logf = out + '.log'
     os.makedirs(work, exist_ok=True)
     if run(cmd, env=env, out=logf):
@@ -96,7 +99,7 @@ def build(work, siblings, variant, args):
 
 
 def mac_of(port):
-    p = subprocess.run(['uvx', 'esptool', '--chip', 'esp32', '--port', port, '--baud', '115200', 'read-mac'],
+    p = subprocess.run(['uvx', 'esptool', '--port', port, '--baud', '115200', 'read-mac'],
                        capture_output=True, text=True, timeout=60)
     for line in p.stdout.splitlines():
         if line.startswith('MAC:'):
@@ -112,13 +115,13 @@ def flash(board, image):
     got = mac_of(board['port'])
     if got != board['mac']:
         sys.exit(f"{board['name']}: {board['port']} has MAC {got}, expected {board['mac']}: not flashing")
-    rc = run(['uvx', 'esptool', '--chip', 'esp32', '--port', board['port'], '--baud', str(board.get('baud', 460800)),
+    rc = run(['uvx', 'esptool', '--port', board['port'], '--baud', str(board.get('baud', 460800)),
               'write-flash', '@flash_args'], cwd=os.path.dirname(image), timeout=900)
     if rc:
         sys.exit(f"{board['name']}: flashing failed")
     # write-flash's own reset has left boards outside their app (seen on
     # all three after a downgrade, 2026-10-15): reset into it explicitly.
-    run(['uvx', 'esptool', '--chip', 'esp32', '--port', board['port'], '--baud', '115200', 'run'], timeout=60)
+    run(['uvx', 'esptool', '--port', board['port'], '--baud', '115200', 'run'], timeout=60)
     log(f"  {board['name']} flashed")
 
 
@@ -143,7 +146,7 @@ def wait_up(boards, settle):
         if waited > 90 and not reset:
             for b in down:
                 log(f"  {b['name']} still away after 90 s: resetting it")
-                run(['uvx', 'esptool', '--chip', 'esp32', '--port', b['port'], '--baud', '115200', 'run'], timeout=60)
+                run(['uvx', 'esptool', '--port', b['port'], '--baud', '115200', 'run'], timeout=60)
             reset = True
         elif waited > 210:
             sys.exit(f'not on the network after 210 s: {", ".join(b["name"] for b in down)}')
@@ -216,7 +219,8 @@ def main():
         for b in boards:
             variant = b.get('build', 'full')
             if variant not in images:
-                images[variant] = build(work, siblings, variant, cfg.get('builds', {}).get(variant, []))
+                images[variant] = build(work, siblings, variant, cfg.get('builds', {}).get(variant, []),
+                                        cfg.get('targets', {}).get(variant, 'esp32'))
     if '--build-only' in args:
         return 0
     if '--skip-flash' not in args:

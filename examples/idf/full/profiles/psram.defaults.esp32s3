@@ -1,0 +1,2 @@
+# Octal PSRAM, as on N8R8 modules.
+CONFIG_SPIRAM_MODE_OCT=y
