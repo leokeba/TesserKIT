@@ -190,8 +190,17 @@ void Auth::describe(tesser::Object& o) {
         .writeAccess(Access::Admin)
         .persist()
         .ui("advanced");
-    keyNode_ = &o.value("key", key_).validate(limits::atMost<64>).readOnly().secret().persist().readAccess(Access::Admin).ui("hidden");
-    bootsNode_ = &o.value("boots", boots_).readOnly().persist().readAccess(Access::Admin).ui("hidden");
+    // Neither goes into backups: a backup holding the key could forge
+    // tokens for this device, and the boot count is this device's.
+    keyNode_ = &o.value("key", key_)
+                    .validate(limits::atMost<64>)
+                    .readOnly()
+                    .secret()
+                    .persist()
+                    .backup(false)
+                    .readAccess(Access::Admin)
+                    .ui("hidden");
+    bootsNode_ = &o.value("boots", boots_).readOnly().persist().backup(false).readAccess(Access::Admin).ui("hidden");
 
     if (defaultName_ && defaultPassword_) {
         User u;
@@ -218,6 +227,15 @@ void Auth::tick(uint32_t nowMs) {
         wasOpen_ = o;
         dev_.secure(!o);
         openNode_->changed();
+    }
+    // An account added, removed or changed (a password, a role), every
+    // token revoked, or the device closed: the clients that hold a level
+    // from a token (or from the open device) are checked again, so an open
+    // WebSocket doesn't keep a level it lost (TesserAPI's tokensChanged()).
+    uint32_t gen = usersNode_->generation() + keyNode_->generation() + (o ? 0u : 1u);
+    if (gen != tokensGen_) {
+        tokensGen_ = gen;
+        dev_.api().tokensChanged();
     }
 }
 

@@ -3,6 +3,6 @@
 # and the launcher it publishes (.github/workflows/release.yml). One
 # owner/repo@sha per line. Update it with scripts/pin.sh, after the
 # siblings' commits are pushed, and commit it with the change that needs them.
-leokeba/TesserAPI@e8d5da27ce87cd8f3e6473239202cca948983733
+leokeba/TesserAPI@fd077c5e5f698cebcb09c74affdb7a3b257eb838
 leokeba/TesserUI@64ed358eb68f2da6c243c86f5d921410e532729c
 leokeba/NowTP@284a2db6061583987c695034536915461712609c

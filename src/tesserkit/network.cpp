@@ -405,6 +405,7 @@ void Network::describe(tesser::Object& o) {
                          .validate(limits::atMost<63>)
                          .readOnly()
                          .persist()
+                         .backup(false)  // this device's
                          .readAccess(Access::Admin)
                          .label("Password in secure mode")
                          .doc("The access point's password while the device has an admin account and no password "

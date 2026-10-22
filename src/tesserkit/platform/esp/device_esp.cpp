@@ -5,6 +5,7 @@
 #include "tesserkit/device.h"
 #include "tesserkit/platform/esp/esp_internal.h"
 
+#include <ctype.h>
 #include <stdio.h>
 
 #include <atomic>
@@ -105,6 +106,36 @@ bool Device::startServer() {
     }
     httpd_register_err_handler(http_.handle(), HTTPD_404_NOT_FOUND, notFound);
     return true;
+}
+
+void Device::applyStrict() {
+    if (!secure_) {
+        http_.strict(nullptr);
+        return;
+    }
+    // A page on another site can't send JSON without a preflight, nor an
+    // Origin it doesn't have; a name that isn't the device's is DNS
+    // rebinding. Addresses can't be rebound, so any IP literal passes. The
+    // names are copied here: the check runs in the HTTP task, without the
+    // API lock (docs/DESIGN.md section 7).
+    tesser::HttpServer::StrictOptions o;
+    o.allowHost = [name = hostname_, local = hostname_ + ".local"](std::string_view host) {
+        if (host.empty() || host.front() == '[') return true;  // IPv6 literal
+        bool address = true;
+        for (char c : host) address = address && ((c >= '0' && c <= '9') || c == '.');
+        if (address) return true;
+        auto same = [host](const std::string& n) {
+            if (n.size() != host.size()) return false;
+            for (size_t i = 0; i < n.size(); i++) {
+                if (tolower(static_cast<unsigned char>(n[i])) != tolower(static_cast<unsigned char>(host[i]))) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        return same(name) || same(local);
+    };
+    http_.strict(std::move(o));
 }
 
 void Device::wake() {

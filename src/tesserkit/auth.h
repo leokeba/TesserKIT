@@ -100,6 +100,7 @@ private:
     Attempts* attemptsOf(const tesser::Client& c, uint32_t nowMs);
     std::vector<Attempts> attempts_;
     uint32_t boots_ = 0;  // persisted: a clockless token belongs to its boot
+    uint32_t tokensGen_ = 0;  // users, key and open, as tick() last saw them
     tesser::Node* bootsNode_ = nullptr;
     const char* defaultName_ = nullptr;
     const char* defaultPassword_ = nullptr;

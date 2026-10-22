@@ -461,6 +461,7 @@ TEST(network_access_point_password_in_secure_mode) {
     CHECK_EQ(r.fake.wifi.ap.password, made);  // kept for this device
     CHECK_EQ(r.get("/sys/network/ap/securePassword", tesser::Query(), false).status,
              Status::Unauthorized);  // admins only
+    CHECK(r.dev.api().persistedState().find(made) == std::string::npos);  // this device's, not in backups
 }
 
 TEST(network_access_point_modes) {

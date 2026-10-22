@@ -119,12 +119,13 @@ void describe(tesser::Object& o, PeerSettings& s) {
         .label("Account")
         .doc("This device's account on that node; empty: the account of every node")
         .ui("placeholder", "the default");
-    o.value("password", s.password).validate(limits::atMost<limits::kSecret>).secret();
+    // Not in backups: a backup would clone the fleet's password.
+    o.value("password", s.password).validate(limits::atMost<limits::kSecret>).secret().backup(false);
 }
 
 void describe(tesser::Object& o, PeerAccount& a) {
     o.value("name", a.name).validate(limits::atMost<limits::kName>).ui("placeholder", "none");
-    o.value("password", a.password).validate(limits::atMost<limits::kSecret>).secret();
+    o.value("password", a.password).validate(limits::atMost<limits::kSecret>).secret().backup(false);
 }
 
 Peers::Peers(Device& dev) : Service(dev, "peers") {}

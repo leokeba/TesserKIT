@@ -370,6 +370,11 @@ void Device::loop() {
     if (!started_) return;
     uint32_t now = static_cast<uint32_t>(core().uptimeMs());
     lastNowMs_ = now;
+    if (secureGen_ != strictSecureGen_ || hostnameGeneration_ != strictHostGen_) {
+        strictSecureGen_ = secureGen_;
+        strictHostGen_ = hostnameGeneration_;
+        if (httpPort_) applyStrict();
+    }
     std::vector<Event> events;
     uint32_t dropped, mqttDropped;
     {
@@ -538,6 +543,7 @@ void Device::updateState(uint32_t nowMs) {
 #if !defined(ESP_PLATFORM)
 // The host has no platform of its own: tests fill Device::platform().
 bool Device::startServer() { return true; }
+void Device::applyStrict() {}
 bool Device::startTask() {
     tesser::logWarning("tesserkit: no task on the host; call Device::loop()");
     return true;

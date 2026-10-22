@@ -301,6 +301,10 @@ public:
 
 private:
     bool startServer();  // platform/esp/device_esp.cpp; nothing on the host
+    // The HTTP server's strict mode in secure mode (JSON bodies, Origin and
+    // Host checks, TesserAPI's HttpServer::strict()), off in open mode;
+    // again when the hostname changes. Platform side; nothing on the host.
+    void applyStrict();
     bool startTask();
     // NVS (Platform::nvs, which the ESP side fills), or null.
     tesser::Storage* nvsStorage();
@@ -331,6 +335,7 @@ private:
     bool stationAwake_ = false;
     bool secure_ = false;
     uint32_t secureGen_ = 0;
+    uint32_t strictSecureGen_ = 0xFFFFFFFF, strictHostGen_ = 0xFFFFFFFF;  // what applyStrict() last saw
     std::string name_;             // nameSetting_, else the label
     std::string nameSetting_;
     std::string hostnameOption_;   // hostname(const char*)

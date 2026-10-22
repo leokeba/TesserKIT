@@ -236,6 +236,43 @@ struct DetachedReply : tesser::StringReply {
     void release() override { delete this; }
 };
 
+TEST(auth_revocations_recheck_open_sessions) {
+    // TesserAPI's tokensChanged() on every change of who may do what, so a
+    // WebSocket opened with a token, or while the device was open, doesn't
+    // keep a level it lost.
+    AuthRig r;
+    CHECK(r.dev.begin());
+    r.run(40);
+    uint32_t g = r.dev.api().tokenGeneration();
+    r.set("/sys/auth/users", R"([{"name":"ada","password":"secret-pass","role":"admin"}])");  // the device closes
+    r.run(40);
+    CHECK(r.dev.api().tokenGeneration() != g);
+    g = r.dev.api().tokenGeneration();
+    r.set("/sys/auth/users/ada/role", "\"user\"");
+    r.run(40);
+    CHECK(r.dev.api().tokenGeneration() != g);
+    g = r.dev.api().tokenGeneration();
+    CHECK_EQ(r.set("/sys/auth/logoutAll").status, Status::Ok);
+    r.run(40);
+    CHECK(r.dev.api().tokenGeneration() != g);
+    g = r.dev.api().tokenGeneration();
+    r.run(200);
+    CHECK_EQ(r.dev.api().tokenGeneration(), g);  // nothing changed: nothing asked again
+}
+
+TEST(auth_backups_leave_out_the_key) {
+    // A backup holding /sys/auth/key could forge tokens for this device;
+    // the boot count is this device's too. Both stay in its own storage.
+    AuthRig r;
+    r.auth.defaultAdmin("admin", "pw");
+    CHECK(r.dev.begin());
+    r.run(100);
+    std::string backup = r.dev.api().persistedState();
+    CHECK(backup.find("\"users\"") != std::string::npos);
+    CHECK(backup.find("\"key\"") == std::string::npos);
+    CHECK(backup.find("\"boots\"") == std::string::npos);
+}
+
 TEST(auth_lockout_is_per_client) {
     // Five bad passwords lock that client out for 30 s, not the others: one
     // stranger can't keep the admin out.
