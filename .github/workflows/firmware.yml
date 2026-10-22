@@ -12,11 +12,21 @@
 #         project: firmware
 #         name: heliostat
 #
-# The version is the last tag's (vX.Y.Z) with the patch raised, or what
-# `version-command` prints when that is higher, so a minor or major release is
-# a commit raising that version. A rerun on a released commit keeps its
-# version. A run whose commit is no longer the branch's head by the time the
-# images are built releases nothing: the newer run releases its own commit.
+# The version is the last tag's (vX.Y.Z) with the patch raised, or its minor
+# or major when a commit since that tag has a "Release: minor" or
+# "Release: major" trailer in its message (the largest wins; one in a push
+# whose CI failed still counts at the next release), or what
+# `version-command` prints when that is higher (a first release, a jump).
+# `stamp-command` writes the version (in VERSION) into the repository's version
+# files: the job commits that on top of the pushed commit, as the bot, and the
+# tag points at that commit, so a tag's files state its version while the
+# branch never gets a commit from the bot. The images are built from the
+# pushed commit, with PROJECT_VER. A rerun on a released commit keeps its
+# version (its tag is on it or on its release commit). A run whose commit is
+# no longer the branch's head by the time the images are built releases
+# nothing: the newer run releases its own commit. Without `project` or
+# `projects`, the release has no images: a library's, with the same version,
+# stamp, tag and notes.
 # Each target gives <name>-<target>.bin, the image devices install,
 # and <name>-<target>-factory.bin, the whole flash for a new board (0x0).
 # Several firmwares go in one release with `projects` instead of `project`,
@@ -39,7 +49,7 @@ on:
         type: string
         default: ''
       projects:
-        description: 'Several firmwares, as a JSON list of {"project", "name", "build-args", "targets"}, instead of project, name and build-args; "targets" (a JSON list) replaces the targets input for that firmware'
+        description: 'Several firmwares, as a JSON list of {"project", "name", "build-args", "targets"}, instead of project, name and build-args; "targets" (a JSON list) replaces the targets input for that firmware. None of them: a release without images (a library)'
         type: string
         default: ''
       targets:
@@ -55,7 +65,11 @@ on:
         type: string
         default: ''
       version-command:
-        description: Prints the lowest version to release (jq -r .version library.json)
+        description: Prints the lowest version to release (jq -r .version library.json), for a first release or a jump
+        type: string
+        default: ''
+      stamp-command:
+        description: Writes the version (in VERSION) into the version files; the release commit on top of the pushed one, which the tag points at
         type: string
         default: ''
       dependencies:
@@ -95,6 +109,11 @@ jobs:
           BUILD_ARGS: ${{ inputs.build-args }}
           TARGETS: ${{ inputs.targets }}
         run: |
+          if [ -z "$PROJECTS" ] && [ -z "$PROJECT" ] && [ -z "$NAME" ]; then
+            # A library's release: the version, the tag and the notes.
+            echo "firmware=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ -z "$PROJECTS" ]; then
             if [ -z "$PROJECT" ] || [ -z "$NAME" ]; then
               echo "::error::give project and name, or projects"
@@ -120,13 +139,39 @@ jobs:
           VERSION_COMMAND: ${{ inputs.version-command }}
         run: |
           semver='^[0-9]+\.[0-9]+\.[0-9]+$'
-          tags() { git tag --list 'v*' "$@" | sed 's/^v//' | grep -E "$semver" | sort -V | tail -1; }
-          next=$(tags --points-at HEAD)
+          highest() { sed 's/^v//' | { grep -E "$semver" || true; } | sort -V | tail -1; }
+          # A rerun keeps the version of a released commit: its tag is on the
+          # commit itself (no stamp-command), or on the release commit
+          # stamped on top of it.
+          head=$(git rev-parse HEAD)
+          next=$(git for-each-ref --format='%(refname:short) %(*objectname)%(objectname)' 'refs/tags/v*' |
+            while read -r tag commit; do
+              commit=${commit:0:40}
+              if [ "$commit" = "$head" ] || [ "$(git rev-parse -q --verify "$commit^1" 2>/dev/null)" = "$head" ]; then
+                echo "$tag"
+              fi
+            done | highest)
           if [ -z "$next" ]; then
-            last=$(tags)
+            last=$(git tag --list 'v*' | highest)
             if [ -n "$last" ]; then
+              # Patch by default; a "Release: minor" or "Release: major"
+              # trailer in any commit since the last tag raises it (the
+              # largest wins), so one in a push whose CI failed still counts.
+              bump=patch
+              for kind in $(git log "v$last..HEAD" --format='%(trailers:key=Release,valueonly)' | tr 'A-Z' 'a-z'); do
+                case "$kind" in
+                  major) bump=major ;;
+                  minor) [ "$bump" = major ] || bump=minor ;;
+                  patch) ;;
+                  *) echo "::warning::unknown Release trailer '$kind' (major, minor or patch): taken as patch" ;;
+                esac
+              done
               IFS=. read -r major minor patch <<< "$last"
-              next="$major.$minor.$((patch + 1))"
+              case "$bump" in
+                major) next="$((major + 1)).0.0" ;;
+                minor) next="$major.$((minor + 1)).0" ;;
+                *) next="$major.$minor.$((patch + 1))" ;;
+              esac
             else
               next=0.1.0
             fi
@@ -179,6 +224,7 @@ jobs:
 
   build:
     needs: version
+    if: needs.version.outputs.firmware != '[]'
     runs-on: ubuntu-latest
     container: espressif/idf:${{ inputs.idf-version }}
     strategy:
@@ -254,29 +300,41 @@ jobs:
 
   release:
     needs: [version, build]
+    # Also without images (a library's release: build skipped).
+    if: ${{ !cancelled() && needs.version.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
+        if: needs.version.outputs.firmware != '[]'
         with:
           pattern: firmware-*
           merge-multiple: true
-          path: dist
+          path: ${{ runner.temp }}/dist
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
           TAG: v${{ needs.version.outputs.version }}
           DEPENDENCIES: ${{ needs.version.outputs.dependencies }}
+          STAMP_COMMAND: ${{ inputs.stamp-command }}
+          DIST: ${{ runner.temp }}/dist
         run: |
+          shopt -s nullglob
+          assets=("$DIST"/*.bin)
           # The dependencies' commits, before GitHub's generated notes.
           NOTES=""
           if [ "$DEPENDENCIES" != '{}' ]; then
             NOTES=$(jq -r '"Built with:\n" + (to_entries | map("- \(.key) [`\(.value[0:7])`](https://github.com/\(.key)/commit/\(.value))") | join("\n"))' <<< "$DEPENDENCIES")
           fi
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$TAG" dist/*.bin --clobber --repo "$GITHUB_REPOSITORY"
-          else
+            # A rerun of a released commit: its images replaced.
+            [ ${#assets[@]} -eq 0 ] || gh release upload "$TAG" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+            exit 0
+          fi
+          if [ -z "$(git ls-remote --tags origin "refs/tags/$TAG")" ]; then
             # A push during the build moved the branch on: the newer run
             # releases. The tag couldn't be made anyway if that push changed a
             # workflow file, since the token may not create a ref whose
@@ -287,6 +345,23 @@ jobs:
               echo "::notice::$GITHUB_REF_NAME moved on to ${head:0:7}: its own run releases, not $TAG for ${GITHUB_SHA:0:7}"
               exit 0
             fi
-            gh release create "$TAG" dist/*.bin --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "$TAG" --notes "$NOTES" --generate-notes
+            # The version files state the release's version at its tag, in a
+            # commit on top of the pushed one that only the tag points at:
+            # the branch gets no commits from the bot (sessions push to it).
+            # The images are built from the pushed commit (PROJECT_VER).
+            git checkout -q --detach "$GITHUB_SHA"
+            if [ -n "$STAMP_COMMAND" ]; then
+              bash -c "$STAMP_COMMAND"
+              if [ -n "$(git status --porcelain)" ]; then
+                git config user.name "github-actions[bot]"
+                git config user.email "41898341+github-actions[bot]@users.noreply.github.com"
+                git add -A
+                git commit -q -m "Release $TAG" -m "The version files of $TAG, stamped on ${GITHUB_SHA:0:7}."
+              fi
+            fi
+            git tag "$TAG"
+            git push -q origin "refs/tags/$TAG"
+            echo "$TAG: $(git rev-parse --short HEAD) (pushed ${GITHUB_SHA:0:7})" >> "$GITHUB_STEP_SUMMARY"
           fi
+          gh release create "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$TAG" --notes "$NOTES" --generate-notes

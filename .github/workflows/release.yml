@@ -93,6 +93,9 @@ jobs:
          {"project": "examples/idf/full", "name": "tesserkit-psram", "build-args": "-DPROFILE=psram", "targets": ["esp32s3"]}]
       targets: '["esp32", "esp32c3", "esp32s3"]'
       version-command: jq -r .version library.json
+      # The tag's library.json, library.properties and idf_component.yml say
+      # its version (DESIGN.md section 13).
+      stamp-command: python3 scripts/version.py "$VERSION"
       dependencies-file: deps.lock
       # Room for the next update in the 1.75 MB slot of the files table (3 MB
       # in the psram profile's 8 MB table).

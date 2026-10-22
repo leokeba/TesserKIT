@@ -106,7 +106,7 @@ Several defaults are "open until someone sets it up", and the gaps add up across
 
 ## Packaging and process
 
-- **Manifest versions:** TesserKIT's say 0.2.0 since 2026-10-22 (Leo): they name the release series, each release's patch comes from the tags, and a minor or major release is the commit raising them. The siblings' manifests still say 0.1.0.
+- **Manifest versions:** each release stamps its version into the manifests in the commit its tag points at (firmware.yml's `stamp-command`, 2026-10-22, the stack's release model, Leo), and `Release: minor`/`major` trailers raise the series. TesserUI, TesserAPI and NowTP adopt it in their own CI (TesserAPI and NowTP get their first tags).
 - **`idf_component.yml` doesn't list TesserAPI or TesserUI,** by decision (Leo, 2026-10-22): listed, the component manager fetches them beside the copies a project adds through `EXTRA_COMPONENT_DIRS` (tested: both build), which is how the examples, CI and every application add them. ESP-IDF users add them by hand, as the file says.
 - **Four mechanisms decide which features are built:** instantiation, builder opt-ins (`downloads()`, `github()`, `ethernet()`), Kconfig (mDNS, Home Assistant) and `-D`/sdkconfig detection. DESIGN §1 says "there are no feature flags". Direction: one documented scheme (Kconfig, mirrored as `-D` on Arduino).
 - **The size budgets of DESIGN §11** (60 KB for the core services, 12 KB of RAM at rest, ...) are measured by hand. CI now only checks the room left in each released image's slot.

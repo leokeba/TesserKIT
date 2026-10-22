@@ -8,10 +8,9 @@ license: "MIT"
 # beside the copies a project adds itself, and build both (2026-10-22, Leo:
 # they stay out). CMakeLists.txt finds them under any component name ending
 # in "tesserapi" and "tesserui".
-# The version names the release series (major.minor.0); each release's patch
-# comes from the tags (.github/workflows/firmware.yml), and a minor or major
-# release is the commit raising it here, in library.json and in
-# library.properties.
+# Each release stamps its version here, in library.json and in
+# library.properties, in the commit its tag points at (scripts/version.py,
+# .github/workflows/firmware.yml): main keeps the series last raised by hand.
 dependencies:
   idf:
     version: ">=5.1"
