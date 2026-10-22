@@ -8,7 +8,7 @@ Line references are from the reviewed commits: TesserKIT c0e8b9f, TesserAPI 5842
 
 ## Decisions waiting for Leo
 
-1. **Applications build siblings' `main` unpinned.** tiny-heliostat and ballet-photophonique call `firmware.yml` with plain `owner/repo` dependencies. TesserKIT pins its siblings in `deps.lock`; these two follow whatever `main` holds when their release runs. TesserAPI's main was red for ESP-IDF 5.1 builds between ba3d44f and d1f4e6d. Option: give each a `deps.lock` and `dependencies-file: deps.lock`.
+1. ~~Applications build siblings' `main` unpinned.~~ **Done in the applications:** tiny-heliostat, ballet-photophonique (7abf07d, "as tiny-heliostat does") and fluante-firmware each keep a `deps.lock` (TesserAPI, TesserUI, NowTP, TesserKIT, and TesserMotion where used) and pass it to `firmware.yml` as `dependencies-file` (checked 2026-10-22). Each moves its pins when it adopts a release.
 2. ~~The Ethernet variant of the full example is too big for a classic ESP32.~~ **Answered (Leo, 2026-10-21): the `classic` profile**, every service but Bluetooth, released for ESP32 with and without the Gledopto's Ethernet (Phase 2 item 1). Kept for the record: `examples/idf/full -DETHERNET_BOARD=gledopto` has about 5 KB of room in its slot (local IDF 6.2; CI's 5.5 images run about 15 KB larger, so it wouldn't fit in CI). With every service on, a Gledopto has 12 KB of free heap: HTTPS and backups are refused. With Bluetooth off it has 60 KB. Options: Bluetooth off by default on Ethernet boards, or fewer services in that variant. `release.yml`'s size gate doesn't build this variant.
 3. ~~Memory tiers for gateways aren't applied.~~ **Answered by Phase 1 item 3:** each node advertises its message limit and peers send it no more (TesserAPI dd33e19, NowTP deadc54), so a gateway can take a smaller tier without the fleet changing. What's left is choosing the gateway profile's limits (Phase 2).
 4. **Silent assertions in the full example** (258cced) saved 59 KB, so the release fits. A failed assert still panics with a backtrace and a core dump, but the console no longer prints the assert's file and line. Revert if you'd rather pay for the strings another way.
@@ -68,7 +68,6 @@ Several defaults are "open until someone sets it up", and the gaps add up across
 - **Policy in the platform layer:** done (2026-10-21, Phase 2 item 5). The DNS refill policy is Network's and host-tested (`IpStack`: read, set, renew a lease, `DnsEmpty`), no lease is renewed from inside lwIP's callback any more, and disconnect reasons arrive as a TesserKIT `StaReason`. The default route is Network's too since decision 6 (`IpStack::setDefault()`): Ethernet while it has a gateway, else the station; checked on board B with a link-local cable and the station on a DHCP network (GitHub checks over the station through three cable cycles, SNTP synced). DHCP and ACD timings (`kEthWaitMs`) stay in Network as policy constants.
 - **The network state machine is partly emergent.** The station has an explicit enum; its interaction with Ethernet and the AP is spread over predicates (`stationKeptAway`, `ethWaits`, `updateAp`'s `want`) and edge handlers. Network now re-reads interface state every second (6a48c46), which makes it robust, but not simpler.
 - **NowTP forces `WIFI_PS_NONE`** (`espnow_transport.cpp:893-901`), which overrides `/sys/network/wifi/powerSave`. The setting has no effect while NowTP runs.
-- **NowTP still runs its own task.** TesserKIT never sets NowTP's `runTask`; c3cebb9 removed only TesserAPI's worker. NowTP's polled mode has no wake hook or next-deadline query (see NowTP), so dropping the task (about 4 KB of stack) needs that first.
 
 ### TesserAPI
 
@@ -88,7 +87,6 @@ Several defaults are "open until someone sets it up", and the gaps add up across
   - Nodes connected to APs on different channels are permanently partitioned. That's inherent to ESP-NOW, but NowTP knows each peer's channel and could report it.
   - The automatic power fallback lowers Wi-Fi transmit power for the rest of the boot (`:1315-1317`).
 - **Callbacks run under NowTP's lock.** Receive, completion and peer-event callbacks hold NowTP's recursive mutex, so an application callback that takes a lock another task holds while calling NowTP can deadlock. TesserAPI avoids it by deferring; the contract is undocumented.
-- **Polled mode has no wake hook.** `poll()` has no `nextDeadlineMs()` and no wake from `pushEvent`. To drop the `nowtp` task, add an `onEvent` hook (`xTaskNotifyGive` from the Wi-Fi task) and a next-deadline query.
 - **Unauthenticated fragments can abort an authenticated reassembly.** An injected fragment with the same id but another count, or corrupt data, kills it (`engine.cpp:573-579`). No worse than jamming.
 - **`LatestOnly` scope is per (peer, port)**, and TesserAPI multiplexes everything on port 84. Latent: TesserAPI doesn't use `LatestOnly` today.
 - **Receiver credit.** nowtp-4f's recommendation for later: advertise free reassembly room in Busy and Missing acks, so senders wait before starting a message to a full receiver, and hold more than one message per destination only up to that credit. Today a refused message costs about one frame of airtime plus a resend.
@@ -193,11 +191,11 @@ Goal: documented service combinations per target, each with flash and heap headr
 - Item 3:
   - KIT: the `psram` profile; `/sys/status/heap`, `minHeap` and `maxBlock` count internal RAM only, with `minPsram` beside `psram` (fa5d59c). Reservations name their pool on branch `pending/phase2-siblings`: TLS from PSRAM under `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC`, a restore's document from PSRAM, string buffers where malloc puts them.
   - API: done (TesserAPI 2ceda41, by tesserapi-06, local). The budget counts internal RAM and PSRAM apart (`Pool`); JSON documents and NowTP's owned replies go to PSRAM.
-  - NowTP: dispatched to nowtp-0f.
+  - NowTP: done (NowTP 94eb400, by nowtp-0f, pushed, pinned). Blocks of 256 B and more (message copies, reassembly, stream chunks, the event ring's storage) go to PSRAM when there is some.
   - Not run on a board with PSRAM: none is connected.
 - Item 4:
   - UI done (TesserUI dde641f, by tesserui-49, local): the rarely used widgets in one chunk under `/ui/`. ui.js.gz went from 64.3 KB to 54.1 KB, 67.3 KB with the chunk. WebUi takes 3 handlers. A total budget of 80 KB is for Leo to confirm.
-  - NowTP's wake hook and next-deadline query: dispatched to nowtp-0f. TesserKIT drops the `nowtp` task once they land.
+  - NowTP's wake hook and next-deadline query: done (NowTP e980851, by nowtp-0f). TesserKIT polls NowTP from the device's task and no longer runs NowTP's own: about 3–4 KB more free heap on both boards. With the device task at priority 5, a relayed firmware update takes 49 s, against 48 s with NowTP's task and 80 s polled at priority 3 (DESIGN §4.2).
   - Partition tables per profile: `psram` uses the 8 MB table; `full` and `classic` keep the 4 MB files table.
   - Silent assertions (decision 4): kept in `full`, removed in `classic` and `psram`.
 - Item 5 done (2026-10-21): DNS refill, the default route and disconnect reasons moved into Network (see Reliability › TesserKIT).
@@ -249,9 +247,10 @@ Goal: defaults stay open; one switch (per device, or per fleet) turns on a coher
 
 ### Phase 4: architecture, protocol and packaging
 
-**Status (2026-10-21):**
+**Status (2026-10-22):**
 - Done: per-Api remote-node hooks (TesserAPI 82c45b6; TesserKIT's Peers on them in a3821f5); remembered file probe below remote nodes (6640d46); gateways send `"v":2` with forwarded options (fca7629, tested end to end in 0440024).
 - Done: the `RemoteNode`/`DatagramEndpoint` split (TesserAPI ecbe068..4d19b82, by tesserapi-c0; pinned in b9ce456, +8.8 KB of flash). Checked on two Gledoptos (2026-10-21, classic-gledopto, LE SAMPLE's Wi-Fi, their Ethernet cabled to each other): e2e_device 37/37, e2e_files 39/39, e2e_transfers 17/17 (firmware over serial in 207 s, through the gateway in 72 s), e2e_udp 24/24; lowest heap 47 KB on the gateway, 57 KB on the peer.
+- Done: applications pinned with `deps.lock` (item 5, decision 1), in tiny-heliostat, ballet-photophonique and fluante-firmware.
 
 1. **TesserAPI's structure (API):** split `RemoteNode` (routing, upstream cache, streamer, relay); per-instance hooks instead of process-wide statics (TesserKIT's Peers follows); cache remote schemas so requests below a remote node skip the probe.
 2. **Protocol (API, UI):** gateways send `"v":2` with forwarded options; TesserUI does once an option needs it.
@@ -269,7 +268,7 @@ Goal: defaults stay open; one switch (per device, or per fleet) turns on a coher
    - optimistic writes on objects;
    - versioned stub paths with SRI, and version bumps at release.
 5. **Packaging (KIT and apps):**
-   - applications pinned with `deps.lock` (decision 1);
+   - ~~applications pinned with `deps.lock` (decision 1)~~ done;
    - manifest versions that mean something;
    - siblings listed in `idf_component.yml`;
    - an Arduino build of TesserKIT in CI.

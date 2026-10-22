@@ -115,8 +115,12 @@ bool Device::startTask() {
     // Measured: the services use 1.3 KB. A transport polled here also runs
     // its requests here, which take up to 5 KB as in the HTTP task.
     uint32_t stack = pollers_.empty() ? 6144 : 8192;
+    // Their work runs at the priority their own tasks had (NowTP's and the
+    // HTTP server's, 5): at 3, a relay through a gateway waits behind the
+    // HTTP task that feeds it (DESIGN.md section 4.2).
+    UBaseType_t priority = pollers_.empty() ? 3 : 5;
     TaskHandle_t task = nullptr;
-    if (xTaskCreate(deviceTask, "tesserkit", stack, this, 3, &task) != pdPASS) {
+    if (xTaskCreate(deviceTask, "tesserkit", stack, this, priority, &task) != pdPASS) {
         tesser::logError("tesserkit: no memory for the task");
         return false;
     }

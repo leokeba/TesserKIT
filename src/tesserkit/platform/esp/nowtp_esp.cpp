@@ -11,6 +11,7 @@
 
 #include <stdio.h>
 
+#include <functional>
 #include <memory>
 
 #include "freertos/FreeRTOS.h"
@@ -59,6 +60,20 @@ public:
         c.eventBufferSize = 6 * 1024;
         c.timeSync.role = role(config.timeReference);
         c.timeSync.intervalMs = config.timeIntervalMs;
+        // Without worker tasks, NowTP's own goes too (about 4 KB of stack):
+        // its radio events and timers run in poll(), in the device's task,
+        // which its wake hook wakes when there is new work. The device
+        // polls every 20 ms, within the 250 ms NowTP may wait.
+        polled_ = !config.runTask;
+        c.runTask = config.runTask;
+        if (polled_) {
+            queued_ = config.queued;
+            c.wake = [](void* self) {
+                auto* radio = static_cast<EspNowTp*>(self);
+                if (radio->queued_) radio->queued_();
+            };
+            c.wakeContext = this;
+        }
         // The transport outlives a stop: nodes mounted under `peers` keep
         // pointing at its endpoint.
         if (!transport_) {
@@ -80,7 +95,6 @@ public:
             return false;
         }
         if (!transport_->begin(config.runTask)) return false;
-        polled_ = !config.runTask;
         if (polled_) transport_->endpoint().onQueued(config.queued);
         if (peers && !mounted_) {
             transport_->mountPeers(*peers);
@@ -94,7 +108,9 @@ public:
 
     tesser::DatagramEndpoint* endpoint() override { return transport_ ? &transport_->endpoint() : nullptr; }
     void poll() override {
-        if (polled_ && transport_) transport_->poll();
+        if (!polled_) return;
+        if (radio_.started()) radio_.poll();  // first: what it received reaches the transport's queue
+        if (transport_) transport_->poll();
     }
 
     uint64_t networkTimeUs() override { return radio_.networkTimeUs(); }
@@ -217,7 +233,8 @@ private:
 
     nowtp::EspNowTransport radio_;
     std::unique_ptr<tesser::NowTpTransport> transport_;
-    bool polled_ = false;  // no worker task: poll() handles the messages
+    bool polled_ = false;  // no worker tasks, NowTP's included: poll() does their work
+    std::function<void()> queued_;  // wakes the polling task (NowTP's wake hook)
     bool mounted_ = false;
     EventSink sink_;
 };
