@@ -1,11 +1,17 @@
-version: "0.1.0"
+version: "0.2.0"
 description: "A device framework for ESP32: network setup, time, firmware updates, backups and system status as TesserAPI subtrees, drawn by TesserUI"
 url: "https://github.com/leokeba/TesserKIT"
 license: "MIT"
 # TesserAPI and TesserUI are required but not listed: add them to the project
-# (EXTRA_COMPONENT_DIRS or dependencies of your main component).
-# CMakeLists.txt finds them under any component name ending in "tesserapi"
-# and "tesserui".
+# (EXTRA_COMPONENT_DIRS or dependencies of your main component), at the
+# commits deps.lock pins. Listed here, the component manager would fetch them
+# beside the copies a project adds itself, and build both (2026-10-22, Leo:
+# they stay out). CMakeLists.txt finds them under any component name ending
+# in "tesserapi" and "tesserui".
+# The version names the release series (major.minor.0); each release's patch
+# comes from the tags (.github/workflows/firmware.yml), and a minor or major
+# release is the commit raising it here, in library.json and in
+# library.properties.
 dependencies:
   idf:
     version: ">=5.1"

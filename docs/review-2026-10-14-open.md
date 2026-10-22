@@ -106,8 +106,8 @@ Several defaults are "open until someone sets it up", and the gaps add up across
 
 ## Packaging and process
 
-- **Manifest versions stay at `0.1.0`** in TesserKIT's `library.json` and `idf_component.yml` (and the siblings'), while tags are past v0.1.22. `firmware.yml` treats `library.json`'s version as a floor, so it can lag, but consumers see nothing meaningful. Bumping it needs a commit per release, which the release workflow can't make.
-- **`idf_component.yml` doesn't list TesserAPI or TesserUI.** ESP-IDF users add them by hand (the file says so).
+- **Manifest versions:** TesserKIT's say 0.2.0 since 2026-10-22 (Leo): they name the release series, each release's patch comes from the tags, and a minor or major release is the commit raising them. The siblings' manifests still say 0.1.0.
+- **`idf_component.yml` doesn't list TesserAPI or TesserUI,** by decision (Leo, 2026-10-22): listed, the component manager fetches them beside the copies a project adds through `EXTRA_COMPONENT_DIRS` (tested: both build), which is how the examples, CI and every application add them. ESP-IDF users add them by hand, as the file says.
 - **Four mechanisms decide which features are built:** instantiation, builder opt-ins (`downloads()`, `github()`, `ethernet()`), Kconfig (mDNS, Home Assistant) and `-D`/sdkconfig detection. DESIGN §1 says "there are no feature flags". Direction: one documented scheme (Kconfig, mirrored as `-D` on Arduino).
 - **The size budgets of DESIGN §11** (60 KB for the core services, 12 KB of RAM at rest, ...) are measured by hand. CI now only checks the room left in each released image's slot.
 - **CI has no hardware in the loop;** the e2e scripts (`test/hil.py`) are run by hand. Direction: a nightly self-hosted runner with a devkit running e2e_device and e2e_udp against the pinned commits. (The Arduino examples are built in CI since 2026-10-22.)
@@ -252,7 +252,7 @@ Goal: defaults stay open; one switch (per device, or per fleet) turns on a coher
 - Done: the `RemoteNode`/`DatagramEndpoint` split (TesserAPI ecbe068..4d19b82, by tesserapi-c0; pinned in b9ce456, +8.8 KB of flash). Checked on two Gledoptos (2026-10-21, classic-gledopto, LE SAMPLE's Wi-Fi, their Ethernet cabled to each other): e2e_device 37/37, e2e_files 39/39, e2e_transfers 17/17 (firmware over serial in 207 s, through the gateway in 72 s), e2e_udp 24/24; lowest heap 47 KB on the gateway, 57 KB on the peer.
 - Done: applications pinned with `deps.lock` (item 5, decision 1), in tiny-heliostat, ballet-photophonique and fluante-firmware.
 - Done: TesserAPI's structure (item 1: the split, per-Api hooks, and the remote file probe remembered under the peer's advertised hash, 6640d46) and the protocol (item 2).
-- Item 5: the Arduino examples built in CI (2026-10-22).
+- Item 5 done (2026-10-22): the Arduino examples built in CI; the manifests at 0.2.0, naming the release series; the siblings kept out of `idf_component.yml` (Leo).
 - Launched 2026-10-22 (Leo): item 3 to nowtp-5c, item 4 to tesserui-fa.
 
 1. **TesserAPI's structure (API):** split `RemoteNode` (routing, upstream cache, streamer, relay); per-instance hooks instead of process-wide statics (TesserKIT's Peers follows); cache remote schemas so requests below a remote node skip the probe.
@@ -272,6 +272,6 @@ Goal: defaults stay open; one switch (per device, or per fleet) turns on a coher
    - versioned stub paths with SRI, and version bumps at release.
 5. **Packaging (KIT and apps):**
    - ~~applications pinned with `deps.lock` (decision 1)~~ done;
-   - manifest versions that mean something;
-   - siblings listed in `idf_component.yml`;
+   - ~~manifest versions that mean something~~ done (0.2.0, the release series);
+   - ~~siblings listed in `idf_component.yml`~~ decided against (see Packaging);
    - ~~an Arduino build of TesserKIT in CI~~ done (release.yml's `arduino` job).
