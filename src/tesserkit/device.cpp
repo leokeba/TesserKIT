@@ -284,6 +284,7 @@ bool Device::begin() {
         *tail = s;
         tail = &s->next_;
         if (Files* f = s->asFiles()) files_ = f;
+        if (s->needsStationAwake()) stationAwake_ = true;
     }
     if (!platform_.core) platform_.core = espCore();
     if (!platform_.core) {

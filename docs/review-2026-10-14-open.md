@@ -67,7 +67,6 @@ Several defaults are "open until someone sets it up", and the gaps add up across
 
 - **Policy in the platform layer:** done (2026-10-21, Phase 2 item 5). The DNS refill policy is Network's and host-tested (`IpStack`: read, set, renew a lease, `DnsEmpty`), no lease is renewed from inside lwIP's callback any more, and disconnect reasons arrive as a TesserKIT `StaReason`. The default route is Network's too since decision 6 (`IpStack::setDefault()`): Ethernet while it has a gateway, else the station; checked on board B with a link-local cable and the station on a DHCP network (GitHub checks over the station through three cable cycles, SNTP synced). DHCP and ACD timings (`kEthWaitMs`) stay in Network as policy constants.
 - **The network state machine is partly emergent.** The station has an explicit enum; its interaction with Ethernet and the AP is spread over predicates (`stationKeptAway`, `ethWaits`, `updateAp`'s `want`) and edge handlers. Network now re-reads interface state every second (6a48c46), which makes it robust, but not simpler.
-- **NowTP forces `WIFI_PS_NONE`** (`espnow_transport.cpp:893-901`), which overrides `/sys/network/wifi/powerSave`. The setting has no effect while NowTP runs.
 
 ### TesserAPI
 
@@ -81,28 +80,16 @@ Several defaults are "open until someone sets it up", and the gaps add up across
 
 ### NowTP
 
-- **Channel and Wi-Fi coupling.**
-  - The interface is chosen once at `begin()` (`espnow_transport.cpp:782`) and captured by `RadioLink` (`:297`). A device going from AP-only to station, or back, fails every send; whether TesserKIT restarts NowTP on mode changes is unverified.
-  - A roaming station, or an AP changing channel, sends no move notice: followers notice after `peerTimeoutMs` (7 s) plus a channel search of about 3 s.
-  - Nodes connected to APs on different channels are permanently partitioned. That's inherent to ESP-NOW, but NowTP knows each peer's channel and could report it.
-  - The automatic power fallback lowers Wi-Fi transmit power for the rest of the boot (`:1315-1317`).
-- **Callbacks run under NowTP's lock.** Receive, completion and peer-event callbacks hold NowTP's recursive mutex, so an application callback that takes a lock another task holds while calling NowTP can deadlock. TesserAPI avoids it by deferring; the contract is undocumented.
 - **Unauthenticated fragments can abort an authenticated reassembly.** An injected fragment with the same id but another count, or corrupt data, kills it (`engine.cpp:573-579`). No worse than jamming.
 - **`LatestOnly` scope is per (peer, port)**, and TesserAPI multiplexes everything on port 84. Latent: TesserAPI doesn't use `LatestOnly` today.
-- **Receiver credit.** nowtp-4f's recommendation for later: advertise free reassembly room in Busy and Missing acks, so senders wait before starting a message to a full receiver, and hold more than one message per destination only up to that credit. Today a refused message costs about one frame of airtime plus a resend.
 - **Unicast Rejected acks to unauthenticated senders are kept by design.** They are how a sender with the wrong key gets `AuthFailed` quickly. With the peer table's eviction they can no longer fill it; rate-limiting them per sender remains an option.
 
 ### TesserUI
 
-- **Hidden pages keep their push subscriptions.** Polls pause while `document.hidden` (df634a5); a background tab's subscriptions and events stream stay open.
-- **The events-stream budget isn't shared across a launcher's connections.** Each opened connection holds one of a device's two streams.
-- **Custom element versions collide.** The element registry is per page, so two devices shipping different versions of `x-sun-dial` both get the first one loaded (`Element.svelte:4-18`).
-- **Optimistic writes on objects.** "Pending" is tracked per exact path (`store.svelte.ts:85`): a notification at a child of a pending object write (a form patch) overwrites the optimistic value.
 - **HTTP transport edges.**
   - File transfers over HTTP use a raw XHR (`File.svelte:61-84`) with no `targetAddressSpace` and no timeout.
   - A bridged serial port is recognised by its API URL ending in `/s` (`session.svelte.ts:286`).
-- **Versions and stubs.** Every package version says `0.1.0` while releases are past v0.1.8, so the `minVersion` check (`App.svelte:171`) can never trigger. DESIGN §9 promises stub pages "pin an exact version", but the README points stubs at the unversioned `leokeba.github.io/TesserUI/ui.js`, which changes with every push, with no SRI. Direction: versioned paths on Pages, SRI in `serveStub`, versions bumped at release.
-- **The bundle budget was raised, not solved.** `ui.js.gz` is 61,955 of the new 66,560 bytes. The way out if it fills again: one wildcard WebUi handler serving gzipped chunks (WebUi has one handler per asset under a cap of 10, `web_ui.h:33-36`), so rarely used widgets load on demand.
+- **The bundle's budget:** since TesserUI dde641f (Phase 2) the rarely used widgets load from a chunk, ui.js.gz 54.8 KB of 65 KB, 68.3 KB with the chunk of 70 KB (64ed358). The growth since 10-10 (48 KB) went to the connection layer, the page's multi-node shell and the list and form widgets.
 
 ## Packaging and process
 
@@ -247,24 +234,26 @@ Goal: defaults stay open; one switch (per device, or per fleet) turns on a coher
 
 ### Phase 4: architecture, protocol and packaging
 
-**Status (2026-10-22):**
+**Status (2026-10-22): every item done** (item 5's siblings-in-the-manifest by decision against).
 - Done: per-Api remote-node hooks (TesserAPI 82c45b6; TesserKIT's Peers on them in a3821f5); remembered file probe below remote nodes (6640d46); gateways send `"v":2` with forwarded options (fca7629, tested end to end in 0440024).
 - Done: the `RemoteNode`/`DatagramEndpoint` split (TesserAPI ecbe068..4d19b82, by tesserapi-c0; pinned in b9ce456, +8.8 KB of flash). Checked on two Gledoptos (2026-10-21, classic-gledopto, LE SAMPLE's Wi-Fi, their Ethernet cabled to each other): e2e_device 37/37, e2e_files 39/39, e2e_transfers 17/17 (firmware over serial in 207 s, through the gateway in 72 s), e2e_udp 24/24; lowest heap 47 KB on the gateway, 57 KB on the peer.
 - Done: applications pinned with `deps.lock` (item 5, decision 1), in tiny-heliostat, ballet-photophonique and fluante-firmware.
 - Done: TesserAPI's structure (item 1: the split, per-Api hooks, and the remote file probe remembered under the peer's advertised hash, 6640d46) and the protocol (item 2).
 - Item 5 done (2026-10-22): the Arduino examples built in CI; the manifests at 0.2.0, naming the release series; the siblings kept out of `idf_component.yml` (Leo).
-- Launched 2026-10-22 (Leo): item 3 to nowtp-5c, item 4 to tesserui-fa.
+- Item 3 done (NowTP 0.6, nowtp-5c, 014c4d5..82e7eba, released v0.6.0): power save left to the application (`RadioConfig::powerSave`; TesserKIT's default is `none` beside NowTp), peers on other channels reported (`otherChannel`, in `/sys/nowtp/nodes`), the interface following Wi-Fi's mode, a station's departure announced at once and its new channel on joining, receiver credit in acknowledgements, callbacks outside NowTP's lock. The power fallback stays for the boot (it re-tests the original power first). Not on hardware yet. *(later)* Network calling `announceChannelChange()` before joining a network on a known channel.
+- Item 4 done (TesserUI, tesserui-fa, 731bec7..64ed358, released v0.1.20/v0.1.21): hidden pages give their subscriptions back after 30 s; one events subscription per device across a launcher's connections; another node's different version of a custom element refused on the element; notifications below a pending object write held until its reply; every release kept at `/v<version>/` on Pages with `versions.json` (sha384) and `WebUi::integrity()` for stubs.
+- Release model (Leo, 2026-10-22, firmware.yml 3a657d8): trailers for the bump, stamped tags, library releases; TesserKIT v0.2.1, TesserUI v0.1.21, TesserAPI v0.1.0 and NowTP v0.6.0 released with it.
 
 1. **TesserAPI's structure (API):** split `RemoteNode` (routing, upstream cache, streamer, relay); per-instance hooks instead of process-wide statics (TesserKIT's Peers follows); cache remote schemas so requests below a remote node skip the probe.
 2. **Protocol (API, UI):** gateways send `"v":2` with forwarded options; TesserUI does once an option needs it.
-3. **NowTP (NowTP):**
+3. ~~**NowTP (NowTP)**~~ done (NowTP 0.6):
    - callbacks outside its lock, or the contract documented;
    - the interface re-bound on Wi-Fi mode changes;
    - move notices when a station roams;
    - peers' channels reported;
    - receiver credit;
    - Wi-Fi power save left to the application (`/sys/network/wifi/powerSave`), not forced to `WIFI_PS_NONE`.
-4. **TesserUI's client (UI):**
+4. ~~**TesserUI's client (UI)**~~ done (TesserUI v0.1.20):
    - hidden pages drop their push subscriptions;
    - one events-stream budget across a launcher's connections;
    - custom element version collisions;

@@ -150,6 +150,12 @@ void NowTp::describe(tesser::Object& o) {
                              e.value("mac", static_cast<const std::string&>(n.mac)).label("MAC");
                              e.value("rssi", static_cast<const int32_t&>(n.rssi)).unit("dBm").label("Signal");
                              e.value("channel", static_cast<const uint8_t&>(n.channel));
+                             // Its access point holds it on another channel:
+                             // seen, but no message reaches it.
+                             e.value("otherChannel", static_cast<const bool&>(n.otherChannel))
+                                 .label("On another channel")
+                                 .ui("style", "warning")
+                                 .ui("visibleWhen", "otherChannel=true");
                              e.value("tesser", static_cast<const bool&>(n.tesser)).label("TesserAPI");
                              e.value("authenticated", static_cast<const bool&>(n.authenticated)).label("Paired");
                          })
@@ -296,6 +302,7 @@ void NowTp::refresh() {
             n.mac = p.mac;
             n.rssi = p.rssi;
             n.channel = p.channel;
+            n.otherChannel = p.otherChannel;
             n.tesser = p.tesser;
             n.authenticated = p.authenticated;
             nodes.push_back(n);
@@ -305,7 +312,7 @@ void NowTp::refresh() {
     for (size_t i = 0; same && i < nodes.size(); i++) {
         const Node &a = nodes[i], &b = nodes_[i];
         same = a.name == b.name && a.mac == b.mac && a.rssi == b.rssi && a.channel == b.channel &&
-               a.tesser == b.tesser && a.authenticated == b.authenticated;
+               a.otherChannel == b.otherChannel && a.tesser == b.tesser && a.authenticated == b.authenticated;
     }
     if (!same) {
         nodes_ = std::move(nodes);

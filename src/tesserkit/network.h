@@ -160,7 +160,8 @@ private:
     bool apHidden_ = false;
     bool mdns_ = true;
     int8_t txPower_ = 0;
-    PowerSave powerSave_ = PowerSave::Min;
+    PowerSave powerSave_ = PowerSave::Min;  // none by default beside a service that needs the station awake
+    bool powerSaveChosen_ = false;          // set by the application (powerSave())
     StationMode staMode_ = StationMode::Fallback;  // Always without Ethernet
     bool ethWanted_ = false;
     bool ethEnabled_ = true;

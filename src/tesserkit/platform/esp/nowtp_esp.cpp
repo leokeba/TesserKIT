@@ -50,6 +50,10 @@ public:
         c.radio.channel = config.channel;
         c.radio.longRange = config.longRange;
         c.radio.txPowerDbm = config.txPower;
+        // Network applies /sys/network/wifi/powerSave, whose default is none
+        // with NowTp (NowTp::needsStationAwake()): NowTP leaves it.
+        c.radio.powerSave = nowtp::PowerSave::Leave;
+        c.radio.disablePowerSave = false;
         c.enableDiscovery = true;
         c.discovery.name = config.name.substr(0, nowtp::Discovery::kMaxName);
         c.security.pairingCode = config.pairingCode;
@@ -148,6 +152,7 @@ public:
             n.mac = macString(p.mac);
             n.rssi = p.rssi;
             n.channel = p.channel;
+            n.otherChannel = p.otherChannel;
             uint8_t port;
             uint32_t hash;
             n.tesser = tesser::NowTpTransport::parseAdvertisement(p.metadata, port, hash);

@@ -259,6 +259,7 @@ Network& Network::txPower(int8_t dBm) {
 
 Network& Network::powerSave(PowerSave mode) {
     powerSave_ = mode;
+    powerSaveChosen_ = true;
     return *this;
 }
 
@@ -284,6 +285,9 @@ void Network::migrate(uint32_t from, JsonObject settings) {
 
 void Network::describe(tesser::Object& o) {
     Device& dev = dev_;
+    // Beside NowTp the factory default keeps the modem awake: ESP-NOW loses
+    // the frames that arrive while it sleeps (NowTP 014c4d5).
+    if (!powerSaveChosen_ && dev.stationAwake()) powerSave_ = PowerSave::None;
     o.label("Network").ui("icon", "wifi").writeAccess(Access::Admin);
     // Empty: from the device's name (docs/DESIGN.md section 4.4).
     o.value("hostname", [&dev] { return dev.hostnameSetting(); },

@@ -75,9 +75,34 @@ TEST(nowtp_lists_the_nodes_nearby) {
     CHECK_EQ(r.value("/sys/nowtp/nodes/10:52:1c:75:f3:7c/tesser"), "true");
     CHECK_EQ(r.value("/sys/nowtp/nodes/aa:bb:cc:dd:ee:01/tesser"), "false");
     CHECK_EQ(r.set("/sys/nowtp/nodes", "[]").status, Status::ReadOnly);  // the radio's, not the client's
+    CHECK_EQ(r.value("/sys/nowtp/nodes/aa:bb:cc:dd:ee:01/otherChannel"), "false");
+    // Held on another channel by its access point: seen, out of reach.
+    r.fake.nowtp.nearby.back().otherChannel = true;
+    r.run(1100);
+    CHECK_EQ(r.value("/sys/nowtp/nodes/aa:bb:cc:dd:ee:01/otherChannel"), "true");
     r.fake.nowtp.nearby.erase(r.fake.nowtp.nearby.begin());
     r.run(1100);  // polled too
     CHECK_EQ(r.get("/sys/nowtp/nodes/10:52:1c:75:f3:7c").status, Status::NotFound);
+}
+
+TEST(nowtp_keeps_the_station_awake_by_default) {
+    // ESP-NOW loses frames while the modem sleeps: beside NowTp, Network's
+    // power save defaults to none; the user's setting and the
+    // application's still win.
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.value("/sys/network/wifi/powerSave"), "\"none\"");
+    CHECK(r.fake.wifi.ps == tesserkit::PowerSave::None);
+    CHECK_EQ(r.set("/sys/network/wifi/powerSave", "\"min\"").status, Status::Ok);
+    r.settle();
+    CHECK(r.fake.wifi.ps == tesserkit::PowerSave::Min);
+
+    NowTpRig d;
+    d.net.powerSave(tesserkit::PowerSave::Max);  // the application's factory default
+    CHECK(d.dev.begin());
+    d.settle();
+    CHECK_EQ(d.value("/sys/network/wifi/powerSave"), "\"max\"");
 }
 
 TEST(nowtp_channel_and_long_range_apply_at_once) {

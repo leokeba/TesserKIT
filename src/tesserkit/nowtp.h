@@ -61,13 +61,16 @@ protected:
     void tick(uint32_t nowMs) override;
     void event(const Event& e) override;
     void factoryReset() override;
+    // ESP-NOW loses frames while the station's modem sleeps: Network's power
+    // save defaults to none (docs/DESIGN.md section 5.2).
+    bool needsStationAwake() const override { return true; }
 
 private:
     struct Node {
         std::string name, mac;
         int32_t rssi = 0;
         uint8_t channel = 0;
-        bool tesser = false, authenticated = false;
+        bool otherChannel = false, tesser = false, authenticated = false;
     };
 
     uint32_t restartGen() const;

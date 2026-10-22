@@ -82,6 +82,10 @@ protected:
     virtual void factoryReset() {}
     // The Files service, which Device::files() returns.
     virtual Files* asFiles() { return nullptr; }
+    // True for a service that needs the Wi-Fi station awake to hear its
+    // radio (NowTp: ESP-NOW frames are lost while the modem sleeps), so
+    // Network's power save defaults to none (Device::stationAwake()).
+    virtual bool needsStationAwake() const { return false; }
     // Settings stored under an older TesserKIT settings version `from`
     // (below Device::kSettingsVersion; 0: before versions), before they are
     // loaded: the service's own object as stored (/sys/<name>, or /<name>
@@ -198,6 +202,8 @@ public:
     // The Files service, if the application has one (docs/DESIGN.md
     // section 5.12): other services keep their files there.
     Files* files() const { return files_; }
+    // A service needs the Wi-Fi station awake (Service::needsStationAwake()).
+    bool stationAwake() const { return stationAwake_; }
 #if defined(ESP_PLATFORM)
     tesser::HttpServer& http() { return http_; }
     tesserui::WebUi& web() { return web_; }
@@ -311,6 +317,7 @@ private:
     Migration appMigrate_;
     Service* services_ = nullptr;
     Files* files_ = nullptr;
+    bool stationAwake_ = false;
     std::string name_;             // nameSetting_, else the label
     std::string nameSetting_;
     std::string hostnameOption_;   // hostname(const char*)

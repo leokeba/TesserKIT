@@ -453,6 +453,7 @@ struct NowTpPeer {
     std::string mac;      // "aa:bb:cc:dd:ee:ff"
     int8_t rssi = 0;
     uint8_t channel = 0;
+    bool otherChannel = false;  // not on ours: its access point holds it elsewhere, out of reach
     bool tesser = false;  // a TesserAPI node, mounted under /peers when asked
     bool authenticated = false;
 };
