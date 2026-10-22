@@ -1,6 +1,6 @@
 {
   "name": "TesserKIT",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "description": "A device framework for ESP32: Wi-Fi, Ethernet, time, firmware updates, backups, files, users, schedules, MQTT with Home Assistant discovery, Art-Net, Bluetooth, ESP-NOW, the log, the battery and deep sleep as TesserAPI subtrees, drawn by TesserUI's web interface with no UI code. Arduino and ESP-IDF.",
   "keywords": ["framework", "wifi", "captive-portal", "ota", "ntp", "web", "esp32", "tesserapi", "tesserui"],
   "repository": {
