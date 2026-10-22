@@ -93,6 +93,9 @@ uint32_t imageLength(const esp_partition_t* p) {
     return len;
 }
 
+// Byte-addressable internal RAM: not PSRAM, nor the ESP32's IRAM-only regions.
+constexpr uint32_t kInternal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+
 void taskMain(void* arg) {
     std::unique_ptr<std::function<void()>> fn(static_cast<std::function<void()>*>(arg));
     (*fn)();
@@ -133,12 +136,18 @@ public:
         }
     }
     uint64_t uptimeMs() override { return static_cast<uint64_t>(esp_timer_get_time() / 1000); }
-    uint32_t freeHeap() override { return esp_get_free_heap_size(); }
-    uint32_t minFreeHeap() override { return esp_get_minimum_free_heap_size(); }
+    // Internal RAM only: esp_get_free_heap_size() counts PSRAM too, which on
+    // a board with 8 MB of it hides the internal RAM running out. Without
+    // PSRAM the two are the same.
+    uint32_t freeHeap() override { return static_cast<uint32_t>(heap_caps_get_free_size(kInternal)); }
+    uint32_t minFreeHeap() override { return static_cast<uint32_t>(heap_caps_get_minimum_free_size(kInternal)); }
     uint32_t largestFreeBlock() override {
-        return static_cast<uint32_t>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        return static_cast<uint32_t>(heap_caps_get_largest_free_block(kInternal));
     }
     uint32_t freePsram() override { return static_cast<uint32_t>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)); }
+    uint32_t minFreePsram() override {
+        return static_cast<uint32_t>(heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
+    }
     bool temperature(float& celsius) override {
 #if SOC_TEMP_SENSOR_SUPPORTED
         if (!sensor_) {

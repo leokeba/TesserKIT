@@ -119,7 +119,7 @@ inline void emit(Chaos* chaos, EventSink& sink, Event e) {
 struct Core : tesserkit::Core {
     tesserkit::BootInfo boot;
     uint64_t now = 1000;
-    uint32_t heap = 180000, minHeap = 150000, maxBlock = 110000, psram = 0;
+    uint32_t heap = 180000, minHeap = 150000, maxBlock = 110000, psram = 0, minPsram = 0;
     bool hasSensor = false;
     float celsius = 41.5f;
     int restarts = 0;
@@ -133,6 +133,7 @@ struct Core : tesserkit::Core {
     uint32_t minFreeHeap() override { return minHeap; }
     uint32_t largestFreeBlock() override { return maxBlock; }
     uint32_t freePsram() override { return psram; }
+    uint32_t minFreePsram() override { return minPsram; }
     bool temperature(float& c) override {
         c = celsius;
         return hasSensor;

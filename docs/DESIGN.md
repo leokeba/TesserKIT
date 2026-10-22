@@ -168,10 +168,10 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 /sys/status
   state        enum: booting, provisioning, connecting, online, updating, error
   uptime       integer, s, watched
-  heap         integer, B, watched, ui.chart        minHeap  integer, B
+  heap         integer, B, watched, ui.chart        minHeap  integer, B: internal RAM, PSRAM apart (it is what runs out)
   maxBlock     integer, B, advanced: the largest block one allocation can get (fragmentation)
   settings     string, warning callout while not empty: the settings kept in NVS although the application has Files, and why (§6.1); a settings record too large for NVS (§11)
-  psram        integer, B (only with PSRAM)
+  psram        integer, B (only with PSRAM)        minPsram  integer, B, advanced
   resetReason  enum: power-on, software, panic, watchdog, brownout, deep-sleep, other
   chip         string: "ESP32-D0WD-V3 rev 3.0, 2 cores, 240 MHz"
   flash        integer, B        appSize, appSlot  integer, B

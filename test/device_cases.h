@@ -215,9 +215,11 @@ TEST(device_optional_status_values) {
     SysRig r(false);
     r.fake.core.boot.psram = true;
     r.fake.core.psram = 4000000;
+    r.fake.core.minPsram = 3500000;
     r.fake.core.hasSensor = true;
     CHECK(r.dev.begin());
     CHECK_EQ(r.value("/sys/status/psram"), "4000000");
+    CHECK_EQ(r.value("/sys/status/minPsram"), "3500000");
     CHECK_EQ(r.value("/sys/status/temperature"), "41.5");
     CHECK_EQ(r.get("/sys/coredump").status, Status::NotFound);  // no core dump partition
 }

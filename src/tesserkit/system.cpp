@@ -61,6 +61,7 @@ void System::describe(tesser::Object& o) {
                            {"booting", "provisioning", "connecting", "online", "updating", "error"})
                        .readOnly());
     s.value("uptime", [&dev] { return static_cast<uint32_t>(dev.core().uptimeMs() / 1000); }).unit("s").watch();
+    // Internal RAM, what runs out; PSRAM apart below.
     s.value("heap", [&dev] { return dev.core().freeHeap(); }).label("Free heap").unit("B").watch().ui("widget", "chart");
     s.value("minHeap", [&dev] { return dev.core().minFreeHeap(); }).label("Lowest free heap").unit("B").watch();
     s.value("maxBlock", [&dev] { return dev.core().largestFreeBlock(); })
@@ -75,7 +76,13 @@ void System::describe(tesser::Object& o) {
         .watch()
         .ui("style", "warning")
         .ui("visibleWhen", "settings!=");
-    if (info.psram) s.value("psram", [&dev] { return dev.core().freePsram(); }).label("Free PSRAM").unit("B").watch();
+    if (info.psram) {
+        s.value("psram", [&dev] { return dev.core().freePsram(); }).label("Free PSRAM").unit("B").watch();
+        s.value("minPsram", [&dev] { return dev.core().minFreePsram(); })
+            .label("Lowest free PSRAM")
+            .unit("B")
+            .ui("advanced");
+    }
     s.value("resetReason", resetReason_,
             {"power-on", "software", "panic", "watchdog", "brownout", "deep-sleep", "other"})
         .readOnly()

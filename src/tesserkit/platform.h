@@ -96,12 +96,15 @@ public:
     virtual ~Core() = default;
     virtual void info(BootInfo& out) = 0;
     virtual uint64_t uptimeMs() = 0;
+    // Internal RAM, which is what runs out (Wi-Fi, lwIP, DMA and the stacks
+    // need it): PSRAM apart, where the chip has some.
     virtual uint32_t freeHeap() = 0;
     virtual uint32_t minFreeHeap() = 0;
     // The largest block one allocation can get: a fragmented heap aborts on
     // a large one with plenty free in all.
     virtual uint32_t largestFreeBlock() = 0;
     virtual uint32_t freePsram() = 0;
+    virtual uint32_t minFreePsram() = 0;
     // False on chips without a sensor.
     virtual bool temperature(float& celsius) = 0;
     virtual void restart() = 0;
