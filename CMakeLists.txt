@@ -26,6 +26,7 @@ set(TESSERKIT_CORE_SRCS
     src/tesserkit/peers.cpp
     src/tesserkit/pwm.cpp
     src/tesserkit/pulses.cpp
+    src/tesserkit/button.cpp
     src/tesserkit/settings_store.cpp)
 
 if(ESP_PLATFORM)

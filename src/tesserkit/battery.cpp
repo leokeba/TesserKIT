@@ -104,7 +104,7 @@ void Battery::start() {
         adcOk_ = pins_ && pins_->analogBegin(adcPin_);
         if (!adcOk_) tesser::logError("tesserkit: Battery: GPIO %d can't read a voltage", adcPin_);
     }
-    if (chargePin_ >= 0 && !(pins_ && pins_->inputBegin(chargePin_, chargeActiveLow_))) {
+    if (chargePin_ >= 0 && !(pins_ && pins_->inputBegin(chargePin_, chargeActiveLow_ ? Pins::Pull::Up : Pins::Pull::None))) {
         tesser::logError("tesserkit: Battery: GPIO %d can't be read", chargePin_);
         chargePin_ = -1;
     }

@@ -614,8 +614,10 @@ public:
     virtual bool analogBegin(int8_t pin) = 0;
     // The pin's voltage, calibrated, in millivolts.
     virtual bool analogMv(int8_t pin, uint32_t& mv) = 0;
-    // Prepares `pin` as a digital input, pulled up or not.
-    virtual bool inputBegin(int8_t pin, bool pullUp) = 0;
+    // Prepares `pin` as a digital input, held by the chip's pull-up or
+    // pull-down resistor, or by none.
+    enum class Pull : uint8_t { None, Up, Down };
+    virtual bool inputBegin(int8_t pin, Pull pull) = 0;
     virtual bool input(int8_t pin) = 0;
 };
 

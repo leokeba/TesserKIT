@@ -149,7 +149,7 @@ TEST(battery_charging_pin) {
     r.fake.pins.level[4] = true;  // CHRG high: not charging
     r.battery.adc(35).chargingPin(4);
     CHECK(r.dev.begin());
-    CHECK(r.fake.pins.pulled[4]);
+    CHECK(r.fake.pins.pulled[4] == tesserkit::Pins::Pull::Up);
     r.step();
     CHECK_EQ(r.value("/sys/battery/charging"), "false");
     r.fake.pins.level[4] = false;

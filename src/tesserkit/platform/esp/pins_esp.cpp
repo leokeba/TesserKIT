@@ -84,13 +84,13 @@ public:
         return true;
     }
 
-    bool inputBegin(int8_t pin, bool pullUp) override {
+    bool inputBegin(int8_t pin, Pull pull) override {
         if (pin < 0 || !GPIO_IS_VALID_GPIO(pin)) return false;
         gpio_config_t c = {};
         c.pin_bit_mask = 1ULL << pin;
         c.mode = GPIO_MODE_INPUT;
-        c.pull_up_en = pullUp ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE;
-        c.pull_down_en = GPIO_PULLDOWN_DISABLE;
+        c.pull_up_en = pull == Pull::Up ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE;
+        c.pull_down_en = pull == Pull::Down ? GPIO_PULLDOWN_ENABLE : GPIO_PULLDOWN_DISABLE;
         c.intr_type = GPIO_INTR_DISABLE;
         return gpio_config(&c) == ESP_OK;
     }

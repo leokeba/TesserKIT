@@ -742,7 +742,7 @@ struct Power : tesserkit::Power {
 struct Pins : tesserkit::Pins {
     std::map<int, uint32_t> mv;     // analog pins and their millivolts
     std::map<int, bool> level;      // digital inputs
-    std::map<int, bool> pulled;     // inputBegin()'s
+    std::map<int, tesserkit::Pins::Pull> pulled;  // inputBegin()'s
     bool analogBegin(int8_t pin) override { return mv.count(pin) > 0; }
     bool analogMv(int8_t pin, uint32_t& out) override {
         auto it = mv.find(pin);
@@ -750,8 +750,8 @@ struct Pins : tesserkit::Pins {
         out = it->second;
         return true;
     }
-    bool inputBegin(int8_t pin, bool pullUp) override {
-        pulled[pin] = pullUp;
+    bool inputBegin(int8_t pin, Pull pull) override {
+        pulled[pin] = pull;
         return level.count(pin) > 0;
     }
     bool input(int8_t pin) override { return level[pin]; }

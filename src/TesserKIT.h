@@ -14,6 +14,7 @@
 #include "tesserkit/backup.h"
 #include "tesserkit/battery.h"
 #include "tesserkit/bluetooth.h"
+#include "tesserkit/button.h"
 #include "tesserkit/device.h"
 #include "tesserkit/dmx.h"
 #include "tesserkit/files.h"
