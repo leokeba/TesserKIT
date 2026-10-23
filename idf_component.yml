@@ -1,4 +1,4 @@
-version: "0.2.0"
+version: "0.3.3"
 description: "A device framework for ESP32: network setup, time, firmware updates, backups and system status as TesserAPI subtrees, drawn by TesserUI"
 url: "https://github.com/leokeba/TesserKIT"
 license: "MIT"
