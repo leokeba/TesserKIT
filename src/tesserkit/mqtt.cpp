@@ -353,7 +353,7 @@ void Mqtt::connect() {
     // A TLS session's memory, from the byte budget: refused, the client
     // isn't started, and the next try comes after kRetryMs.
     if (!reserveTls(uri_, tls_)) {
-        setError("not enough free memory for TLS now (about 44 KB needed)");
+        setError("not enough free memory for TLS now (about 52 KB needed)");
         return;
     }
     Device& dev = dev_;

@@ -520,6 +520,44 @@ TEST(firmware_github_checks_by_itself) {
     CHECK_EQ(r.check().status, Status::Busy);
 }
 
+size_t g_freeHeap = 0;
+
+TEST(firmware_automatic_checks_wait_for_headroom) {
+    GithubRig r;
+    r.fake.http.files[kLatest] = releaseJson("v1.0.0", {"fw-esp32.bin"});
+    tesser::setHeapFloor(8 * 1024);
+    tesser::setFreeHeapProbe([] { return g_freeHeap; });
+    g_freeHeap = 64 * 1024;  // room for the session and the floor, not the headroom
+    CHECK(r.dev.begin());
+    r.run(61000);
+    CHECK(r.fake.core.tasks.empty());  // the automatic check waited
+    CHECK_EQ(r.fw.release(), tesserkit::ReleaseState::Failed);
+    CHECK_EQ(r.value("/sys/firmware/github/error"),
+             "\"not enough free memory for an automatic check now (about 68 KB needed)\"");
+    // Asked for, it goes.
+    CHECK_EQ(r.check().status, Status::Ok);
+    CHECK_EQ(r.fw.release(), tesserkit::ReleaseState::Current);
+    // The automatic one goes again with the headroom back.
+    g_freeHeap = 80 * 1024;
+    r.fake.http.files[kLatest] = releaseJson("v1.1.0", {"fw-esp32.bin"});
+    r.skip(tesserkit::Firmware::kCheckEveryMs);
+    CHECK_EQ(r.fake.core.tasks.size(), 1u);
+    r.fake.core.runTasks();
+    CHECK_EQ(r.fw.release(), tesserkit::ReleaseState::Available);
+    tesser::setFreeHeapProbe(nullptr);
+    tesser::setHeapFloor(0);
+}
+
+TEST(firmware_auto_check_default) {
+    FwRig r;
+    r.fw.github("o/r", "fw-{target}.bin").autoCheck(false);
+    r.fake.http.files[kLatest] = releaseJson("v1.0.0", {"fw-esp32.bin"});
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.value("/sys/firmware/github/autoCheck"), "false");
+    r.run(61000);
+    CHECK(r.fake.core.tasks.empty());
+}
+
 TEST(firmware_image_header) {
     std::string img = fake::image(2, 64);
     const uint8_t* d = reinterpret_cast<const uint8_t*>(img.data());

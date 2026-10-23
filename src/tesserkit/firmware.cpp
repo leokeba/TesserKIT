@@ -26,12 +26,18 @@ namespace {
 // took the heap down to 268 bytes, then failed for want of the client. With
 // the budget's 8 KB floor on top, about 24 KB must be free.
 constexpr size_t kHttpBytes = 16 * 1024;
+// What an automatic release check leaves free beyond its session's
+// reservation and the floor: the check is optional, and the budget doesn't
+// see lwIP's and Wi-Fi's buffers, which traffic fills meanwhile (on a
+// Gledopto with Ethernet and Wi-Fi up, pixled-controller saw a check take
+// the heap from 64 KB to 1.2 KB). About 68 KB free.
+constexpr size_t kAutoCheckHeadroom = 16 * 1024;
 
 Check tlsRoom(const std::string& url, std::shared_ptr<tesser::Reservation>& held) {
     held = std::make_shared<tesser::Reservation>();
     if (url.compare(0, 8, "https://") == 0) {
         if (reserveTls(url, *held)) return Check::ok();
-        return Check::fail(Status::Busy, "not enough free memory for HTTPS now (about 44 KB needed)");
+        return Check::fail(Status::Busy, "not enough free memory for HTTPS now (about 52 KB needed)");
     }
     *held = tesser::reserveBytes(kHttpBytes);
     if (*held) return Check::ok();
@@ -222,6 +228,7 @@ public:
     void describe(tesser::Object& o) override;
     void tick(uint32_t nowMs) override;
     ReleaseState state() const override { return state_; }
+    void autoCheck(bool on) override { autoCheck_ = on; }
 
 private:
     // What a check found.
@@ -236,8 +243,8 @@ private:
     static Latest fetch(HttpClient& http, const std::string& url, const std::string& pattern,
                         const std::string& target, tesser::Reservation& tls);
     bool idle() const { return fw_.state_ == FirmwareState::Idle || fw_.state_ == FirmwareState::Failed; }
-    // Starts a check in a task.
-    void check();
+    // Starts a check in a task; an automatic one only with headroom left.
+    void check(bool automatic);
     // The check's outcome, from its task.
     void checked(const Latest& r);
     void setState(ReleaseState s);
@@ -275,7 +282,7 @@ void Firmware::GithubFeed::describe(tesser::Object& o) {
          tesser::Pending p = call.defer();
          if (!p) return;
          waiters_.push_back(std::move(p));
-         if (state_ != ReleaseState::Checking) check();
+         if (state_ != ReleaseState::Checking) check(false);
      }).label("Check now");
     g.action("update", [this]() -> Check {
          if (state_ != ReleaseState::Available) return Check::fail(Status::NotAllowed, "no newer release");
@@ -291,7 +298,7 @@ void Firmware::GithubFeed::describe(tesser::Object& o) {
 void Firmware::GithubFeed::tick(uint32_t nowMs) {
     if (!stateNode_ || !autoCheck_ || !idle() || state_ == ReleaseState::Checking) return;
     if (fw_.dev_.onlineMs() < kFirstCheckMs) return;
-    if (checkDue_ || static_cast<int32_t>(nowMs - nextCheckMs_) >= 0) check();
+    if (checkDue_ || static_cast<int32_t>(nowMs - nextCheckMs_) >= 0) check(true);
 }
 
 Firmware::GithubFeed::Latest Firmware::GithubFeed::fetch(HttpClient& http, const std::string& url,
@@ -341,7 +348,7 @@ Firmware::GithubFeed::Latest Firmware::GithubFeed::fetch(HttpClient& http, const
     return out;
 }
 
-void Firmware::GithubFeed::check() {
+void Firmware::GithubFeed::check(bool automatic) {
     checkDue_ = false;
     Device& dev = fw_.dev_;
     HttpClient* http = dev.platform().http;
@@ -351,6 +358,15 @@ void Firmware::GithubFeed::check() {
     setState(ReleaseState::Checking);
     std::shared_ptr<tesser::Reservation> tls;
     Check room = tlsRoom(url, tls);
+    // An automatic check is optional: it waits for a heap that keeps
+    // kAutoCheckHeadroom free beyond its session and the floor, for what
+    // the budget doesn't see (lwIP's and Wi-Fi's buffers under traffic).
+    // The session's memory isn't taken yet: the free heap still holds it.
+    size_t session = url.compare(0, 8, "https://") == 0 ? kTlsBytes : kHttpBytes;
+    if (room.isOk() && automatic && !tesser::heapAbove(session + kAutoCheckHeadroom)) {
+        tls->release();
+        room = Check::fail(Status::Busy, "not enough free memory for an automatic check now (about 68 KB needed)");
+    }
     if (!room.isOk()) {
         Latest r;
         r.status = room.status;
@@ -428,6 +444,11 @@ Ota& Firmware::ota() { return *ota_; }
 Firmware& Firmware::downloads() {
     Platform& p = dev_.platform();
     if (!p.http) p.http = espHttpClient();
+    return *this;
+}
+
+Firmware& Firmware::autoCheck(bool on) {
+    if (feed_) feed_->autoCheck(on);
     return *this;
 }
 

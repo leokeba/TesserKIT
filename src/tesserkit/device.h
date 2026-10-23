@@ -38,11 +38,12 @@ const tesser::Node* findNode(const tesser::Object& root, std::string_view path, 
 bool resolves(const tesser::Object& root, std::string_view path);
 
 // What a TLS session (HTTPS, MQTT over TLS) takes from the heap at its peak,
-// its task included: about 34 KB measured on a classic ESP32 fetching a
-// GitHub release, with a margin. Reserved from TesserAPI's byte budget
-// before a session starts (docs/DESIGN.md section 11), which keeps its heap
-// floor (8 KB on target) on top: about 44 KB free, as before the budget.
-constexpr size_t kTlsBytes = 36 * 1024;
+// its task included, with a margin. Measured on a classic ESP32 checking
+// GitHub's latest release over Wi-Fi (2026-10-23, Gledopto B): 42 KB with
+// ESP-IDF 5.5 (CI's releases), 38 KB with 6.1-dev. Reserved from
+// TesserAPI's byte budget before a session starts (docs/DESIGN.md section
+// 11), which keeps its heap floor (8 KB on target) on top: about 52 KB free.
+constexpr size_t kTlsBytes = 44 * 1024;
 // kTlsBytes held in `held` for a session to `uri` if it uses TLS
 // (https://, mqtts://, wss://); true without reserving for one that
 // doesn't. False if the budget refused them. Settle `held` once the

@@ -35,6 +35,10 @@ public:
     // server's latest-release endpoint answering as GitHub's does (Gitea,
     // Forgejo, a test server). Implies downloads(). Before Device::begin().
     Firmware& github(const char* repo, const char* asset);
+    // Whether a new device checks for a release daily on its own
+    // (github/autoCheck, default true); false: only when asked, for devices
+    // that run shows. After github(), before Device::begin().
+    Firmware& autoCheck(bool on);
 
     void describe(tesser::Object& o) override;
 
@@ -93,6 +97,7 @@ private:
         virtual void describe(tesser::Object& o) = 0;
         virtual void tick(uint32_t nowMs) = 0;
         virtual ReleaseState state() const = 0;
+        virtual void autoCheck(bool on) = 0;
     };
     class GithubFeed;
     std::unique_ptr<Feed> feed_;
