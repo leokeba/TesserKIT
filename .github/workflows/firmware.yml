@@ -28,7 +28,9 @@
 # `projects`, the release has no images: a library's, with the same version,
 # stamp, tag and notes.
 # Each target gives <name>-<target>.bin, the image devices install,
-# and <name>-<target>-factory.bin, the whole flash for a new board (0x0).
+# <name>-<target>-factory.bin, the whole flash for a new board (0x0), and
+# <name>-<target>.elf, the image's symbols, which decode a core dump of it
+# (a rebuild gives another ELF: paths and dates differ).
 # Several firmwares go in one release with `projects` instead of `project`,
 # `name` and `build-args`, each for `targets` or for its own:
 #
@@ -290,11 +292,14 @@ jobs:
           fi
           mkdir -p "$GITHUB_WORKSPACE/dist"
           cp "$(field app_bin)" "$GITHUB_WORKSPACE/dist/$NAME-$TARGET.bin"
+          cp "$(field app_elf)" "$GITHUB_WORKSPACE/dist/$NAME-$TARGET.elf"
           python -m esptool --chip "$TARGET" merge_bin -o "$GITHUB_WORKSPACE/dist/$NAME-$TARGET-factory.bin" @flash_args
       - uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.name }}-${{ matrix.target }}
-          path: dist/*.bin
+          path: |
+            dist/*.bin
+            dist/*.elf
           if-no-files-found: error
           retention-days: 1
 
@@ -323,7 +328,7 @@ jobs:
           DIST: ${{ runner.temp }}/dist
         run: |
           shopt -s nullglob
-          assets=("$DIST"/*.bin)
+          assets=("$DIST"/*.bin "$DIST"/*.elf)
           # The dependencies' commits, before GitHub's generated notes.
           NOTES=""
           if [ "$DEPENDENCIES" != '{}' ]; then
