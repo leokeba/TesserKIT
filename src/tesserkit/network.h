@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -74,6 +75,12 @@ public:
     // The board's Ethernet (boards::gledopto(), ...): /sys/network/ethernet.
     // The station keeps away while it has a DHCP lease (StationMode::Fallback).
     Network& ethernet(const EthernetBoard& board);
+    // The board's Ethernet chosen when Network starts, after the settings
+    // are loaded: for an application that keeps its board in its own
+    // settings. `choose` fills the board, or returns false for none: then
+    // /sys/network/ethernet, which exists from the start, says "no board"
+    // and Network runs as without Ethernet.
+    Network& ethernet(std::function<bool(EthernetBoard&)> choose);
 
     void describe(tesser::Object& o) override;
     void migrate(uint32_t from, JsonObject settings) override;
@@ -176,6 +183,7 @@ private:
     bool ethWanted_ = false;
     bool ethEnabled_ = true;
     EthernetBoard ethBoard_;
+    std::function<bool(EthernetBoard&)> ethChoose_;
     StaticIp ethStatic_;
 
     // Nodes whose writes the service follows, by generation.

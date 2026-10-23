@@ -292,6 +292,12 @@ Network& Network::ethernet(const EthernetBoard& board) {
     return *this;
 }
 
+Network& Network::ethernet(std::function<bool(EthernetBoard&)> choose) {
+    ethernet(EthernetBoard());
+    ethChoose_ = std::move(choose);
+    return *this;
+}
+
 void Network::migrate(uint32_t from, JsonObject settings) {
     // Before version 2 the hostname's setting was the hostname itself, its
     // default the label's (or the application's): one stored equal to it
@@ -465,6 +471,11 @@ void Network::start() {
     wifi_->powerSave(powerSave_);
     powerSaveGen_ = powerSaveNode_->generation();
     uint32_t now = static_cast<uint32_t>(dev.core().uptimeMs());
+    if (eth_ && ethChoose_ && !ethChoose_(ethBoard_)) {
+        eth_ = nullptr;
+        ethState_ = "no board";
+        ethStatus_->changed();
+    }
     if (eth_) {
         if (eth_->begin(ethBoard_, dev.hostname().c_str(), ethConfig(), [&dev](Event e) { dev.post(std::move(e)); })) {
             EthInfo i;

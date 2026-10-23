@@ -2,6 +2,8 @@
 // access point and its captive portal, mDNS.
 #pragma once
 
+#include <map>
+
 #include "rig.h"
 
 namespace network_cases {
@@ -648,6 +650,45 @@ TEST(network_without_ethernet_has_no_tree) {
     CHECK_EQ(chip.get("/sys/network/ethernet").status, Status::NotFound);
     chip.settle();
     CHECK(chip.fake.wifi.apUp);  // recovery as without Ethernet
+}
+
+// The board chosen when Network starts: from the application's own
+// settings, loaded by then.
+struct ChosenEthRig : NetRig {
+    std::string preset;
+    int chosen = 0;
+    ChosenEthRig() {
+        dev.api().object("board").value("preset", preset).persist();
+        net.ethernet([this](tesserkit::EthernetBoard& b) {
+            chosen++;
+            return tesserkit::boards::byName(preset, b);
+        });
+    }
+};
+
+TEST(network_ethernet_board_chosen_after_load) {
+    std::map<std::string, std::string> saved;
+    {
+        ChosenEthRig r;  // nothing stored: no board
+        CHECK(r.dev.begin());
+        CHECK_EQ(r.chosen, 1);
+        CHECK_EQ(r.fake.ethernet.begins, 0);
+        r.step();
+        CHECK_EQ(at(r.value("/sys/network/ethernet/status"), "state"), "\"no board\"");
+        r.settle();
+        CHECK(r.fake.wifi.apUp);  // as without Ethernet
+        CHECK_EQ(r.set("/board/preset", "\"wt32-eth01\"").status, Status::Ok);
+        r.run(2500);
+        saved = r.storage.records;
+    }
+    ChosenEthRig r;  // the next boot, with the preset stored
+    r.storage.records = saved;
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.chosen, 1);
+    CHECK_EQ(r.fake.ethernet.begins, 1);
+    CHECK_EQ(r.fake.ethernet.board.power, 16);  // the WT32-ETH01's
+    r.step();
+    CHECK_EQ(at(r.value("/sys/network/ethernet/status"), "state"), "\"no cable\"");
 }
 
 // A W5500 module on SPI: the same tree, its wiring handed to the platform.
