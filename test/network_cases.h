@@ -1475,4 +1475,17 @@ TEST(network_event_times_are_the_rounds) {
     CHECK(net.connected());
 }
 
+TEST(network_boards_by_name) {
+    tesserkit::EthernetBoard b;
+    CHECK(tesserkit::boards::byName("gledopto", b));
+    CHECK(b.phy == tesserkit::EthernetBoard::Phy::Lan8720 && b.mdio == 33 && b.power == 5);
+    CHECK(tesserkit::boards::byName("wt32-eth01", b) && b.power == 16);
+    CHECK(tesserkit::boards::byName("olimex-esp32-poe", b) && b.clock == tesserkit::EthernetBoard::Clock::Out);
+    CHECK(tesserkit::boards::byName("esp32-ethernet-kit", b) && b.phy == tesserkit::EthernetBoard::Phy::Ip101);
+    b.mdio = 99;
+    CHECK(!tesserkit::boards::byName("Gledopto", b));  // names are exact
+    CHECK(!tesserkit::boards::byName("w5500", b));
+    CHECK_EQ(b.mdio, 99);  // left alone
+}
+
 }  // namespace network_cases

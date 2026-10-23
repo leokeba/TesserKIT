@@ -37,6 +37,24 @@ config FULL_ARTNET
     bool "ArtNet: lighting consoles"
     default y
 
+config FULL_SACN
+    bool "Sacn: lighting consoles over E1.31 (sACN)"
+    default n
+    help
+        In the classic and psram profiles. Off by default: the full set's
+        ESP32 slot has little room left, and sACN takes about 4 KB with
+        the IGMP it needs.
+
+config FULL_DMX_PROBE
+    int "DMX probe: universes handed to a test sink (0: none)"
+    range 0 64
+    default 0
+    help
+        A load test's instrument (test/e2e_dmx.py): Art-Net universes 0 to
+        n-1 and sACN universes 1 to n go to a DmxSink that copies each
+        frame into a frame buffer, as an LED controller does, and counts
+        them under /dmx. 512 bytes of RAM per universe.
+
 config FULL_BLUETOOTH
     bool "Bluetooth: the launcher from a phone"
     depends on BT_ENABLED && BT_NIMBLE_ENABLED

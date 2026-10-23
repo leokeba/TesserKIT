@@ -445,14 +445,31 @@ struct Udp : tesserkit::Udp {
     std::map<uint16_t, std::deque<Datagram>> inbox;  // by local port
     std::vector<Datagram> sent;
     std::map<uint16_t, bool> open_;  // ports with a socket
+    // Ports whose socket listens: what deliver() hands at once.
+    std::map<uint16_t, tesserkit::UdpReceiver> listeners;
     bool fails = false;
+    bool listenFails = false;
     int opens = 0;
+    uint64_t clockUs = 0;  // the receiving task's clock
 
     std::unique_ptr<tesserkit::UdpSocket> open(uint16_t port) override;
-    // A datagram from `ip`:`fromPort` to the local `port`.
+    // A datagram from `ip`:`fromPort` to the local `port`: queued, or
+    // handed to its listener at once (as its task would).
     void deliver(uint16_t port, const std::string& data, uint32_t ip = 0xC0A80164, uint16_t fromPort = 6454) {
+        auto l = listeners.find(port);
+        if (l != listeners.end()) {
+            l->second(reinterpret_cast<const uint8_t*>(data.data()), data.size(), ip, clockUs);
+            return;
+        }
         inbox[port].push_back({ip, fromPort, data});
     }
+};
+
+// Multicast groups, by the socket's local port.
+struct UdpGroups : tesserkit::UdpGroups {
+    std::map<uint16_t, std::vector<uint32_t>> groups;
+    int calls = 0;
+    bool set(tesserkit::UdpSocket& socket, const std::vector<uint32_t>& groups) override;
 };
 
 // An MQTT client and its broker: the test connects it, sends messages and
@@ -787,6 +804,7 @@ struct Platform {
     HttpClient http;
     Coredump coredump;
     Udp udp;
+    UdpGroups udpGroups;
     Mqtt mqtt;
     Ble ble;
     NowTp nowtp;
@@ -810,6 +828,7 @@ struct Platform {
         p.http = &http;
         p.coredump = withCoredump ? &coredump : nullptr;
         p.udp = &udp;
+        p.udpGroups = &udpGroups;
         p.mqtt = &mqtt;
         p.ble = &ble;
         p.nowtp = &nowtp;

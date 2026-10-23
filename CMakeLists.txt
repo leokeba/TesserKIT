@@ -13,7 +13,9 @@ set(TESSERKIT_CORE_SRCS
     src/tesserkit/auth.cpp
     src/tesserkit/timers.cpp
     src/tesserkit/sequencer.cpp
+    src/tesserkit/dmx.cpp
     src/tesserkit/artnet.cpp
+    src/tesserkit/sacn.cpp
     src/tesserkit/mqtt.cpp
     src/tesserkit/bluetooth.cpp
     src/tesserkit/nowtp.cpp
@@ -68,6 +70,7 @@ if(ESP_PLATFORM)
              src/tesserkit/platform/esp/http_client_esp.cpp
              src/tesserkit/platform/esp/coredump_esp.cpp
              src/tesserkit/platform/esp/udp_esp.cpp
+             src/tesserkit/platform/esp/udp_groups_esp.cpp
              src/tesserkit/platform/esp/mqtt_esp.cpp
              src/tesserkit/platform/esp/ble_esp.cpp
              src/tesserkit/platform/esp/nowtp_esp.cpp

@@ -43,6 +43,10 @@ EthernetBoard esp32EthernetKit();
 // A W5500 module on SPI, wired to these GPIOs; without `irq` it is polled.
 // spin-sequencer's XIAO ESP32-S3: w5500(7, 8, 9, 44, 43) (D8, D9, D10, D7, D6).
 EthernetBoard w5500(int8_t sck, int8_t miso, int8_t mosi, int8_t cs, int8_t irq = -1, int8_t reset = -1);
+// A board above by its name, for a board file: "gledopto", "wt32-eth01",
+// "olimex-esp32-poe", "esp32-ethernet-kit". False for any other (a W5500
+// has no fixed wiring: w5500()).
+bool byName(const std::string& name, EthernetBoard& out);
 }  // namespace boards
 
 // "a.b.c.d" as (a << 24) | (b << 16) | (c << 8) | d; false if it isn't one.

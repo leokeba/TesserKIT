@@ -355,7 +355,11 @@ namespace {
 class UdpSocket : public tesserkit::UdpSocket {
 public:
     UdpSocket(Udp& udp, uint16_t port) : udp_(udp), port_(port) { udp_.open_[port] = true; }
-    ~UdpSocket() override { udp_.open_[port_] = false; }
+    ~UdpSocket() override {
+        udp_.open_[port_] = false;
+        udp_.listeners.erase(port_);
+    }
+    uint16_t port() const { return port_; }
     size_t receive(uint8_t* buf, size_t cap, uint32_t& fromIp, uint16_t& fromPort) override {
         auto& q = udp_.inbox[port_];
         if (q.empty()) return 0;
@@ -371,6 +375,11 @@ public:
         udp_.sent.push_back({ip, port, std::string(reinterpret_cast<const char*>(data), len)});
         return true;
     }
+    bool listen(const char*, uint8_t, int8_t, uint32_t, tesserkit::UdpReceiver fn) override {
+        if (udp_.listenFails) return false;
+        udp_.listeners[port_] = std::move(fn);
+        return true;
+    }
 
 private:
     Udp& udp_;
@@ -378,6 +387,17 @@ private:
 };
 
 }  // namespace
+
+bool UdpGroups::set(tesserkit::UdpSocket& socket, const std::vector<uint32_t>& list) {
+    calls++;
+    uint16_t port = static_cast<UdpSocket&>(socket).port();  // every socket here is the fake's
+    if (list.empty()) {
+        groups.erase(port);
+    } else {
+        groups[port] = list;
+    }
+    return true;
+}
 
 std::unique_ptr<tesserkit::UdpSocket> Udp::open(uint16_t port) {
     opens++;

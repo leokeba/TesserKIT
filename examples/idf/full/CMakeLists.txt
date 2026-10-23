@@ -80,6 +80,11 @@ endif()
 if(DEFINED BATTERY_GPIO)
     list(APPEND TESSERKIT_FULL_ARGS "CONFIG_FULL_BATTERY_GPIO=${BATTERY_GPIO}")
 endif()
+# -DDMX_PROBE=n: a test sink receiving n universes of Art-Net and sACN
+# (test/e2e_dmx.py).
+if(DEFINED DMX_PROBE)
+    list(APPEND TESSERKIT_FULL_ARGS "CONFIG_FULL_DMX_PROBE=${DMX_PROBE}")
+endif()
 tesserkit_example_defaults(TESSERKIT_FULL_DEFAULTS ${TESSERKIT_FULL_ARGS})
 # A target's own defaults (sdkconfig.defaults.esp32c3, ...) follow each file.
 set(SDKCONFIG_DEFAULTS "${TESSERKIT_FULL_DEFAULTS}")

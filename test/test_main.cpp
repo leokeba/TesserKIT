@@ -7,6 +7,7 @@
 #include "auth_cases.h"
 #include "timer_cases.h"
 #include "artnet_cases.h"
+#include "sacn_cases.h"
 #include "mqtt_cases.h"
 #include "bluetooth_cases.h"
 #include "nowtp_cases.h"

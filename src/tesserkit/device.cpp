@@ -560,6 +560,7 @@ Ota* espOta() { return nullptr; }
 HttpClient* espHttpClient() { return nullptr; }
 Coredump* espCoredump() { return nullptr; }
 Udp* espUdp() { return nullptr; }
+UdpGroups* espUdpGroups() { return nullptr; }
 MqttClient* espMqtt() { return nullptr; }
 MqttClient* espMqttTls() { return nullptr; }
 Ble* espBle() { return nullptr; }

@@ -24,8 +24,12 @@
 // of two equal resistors; -DETHERNET_BOARD=gledopto uses that board's
 // Ethernet; -DETHERNET_W5500="sck,miso,mosi,cs,irq" a W5500 module on those
 // GPIOs; -DLED_GPIO=n the LED's pin.
+#include <algorithm>
+#include <vector>
+
 #include "TesserKIT.h"
 #include "driver/ledc.h"
+#include "esp_timer.h"
 #include "sdkconfig.h"
 
 #if __has_include("secrets.h")
@@ -85,6 +89,52 @@ void describe(tesser::Object& o, Led& led) {
 
 Led led;
 
+#if CONFIG_FULL_DMX_PROBE > 0 && CONFIG_FULL_ARTNET && CONFIG_FULL_SACN
+// A load test's sink (test/e2e_dmx.py): what an LED controller does with each
+// frame, a copy into its frame buffer under a spinlock, then counted.
+struct DmxProbe : tesserkit::DmxSink {
+    static constexpr int kUniverses = CONFIG_FULL_DMX_PROBE;
+    portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+    uint8_t buffer[kUniverses][512] = {};
+    uint32_t frames[kUniverses] = {};
+    uint32_t artnet = 0, sacn = 0, syncs = 0, longestUs = 0;
+
+    void frame(const tesserkit::DmxFrame& f) override {
+        int64_t start = esp_timer_get_time();
+        bool art = f.protocol == tesserkit::DmxProtocol::ArtNet;
+        int i = art ? f.universe : f.universe - 1;  // Art-Net 0 to n-1, sACN 1 to n
+        if (i < 0 || i >= kUniverses) return;
+        portENTER_CRITICAL(&mux);
+        memcpy(buffer[i], f.data, f.length);
+        frames[i]++;
+        (art ? artnet : sacn)++;
+        portEXIT_CRITICAL(&mux);
+        uint32_t us = static_cast<uint32_t>(esp_timer_get_time() - start);
+        if (us > longestUs) longestUs = us;
+    }
+    void sync(const tesserkit::DmxSync&) override { syncs++; }
+
+    void describe(tesser::Object& o) {
+        o.label("DMX probe").doc("Frames handed to the application's sink (test/e2e_dmx.py)");
+        o.value("universes", kUniverses);
+        o.value("artnet", [this] { return artnet; }).watch();
+        o.value("sacn", [this] { return sacn; }).watch();
+        o.value("syncs", [this] { return syncs; }).watch();
+        o.value("least", [this] { return *std::min_element(frames, frames + kUniverses); })
+            .doc("The frames of the universe with fewest");
+        o.value("most", [this] { return *std::max_element(frames, frames + kUniverses); });
+        o.value("longestUs", [this] { return longestUs; }).unit("µs").doc("The longest frame() call");
+        o.action("reset", [this] {
+            portENTER_CRITICAL(&mux);
+            memset(frames, 0, sizeof(frames));
+            artnet = sacn = syncs = longestUs = 0;
+            portEXIT_CRITICAL(&mux);
+        });
+    }
+};
+DmxProbe probe;
+#endif
+
 tesserkit::Device dev("TesserKIT");
 tesserkit::System sys(dev);           // /sys/status, restart, factory reset, core dump
 tesserkit::Network net(dev);          // Wi-Fi, Ethernet, access point, captive portal, mDNS
@@ -103,6 +153,9 @@ tesserkit::Mqtt mqtt(dev);            // a broker bridge
 #endif
 #if CONFIG_FULL_ARTNET
 tesserkit::ArtNet artnet(dev);        // lighting consoles
+#endif
+#if CONFIG_FULL_SACN
+tesserkit::Sacn sacn(dev);            // lighting consoles over E1.31
 #endif
 #if CONFIG_FULL_BLUETOOTH  // not on the ESP32-C3 (sdkconfig.defaults.esp32c3), nor in the classic profile
 tesserkit::Bluetooth bluetooth(dev);  // the launcher from a phone
@@ -205,6 +258,16 @@ extern "C" void app_main() {
     on.threshold = 128;
     artnet.universe(0).map(brightness).map(on);
 #endif
+#if CONFIG_FULL_SACN
+    sacn.universe(1);  // no mappings: the console's universe 1 is free to the application
+#endif
+#if CONFIG_FULL_DMX_PROBE > 0 && CONFIG_FULL_ARTNET && CONFIG_FULL_SACN
+    std::vector<uint16_t> universes;
+    for (int u = 0; u < DmxProbe::kUniverses; u++) universes.push_back(static_cast<uint16_t>(u));
+    artnet.sink(&probe).universes(universes);
+    for (uint16_t& u : universes) u++;
+    sacn.sink(&probe).universes(universes);
+#endif
 #if CONFIG_FULL_NOWTP && defined(NOWTP_PAIRING_CODE)
     espNow.pairingCode(NOWTP_PAIRING_CODE);
 #endif
@@ -225,6 +288,9 @@ extern "C" void app_main() {
     });
 #endif
     dev.api().mount("led", led).label("LED").ui("icon", "bulb");
+#if CONFIG_FULL_DMX_PROBE > 0 && CONFIG_FULL_ARTNET && CONFIG_FULL_SACN
+    probe.describe(dev.api().object("dmx"));
+#endif
     static tesserui::Views views(dev.api());
     auto& home = views.page("overview", "Overview").icon("home");
     home.card("LED").node("/led");

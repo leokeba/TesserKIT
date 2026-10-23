@@ -359,7 +359,12 @@ public:
     virtual bool format() = 0;
 };
 
-// A UDP socket bound to a port: ArtNet's. Used from the device's task.
+// A datagram as it arrived: its bytes (up to 640), its sender, and when
+// (Core::uptimeMs()'s clock, in µs).
+using UdpReceiver = std::function<void(const uint8_t* data, size_t len, uint32_t fromIp, uint64_t atUs)>;
+
+// A UDP socket bound to a port: ArtNet's and Sacn's. Used from the device's
+// task, but for what listen() runs.
 class UdpSocket {
 public:
     virtual ~UdpSocket() = default;
@@ -367,13 +372,32 @@ public:
     // `cap`), or 0 if none. `fromIp` is a.b.c.d as (a << 24) | ...
     virtual size_t receive(uint8_t* buf, size_t cap, uint32_t& fromIp, uint16_t& fromPort) = 0;
     virtual bool send(uint32_t ip, uint16_t port, const uint8_t* data, size_t len) = 0;
+    // Hands each datagram to `fn` as it arrives, from a task of the
+    // socket's (`name`, at `priority`, on `core`, -1 either, with
+    // `stackBytes`) until the socket is destroyed, which waits for the task
+    // to end; receive() then has nothing. False if there is no such task.
+    virtual bool listen(const char* name, uint8_t priority, int8_t core, uint32_t stackBytes, UdpReceiver fn) = 0;
 };
 
 class Udp {
 public:
     virtual ~Udp() = default;
-    // A socket receiving on `port` (unicast and broadcast), or null.
+    // A socket receiving on `port` (unicast, broadcast, and the groups
+    // UdpGroups joined for it), or null.
     virtual std::unique_ptr<UdpSocket> open(uint16_t port) = 0;
+};
+
+// IPv4 multicast groups for UDP sockets: Sacn's. Apart from Udp, so a
+// build without it doesn't link IGMP.
+class UdpGroups {
+public:
+    virtual ~UdpGroups() = default;
+    // The groups `socket` receives, joined on every interface with IGMP and
+    // left when no longer listed (an empty list before the socket closes).
+    // The same list again joins the interfaces that appeared since. While a
+    // socket has groups, Ethernet passes every multicast frame on (the ESP32
+    // MAC filters seven addresses, which the system's groups mostly take).
+    virtual bool set(UdpSocket& socket, const std::vector<uint32_t>& groups) = 0;
 };
 
 struct MqttConfig {
@@ -608,6 +632,7 @@ struct Platform {
     HttpClient* http = nullptr;
     Coredump* coredump = nullptr;  // stays null without a core dump partition
     Udp* udp = nullptr;
+    UdpGroups* udpGroups = nullptr;
     MqttClient* mqtt = nullptr;
     Ble* ble = nullptr;
     NowTpRadio* nowtp = nullptr;
@@ -633,6 +658,7 @@ Ota* espOta();
 HttpClient* espHttpClient();
 Coredump* espCoredump();
 Udp* espUdp();
+UdpGroups* espUdpGroups();
 MqttClient* espMqtt();     // null if the build has no MQTT client
 MqttClient* espMqttTls();  // the same, verifying brokers with the certificate bundle
 Ble* espBle();             // null if the build has no Bluetooth LE (NimBLE, or Arduino's BLE)

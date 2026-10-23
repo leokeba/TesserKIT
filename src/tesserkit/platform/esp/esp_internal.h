@@ -6,6 +6,8 @@
 
 #include <stdint.h>
 
+#include <atomic>
+
 #include "esp_err.h"
 #include "esp_netif.h"
 #include "tesserkit/platform.h"
@@ -32,6 +34,12 @@ void applyIp(esp_netif_t* netif, const IpConfig& ip);
 // Initializes esp_netif and the default event loop, which applications
 // (and Arduino) may have done already (wifi_esp.cpp).
 void netifInit();
+
+// UDP sockets with multicast groups (udp_groups_esp.cpp), and what Ethernet
+// installs to pass every multicast frame on while there are any
+// (eth_esp.cpp): called on the first socket's groups and after the last's.
+extern std::atomic<int> multicastSockets;
+extern void (*multicastChanged)(bool on);
 
 // a.b.c.d as (a << 24) | ... to and from lwIP's network byte order.
 inline uint32_t toNetwork(uint32_t ip) { return __builtin_bswap32(ip); }

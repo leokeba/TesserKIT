@@ -210,6 +210,25 @@ EthernetBoard wt32Eth01() { return board(Phy::Lan8720, 1, 23, 18, 16, Clock::In,
 EthernetBoard olimexEsp32Poe() { return board(Phy::Lan8720, 0, 23, 18, 12, Clock::Out, 17); }
 EthernetBoard esp32EthernetKit() { return board(Phy::Ip101, 1, 23, 18, 5, Clock::In, 0); }
 
+bool byName(const std::string& name, EthernetBoard& out) {
+    static const struct {
+        const char* name;
+        EthernetBoard (*board)();
+    } kBoards[] = {
+        {"gledopto", gledopto},
+        {"wt32-eth01", wt32Eth01},
+        {"olimex-esp32-poe", olimexEsp32Poe},
+        {"esp32-ethernet-kit", esp32EthernetKit},
+    };
+    for (const auto& b : kBoards) {
+        if (name == b.name) {
+            out = b.board();
+            return true;
+        }
+    }
+    return false;
+}
+
 EthernetBoard w5500(int8_t sck, int8_t miso, int8_t mosi, int8_t cs, int8_t irq, int8_t reset) {
     EthernetBoard b;
     b.phy = Phy::W5500;

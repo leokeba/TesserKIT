@@ -14,13 +14,13 @@ using rig::Op;
 using rig::Status;
 
 // An ArtDmx packet for `universe` (a 15-bit port-address).
-inline std::string dmx(uint16_t universe, const std::vector<uint8_t>& channels) {
+inline std::string dmx(uint16_t universe, const std::vector<uint8_t>& channels, uint8_t sequence = 1) {
     std::string p("Art-Net\0", 8);
     p += '\x00';
     p += '\x50';  // OpDmx, low byte first
     p += '\x00';
     p += '\x0e';  // protocol 14
-    p += '\x01';  // sequence
+    p += static_cast<char>(sequence);
     p += '\x00';  // physical
     p += static_cast<char>(universe & 0xFF);
     p += static_cast<char>(universe >> 8);
@@ -42,6 +42,32 @@ inline std::string poll() {
     p += '\x00';
     return p;
 }
+
+inline std::string artSync() {
+    std::string p("Art-Net\0", 8);
+    p += '\x00';
+    p += '\x52';  // OpSync
+    p += '\x00';
+    p += '\x0e';
+    p += '\x00';
+    p += '\x00';
+    return p;
+}
+
+// An application's sink: what it was handed.
+struct Sink : tesserkit::DmxSink {
+    struct Frame {
+        tesserkit::DmxFrame f;
+        std::vector<uint8_t> data;
+    };
+    std::vector<Frame> frames;
+    std::vector<tesserkit::DmxSync> syncs;
+    void frame(const tesserkit::DmxFrame& f) override {
+        frames.push_back({f, std::vector<uint8_t>(f.data, f.data + f.length)});
+        frames.back().f.data = nullptr;
+    }
+    void sync(const tesserkit::DmxSync& s) override { syncs.push_back(s); }
+};
 
 inline tesserkit::ArtNetMapping mapping(const char* path, uint16_t coarse, uint16_t fine, double min, double max,
                                  uint8_t threshold = 0) {
@@ -243,6 +269,102 @@ TEST(artnet_refused_writes_are_events) {
     r.send(dmx(0, {10}));
     r.send(dmx(0, {255}));
     CHECK_EQ(ev.take().size(), size_t(1));
+}
+
+TEST(artnet_hands_its_universes_to_a_sink) {
+    ArtNetRig r;
+    Sink sink;
+    r.artnet.sink(&sink).map(mapping("/led/brightness", 1, 0, 0, 255));
+    CHECK(r.dev.begin());
+    r.run(40);
+    r.artnet.universes({5, 3, 4, 40000, 3});  // 40000 isn't a port-address
+    CHECK(r.artnet.universes() == std::vector<uint16_t>({3, 4, 5}));
+    r.fake.udp.clockUs = 123456789;
+    // Handed as it arrives, by the receiving task: no period needed.
+    r.fake.udp.deliver(6454, dmx(3, {10, 20, 30}, 7), 0xC0A8010A);
+    CHECK_EQ(sink.frames.size(), size_t(1));
+    if (!sink.frames.empty()) {
+        const auto& f = sink.frames[0];
+        CHECK(f.f.protocol == tesserkit::DmxProtocol::ArtNet);
+        CHECK_EQ(f.f.universe, 3);
+        CHECK_EQ(f.f.sequence, 7);
+        CHECK_EQ(f.f.source, 0xC0A8010Au);
+        CHECK_EQ(f.f.atUs, uint64_t(123456789));
+        CHECK(f.data == std::vector<uint8_t>({10, 20, 30, 0}));  // ArtDmx lengths are even
+    }
+    r.fake.udp.deliver(6454, dmx(6, {1}));  // not asked for: only counted
+    CHECK_EQ(sink.frames.size(), size_t(1));
+    // The mappings' universe still goes to the tree, not to the sink.
+    r.fake.udp.deliver(6454, dmx(0, {77}));
+    r.run(40);
+    CHECK_EQ(r.brightness, 77);
+    CHECK_EQ(sink.frames.size(), size_t(1));
+    CHECK_EQ(r.value("/sys/artnet/status/packets"), "3");  // counted by the run above
+    r.fake.udp.deliver(6454, artSync(), 0xC0A8010B);
+    CHECK_EQ(sink.syncs.size(), size_t(1));
+    if (!sink.syncs.empty()) CHECK_EQ(sink.syncs[0].source, 0xC0A8010Bu);
+    // Fewer universes: the others stop.
+    r.artnet.universes({4});
+    r.fake.udp.deliver(6454, dmx(3, {1}));
+    r.fake.udp.deliver(6454, dmx(4, {1}));
+    CHECK_EQ(sink.frames.size(), size_t(2));
+}
+
+TEST(artnet_sink_without_its_task_is_fed_every_period) {
+    ArtNetRig r;
+    Sink sink;
+    r.fake.udp.listenFails = true;
+    r.artnet.sink(&sink);
+    r.artnet.universes({1});
+    CHECK(r.dev.begin());
+    r.run(40);
+    r.fake.udp.deliver(6454, dmx(1, {5}));
+    CHECK(sink.frames.empty());
+    r.run(20);
+    CHECK_EQ(sink.frames.size(), size_t(1));
+}
+
+TEST(artnet_counts_sequence_errors) {
+    ArtNetRig r;
+    Sink sink;
+    r.artnet.sink(&sink);
+    r.artnet.universes({1, 2});
+    CHECK(r.dev.begin());
+    r.run(40);
+    for (uint8_t s : {254, 255, 1, 2}) r.fake.udp.deliver(6454, dmx(1, {0}, s));  // Art-Net skips 0
+    r.run(20);  // the status shows the counters as of the last period
+    CHECK_EQ(r.value("/sys/artnet/status/sequenceErrors"), "0");
+    r.fake.udp.deliver(6454, dmx(1, {0}, 4));  // 3 is missing
+    r.fake.udp.deliver(6454, dmx(2, {0}, 9));  // each universe counts its own
+    r.fake.udp.deliver(6454, dmx(2, {0}, 10));
+    r.fake.udp.deliver(6454, dmx(2, {0}, 0));  // 0: not numbered
+    r.run(20);
+    CHECK_EQ(r.value("/sys/artnet/status/sequenceErrors"), "1");
+    CHECK_EQ(sink.frames.size(), size_t(8));  // delivered all the same
+}
+
+TEST(artnet_polls_list_the_sinks_universes) {
+    ArtNetRig r;
+    Sink sink;
+    r.artnet.sink(&sink);
+    CHECK(r.dev.begin());
+    r.run(40);
+    r.artnet.universes({1, 2, 3, 4, 5, 0x120});
+    r.fake.udp.deliver(6454, dmx(2, {1}));
+    r.fake.udp.deliver(6454, poll());
+    r.run(20);
+    // Four ports a reply, sharing net and sub-net; the mappings' universe
+    // (0, no mappings) isn't one.
+    CHECK_EQ(r.fake.udp.sent.size(), size_t(3));
+    if (r.fake.udp.sent.size() != 3) return;
+    auto b = [&](size_t i) { return reinterpret_cast<const uint8_t*>(r.fake.udp.sent[i].data.data()); };
+    CHECK(b(0)[173] == 4 && b(0)[211] == 1);
+    CHECK(b(0)[190] == 1 && b(0)[191] == 2 && b(0)[192] == 3 && b(0)[193] == 4);
+    CHECK(b(0)[182] == 0 && b(0)[183] == 0x80);  // universe 2 has data
+    CHECK(b(1)[173] == 1 && b(1)[211] == 2 && b(1)[190] == 5 && b(1)[174] == 0x80 && b(1)[175] == 0);
+    CHECK(b(2)[173] == 1 && b(2)[211] == 3);
+    CHECK(b(2)[18] == 0x01 && b(2)[19] == 0x02 && b(2)[190] == 0);  // net 1, sub-net 2, universe 0
+    CHECK(b(2)[207] == b(0)[207] && b(2)[200] == 0);  // the root's address in every bind
 }
 
 }  // namespace artnet_cases

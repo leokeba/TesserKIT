@@ -216,6 +216,9 @@ public:
         err = esp_eth_start(handle_);
         if (err != ESP_OK) tesser::logError("tesserkit: esp_eth_start: %s", esp_err_to_name(err));
         running_ = err == ESP_OK;
+        instance_ = this;
+        esp::multicastChanged = &EspEthernet::allMulticast;
+        if (esp::multicastSockets > 0) allMulticast(true);
         return running_;
     }
 
@@ -276,6 +279,18 @@ private:
         if (self->sink_) self->sink_(std::move(e));
     }
 
+    // Every multicast frame passed on while a UDP socket has groups
+    // (udp_esp.cpp): the MAC's seven address filters can't hold them.
+    static void allMulticast(bool on) {
+        if (!instance_ || !instance_->handle_) return;
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+        esp_eth_ioctl(instance_->handle_, ETH_CMD_S_ALL_MULTICAST, &on);
+#else
+        esp_eth_ioctl(instance_->handle_, ETH_CMD_S_PROMISCUOUS, &on);
+#endif
+    }
+
+    static EspEthernet* instance_;
     EventSink sink_;
     esp_eth_handle_t handle_ = nullptr;
     esp_netif_t* netif_ = nullptr;
@@ -285,6 +300,8 @@ private:
     volatile bool link_ = false;
     bool running_ = false;
 };
+
+EspEthernet* EspEthernet::instance_ = nullptr;
 
 }  // namespace
 
