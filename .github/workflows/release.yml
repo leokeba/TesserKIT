@@ -92,6 +92,10 @@ jobs:
           "build-args": "-DPROFILE=classic -DETHERNET_BOARD=gledopto", "targets": ["esp32"]},
          {"project": "examples/idf/full", "name": "tesserkit-psram", "build-args": "-DPROFILE=psram", "targets": ["esp32s3"]}]
       targets: '["esp32", "esp32c3", "esp32s3"]'
+      # TesserKIT's own images on ESP-IDF 6.1 (2026-10-24, Leo); the
+      # workflow's default stays 5.5 for applications, whose code may use
+      # drivers 6.0 removed, until each moves.
+      idf-version: release-v6.1
       version-command: jq -r .version library.json
       # The tag's library.json, library.properties and idf_component.yml say
       # its version (DESIGN.md section 13).
