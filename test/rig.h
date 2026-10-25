@@ -175,13 +175,14 @@ struct Rig {
     Reply uploadNamed(std::string_view path, std::string_view filename, const std::string& data) {
         return upload(path, data, true, 2048, SIZE_MAX, filename);
     }
-    Reply download(std::string_view path, bool asAdmin = true, std::string* filename = nullptr) {
+    Reply download(std::string_view path, bool asAdmin = true, std::string* filename = nullptr,
+                   std::string_view clientName = {}) {
         tesser::FileTransfer t(dev.api());
         tesser::Client c;
         c.authenticated = asAdmin;
         tesser::StringReply reply;
         Reply out;
-        if (t.openDownload(path, c, reply) != tesser::FileTransfer::Open::Ok) {
+        if (t.openDownload(path, c, reply, clientName) != tesser::FileTransfer::Open::Ok) {
             out.status = reply.status;
             out.body = reply.body;
             return out;
@@ -193,6 +194,11 @@ struct Rig {
         out.status = n < 0 ? Status::Internal : Status::Ok;
         out.done = true;
         return out;
+    }
+    // A download naming its file (TesserAPI's ?filename=); `served` gets the
+    // name the device gave it.
+    Reply downloadNamed(std::string_view path, std::string_view clientName, std::string* served = nullptr) {
+        return download(path, true, served, clientName);
     }
 };
 

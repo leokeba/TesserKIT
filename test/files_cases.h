@@ -42,6 +42,9 @@ struct FilesRig : rig::Rig {
     rig::Reply ls(const std::string& dir) { return set("/sys/files/list", "\"" + dir + "\""); }
     std::string lsNames(const std::string& dir) { return namesIn(at(ls(dir).body, "entries")); }
     rig::Reply put(const std::string& path, const std::string& data) { return uploadNamed("/sys/files/file", path, data); }
+    rig::Reply fetch(const std::string& path, std::string* served = nullptr) {
+        return downloadNamed("/sys/files/file", path, served);
+    }
 };
 
 // A failed write says why: a full filesystem, or memory to try again for.
@@ -95,11 +98,16 @@ TEST(files_upload_and_list_by_path) {
     CHECK_EQ(at(l.body, "truncated"), "false");
     r.step();
     CHECK_EQ(r.value("/sys/files/used"), "5000");
+    std::string served;
+    rig::Reply d = r.fetch("/notes.txt", &served);
+    CHECK_EQ(d.status, Status::Ok);
+    CHECK_EQ(d.body, data);
+    CHECK_EQ(served, "notes.txt");  // saved under its own name, not its path
     // Replaced by an upload to the same path; "notes.txt" is the same path.
     CHECK_EQ(r.put("notes.txt", "short").status, Status::Ok);
-    std::string text;
-    CHECK(r.files.read("notes.txt", text, 100).isOk());
-    CHECK_EQ(text, "short");
+    CHECK_EQ(r.fetch("/notes.txt").body, "short");
+    CHECK_EQ(r.fetch("/gone.txt").status, Status::NotFound);
+    CHECK_EQ(r.download("/sys/files/file", false, nullptr, "/notes.txt").status, Status::Unauthorized);
     // Without a path, nothing.
     CHECK_EQ(r.upload("/sys/files/file", "x").status, Status::InvalidValue);
     CHECK_EQ(r.download("/sys/files/file").status, Status::InvalidValue);
@@ -117,6 +125,9 @@ TEST(files_refuses_names) {
     CHECK_EQ(r.put("/" + std::string(33, 'n'), "x").status, Status::InvalidValue);
     CHECK_EQ(r.put("/" + std::string(32, 'n'), "x").status, Status::Ok);
     CHECK_EQ(r.put("/été.txt", "x").status, Status::Ok);  // UTF-8 is fine
+    CHECK_EQ(r.fetch("/été.txt").body, "x");
+    CHECK_EQ(r.fetch("/.settings/sys.json").status, Status::NotFound);
+    CHECK_EQ(r.fetch("/../escape").status, Status::NotFound);
     CHECK_EQ(r.put("/nowhere/a.txt", "x").status, Status::NotFound);  // folders aren't made by uploads
     CHECK_EQ(r.ls("/../..").status, Status::InvalidValue);
     CHECK_EQ(r.set("/sys/files/mkdir", "\"/.hidden\"").status, Status::InvalidValue);
@@ -150,6 +161,10 @@ TEST(files_folders) {
     CHECK_EQ(at(r.ls("/").body, "entries/0/dir"), "true");
     CHECK_EQ(r.put("/logs/day1.log", "one").status, Status::Ok);
     CHECK(r.onDisk("logs/day1.log"));
+    std::string served;
+    CHECK_EQ(r.fetch("/logs/day1.log", &served).body, "one");
+    CHECK_EQ(served, "day1.log");
+    CHECK_EQ(r.fetch("/logs").status, Status::NotFound);  // a folder isn't downloaded
     CHECK_EQ(r.lsNames("/logs/"), "day1.log");  // a trailing slash is the same folder
     CHECK_EQ(at(r.ls("/logs/").body, "path"), "\"/logs\"");
     CHECK_EQ(r.lsNames("/www"), "img");
@@ -179,6 +194,7 @@ TEST(files_move) {
     CHECK_EQ(move("/c.txt", "/www/c.txt"), Status::Ok);          // moved
     CHECK_EQ(r.lsNames("/"), "www,b.txt");
     CHECK_EQ(r.lsNames("/www"), "c.txt");
+    CHECK_EQ(r.fetch("/www/c.txt").body, "A");
     CHECK_EQ(move("/www", "/site"), Status::Ok);  // a folder, with what it holds
     CHECK(r.onDisk("site/c.txt"));
 }

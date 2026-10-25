@@ -52,13 +52,13 @@ Status upload(rig::Rig& r, const char* path, const std::string& data, std::strin
     return reply.status;
 }
 
-size_t download(rig::Rig& r, const char* path) {
+size_t download(rig::Rig& r, const char* path, std::string_view filename = {}) {
     tesser::FileTransfer t(r.dev.api());
     tesser::Client c;
     c.authenticated = true;
     tesser::StringReply reply;
     reply.body.reserve(1024);
-    if (t.openDownload(path, c, reply) != tesser::FileTransfer::Open::Ok) {
+    if (t.openDownload(path, c, reply, filename) != tesser::FileTransfer::Open::Ok) {
         if (getenv("ALLOCCAP_PEAKS")) printf("  download %s: %s\n", path, reply.body.c_str());
         return 0;
     }
@@ -155,6 +155,7 @@ TEST(heap_files) {
         for (int i = 0; i < 40; i++) names.push_back("file-" + std::to_string(i) + ".txt");
         alloccap::Heap h(bytes);
         CHECK_EQ(upload(r, "/sys/files/file", big, "/big.bin"), Status::Ok);
+        CHECK_EQ(download(r, "/sys/files/file", "/big.bin"), big.size());
         for (const std::string& n : names) upload(r, "/sys/files/file", "x", "/" + n);
         r.step();
         r.set("/sys/files/list", "\"/\"");
