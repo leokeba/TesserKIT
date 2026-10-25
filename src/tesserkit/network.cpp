@@ -323,7 +323,7 @@ void Network::describe(tesser::Object& o) {
     // Beside NowTp the factory default keeps the modem awake: ESP-NOW loses
     // the frames that arrive while it sleeps (NowTP 014c4d5).
     if (!powerSaveChosen_ && dev.stationAwake()) powerSave_ = PowerSave::None;
-    o.label("Network").ui("icon", "wifi").writeAccess(Access::Admin);
+    o.label("Network").ui("icon", "wifi").ui("group", "Network").ui("summary", "connection").writeAccess(Access::Admin);
     // Empty: from the device's name (docs/DESIGN.md section 4.4).
     o.value("hostname", [&dev] { return dev.hostnameSetting(); },
             [&dev](const std::string& h) { dev.hostnameSetting(h); })
@@ -353,10 +353,11 @@ void Network::describe(tesser::Object& o) {
         auto& es = e.object("status").label("Connection");
         ethStatus_ = &es;
         es.value("state", static_cast<const std::string&>(ethState_));
-        es.value("link", static_cast<const bool&>(ethLink_)).label("Cable");
-        es.value("connected", static_cast<const bool&>(ethOnline_));
-        es.value("ip", static_cast<const std::string&>(ethIp_)).label("Address");
-        es.value("speed", static_cast<const uint16_t&>(ethMbps_)).unit("Mbps");
+        // The state says it in words: the flags are for scripts.
+        es.value("link", static_cast<const bool&>(ethLink_)).label("Cable").ui("advanced");
+        es.value("connected", static_cast<const bool&>(ethOnline_)).ui("advanced");
+        es.value("ip", static_cast<const std::string&>(ethIp_)).label("Address").ui("visibleWhen", "connected=true");
+        es.value("speed", static_cast<const uint16_t&>(ethMbps_)).unit("Mbps").ui("visibleWhen", "link=true");
         es.value("mac", static_cast<const std::string&>(ethMac_)).label("MAC").ui("advanced");
         ethJoined_ = &e.event("joined").label("Joined").ui("toast", "ok").ui("hidden");
         describeStatic(e, ethStatic_, &ethIpNodes_).ui("form").persist();
@@ -366,9 +367,11 @@ void Network::describe(tesser::Object& o) {
     auto& st = w.object("status").label("Connection");
     staStatus_ = &st;
     st.value("state", static_cast<const std::string&>(staState_));
-    st.value("connected", static_cast<const bool&>(linkUp_));
-    st.value("ssid", static_cast<const std::string&>(linkSsid_)).label("Network");
-    st.value("ip", static_cast<const std::string&>(linkIp_)).label("Address");
+    // The link's details mean nothing while the station is away (on
+    // Ethernet, or not joined): only the state shows then.
+    st.value("connected", static_cast<const bool&>(linkUp_)).ui("advanced");
+    st.value("ssid", static_cast<const std::string&>(linkSsid_)).label("Network").ui("visibleWhen", "connected=true");
+    st.value("ip", static_cast<const std::string&>(linkIp_)).label("Address").ui("visibleWhen", "connected=true");
     st.value("rssi", [this] {
           StaInfo i;
           return wifi_ && linkUp_ && wifi_->staInfo(i) ? i.rssi : int8_t(0);
@@ -376,8 +379,9 @@ void Network::describe(tesser::Object& o) {
         .label("Signal")
         .unit("dBm")
         .watch()
-        .ui("widget", "chart");
-    st.value("channel", static_cast<const uint8_t&>(linkChannel_));
+        .ui("widget", "chart")
+        .ui("visibleWhen", "connected=true");
+    st.value("channel", static_cast<const uint8_t&>(linkChannel_)).ui("visibleWhen", "connected=true");
     st.value("bssid", static_cast<const std::string&>(linkBssid_)).label("BSSID").ui("advanced");
     // For clients on the access point, which must follow the new address.
     joined_ = &w.event("joined").label("Joined").ui("toast", "ok").ui("hidden");
@@ -448,15 +452,16 @@ void Network::describe(tesser::Object& o) {
                               "access point comes up")
                          .ui("perNode")
                          .ui("advanced");
-    apNodes_.push_back(&ap.value("channel", apChannel_).range(1, 13).persist());
+    apNodes_.push_back(&ap.value("channel", apChannel_).range(1, 13).persist().ui("widget", "number"));
     apNodes_.push_back(&ap.value("hidden", apHidden_).persist().ui("advanced"));
     auto& as = ap.object("status").label("Status");
     apStatus_ = &as;
     as.value("active", static_cast<const bool&>(apUp_));
-    as.value("ip", static_cast<const std::string&>(apIp_)).label("Address");
-    as.value("clients", static_cast<const int32_t&>(apClients_));
+    as.value("ip", static_cast<const std::string&>(apIp_)).label("Address").ui("visibleWhen", "active=true");
+    as.value("clients", static_cast<const int32_t&>(apClients_)).ui("visibleWhen", "active=true");
     as.value("override", [this] { return apOverride_; }, {"none", "open", "closed"})
-        .doc("Opened or closed for a while by the board's button, whatever the mode");
+        .doc("Opened or closed for a while by the board's button, whatever the mode")
+        .ui("visibleWhen", "override!=none");
 
     Platform& p = dev.platform();
 #if !defined(TESSERKIT_NO_MDNS)
@@ -464,6 +469,15 @@ void Network::describe(tesser::Object& o) {
 #endif
     mdnsService_ = p.mdns;
     if (mdnsService_) mdnsNode_ = &o.value("mdns", mdns_).persist().label("mDNS").ui("advanced");
+    // One line for System's index (ui.summary): the cards say it in detail.
+    o.value("connection", [this] { return connection(); }).watch().ui("hidden");
+}
+
+std::string Network::connection() const {
+    if (ethOnline_) return "Ethernet, " + ethIp_;
+    if (linkUp_) return "Wi-Fi " + linkSsid_ + ", " + linkIp_;
+    if (apUp_) return "Access point, " + apIp_;
+    return "Offline";
 }
 
 void Network::start() {

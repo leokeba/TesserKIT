@@ -36,30 +36,54 @@ void Board::describe(tesser::Object& o) {
     if (!platform.pins) platform.pins = espDigitalPins();
     pins_ = platform.pins;
 
-    o.label("LED and button").ui("icon", "power").writeAccess(Access::Admin);
+    o.label("LED and button").ui("icon", "power").ui("group", "Device").writeAccess(Access::Admin);
     auto& l = o.object("led").label("Status LED").ui("card");
     ledNode_ = &l;
-    l.value("gpio", ledGpio_).range(-1, 48).persist().label("GPIO").doc("-1: none. Applied at the next restart");
-    l.value("activeLow", ledActiveLow_).persist().label("Lit when low").ui("advanced");
+    // A pin number, not an amount: an entry rather than a slider. Without
+    // a pin, only the pin and the status show.
+    static const char* const kWithPin = "gpio!=-1";
+    l.value("gpio", ledGpio_)
+        .range(-1, 48)
+        .persist()
+        .label("GPIO")
+        .doc("Applied at the next restart")
+        .ui("widget", "number")
+        .ui("labels", "-1=none");
+    l.value("activeLow", ledActiveLow_).persist().label("Lit when low").ui("advanced").ui("visibleWhen", kWithPin);
     l.value("show", show_, {"status", "problems", "off"})
         .persist()
-        .ui("labels", "Always,Only when not online,Off");
+        .ui("labels", "Always,Only when not online,Off")
+        .ui("visibleWhen", kWithPin);
     l.value("status", static_cast<const std::string&>(ledStatus_));
     patternNode_ = &l.value("pattern", [this] { return pattern_; },
                             {"off", "online", "connecting", "accessPoint", "updating", "error", "identify",
                              "pressed", "held", "factoryReset"})
-                        .label("Showing");
-    l.action("identify", [this] { identify(); }).doc("Blinks the LED for 10 s, to find the board");
+                        .label("Showing")
+                        .ui("visibleWhen", kWithPin);
 
     auto& b = o.object("button").label("Button").ui("card");
     buttonNode_ = &b;
-    b.value("gpio", buttonGpio_).range(-1, 48).persist().label("GPIO").doc("-1: none. Applied at the next restart");
-    b.value("activeLow", buttonActiveLow_).persist().label("Pressed when low").ui("advanced");
+    b.value("gpio", buttonGpio_)
+        .range(-1, 48)
+        .persist()
+        .label("GPIO")
+        .doc("Applied at the next restart")
+        .ui("widget", "number")
+        .ui("labels", "-1=none");
+    b.value("activeLow", buttonActiveLow_)
+        .persist()
+        .label("Pressed when low")
+        .ui("advanced")
+        .ui("visibleWhen", kWithPin);
     static const char* const kLabels = "Nothing,Open or close the access point,Restart,Factory reset,The application's";
     const std::initializer_list<const char*> names = {"none", "accessPoint", "restart", "factoryReset", "application"};
-    b.value("short", actions_[0], names).persist().label("Short press").ui("labels", kLabels);
-    b.value("long", actions_[1], names).persist().label("Held 3 s").ui("labels", kLabels);
-    b.value("veryLong", actions_[2], names).persist().label("Held 10 s").ui("labels", kLabels);
+    b.value("short", actions_[0], names).persist().label("Short press").ui("labels", kLabels).ui("visibleWhen", kWithPin);
+    b.value("long", actions_[1], names).persist().label("Held 3 s").ui("labels", kLabels).ui("visibleWhen", kWithPin);
+    b.value("veryLong", actions_[2], names)
+        .persist()
+        .label("Held 10 s")
+        .ui("labels", kLabels)
+        .ui("visibleWhen", kWithPin);
     b.value("status", static_cast<const std::string&>(buttonStatus_));
     b.action("press",
              [this](const std::string& which) {
@@ -74,6 +98,12 @@ void Board::describe(tesser::Object& o) {
         .doc("Does a press's action, as if the button was pressed: short, long or veryLong")
         .ui("advanced");
     pressed_ = &b.event("pressed").label("Pressed").ui("toast", "info").ui("hidden");
+    // At /sys/board, not under led: TesserUI's node menu (ui.placement)
+    // finds actions within three levels of the root.
+    o.action("identify", [this] { identify(); })
+        .doc("Blinks the status LED for 10 s, to find the board")
+        .ui("placement", "node")
+        .ui("visibleWhen", "led/gpio!=-1");
 
     dev_.onSleep([this] {
         if (ledOk_) pins_->output(ledGpio_, ledActiveLow_);  // dark while asleep

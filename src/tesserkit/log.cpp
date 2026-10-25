@@ -60,7 +60,7 @@ void Log::describe(tesser::Object& o) {
     if (out_ && !levelSet_) level_ = static_cast<LogLevel>(out_->level());
     LogOutput* out = out_;
 
-    o.label("Log").ui("icon", "menu").doc("The firmware's log").readAccess(Access::Admin);
+    o.label("Log").ui("icon", "menu").ui("group", "Device").ui("summary", "level").doc("The firmware's log").readAccess(Access::Admin);
     levelNode_ = &o.value("level", level_, {"none", "error", "warn", "info", "debug", "verbose"})
                       .validate([out](JsonVariantConst v) {
                           uint8_t max = out ? out->maxLevel() : 5;

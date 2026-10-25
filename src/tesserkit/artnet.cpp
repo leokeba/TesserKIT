@@ -29,6 +29,8 @@ void copyName(uint8_t* dst, const char* src, size_t cap) {
 
 void ArtNet::describe(tesser::Object& o) {
     o.label("Art-Net")
+        .ui("group", "Integrations")
+        .ui("summary", "enabled")
         .ui("icon", "bulb")
         .doc("Lighting consoles drive nodes of the tree through the DMX channels of one universe");
     describeDmx(o, "The port-address: net, sub-net and universe as one 15-bit number");

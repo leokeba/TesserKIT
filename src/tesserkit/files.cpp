@@ -408,7 +408,7 @@ void Files::refresh() {
 
 void Files::describe(tesser::Object& o) {
     object_ = &o;
-    o.label("Files").ui("icon", "folder").readAccess(Access::Admin);
+    o.label("Files").ui("icon", "folder").ui("group", "Maintenance").ui("summary", "used").readAccess(Access::Admin);
     o.value("mounted", static_cast<const bool&>(mounted_)).ui("advanced");
     o.value("total", static_cast<const uint64_t&>(total_)).unit("B");
     o.value("used", static_cast<const uint64_t&>(used_)).unit("B");
@@ -426,7 +426,7 @@ void Files::describe(tesser::Object& o) {
                                e.value("name", f.name);
                                e.value("size", f.size).unit("B");
                                e.value("isDir", f.isDir).label("Directory").ui("icon", "folder");
-                               e.value("modified", f.modified).ui("advanced");
+                               e.value("modified", f.modified).ui("format", "datetime").ui("advanced");
                                e.file("content")
                                    .download([this, rel, dir](tesser::FileRequest& r) -> std::unique_ptr<tesser::FileSource> {
                                        if (dir) {

@@ -73,6 +73,8 @@ UdpApi& UdpApi::mountPeers(bool on) {
 
 void UdpApi::describe(tesser::Object& o) {
     o.label("UDP")
+        .ui("group", "Nodes")
+        .ui("summary", "enabled")
         .ui("icon", "bolt")
         .doc("The nodes on the local networks, over Ethernet or Wi-Fi: their pages here, writes to all at once")
         .writeAccess(Access::Admin);

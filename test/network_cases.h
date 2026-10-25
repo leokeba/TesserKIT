@@ -737,6 +737,9 @@ TEST(network_ethernet_is_preferred) {
     std::vector<std::string> got = ev.take();
     CHECK_EQ(got.size(), size_t(1));
     if (!got.empty()) CHECK_EQ(got[0], "\"192.168.1.60 on Ethernet\"");
+    // System's index shows the connection in one line.
+    CHECK_EQ(at(r.schema("/sys/network").body, "ui/summary"), "\"connection\"");
+    CHECK_EQ(r.value("/sys/network/connection"), "\"Ethernet, 192.168.1.60\"");
 
     // Unplugged: Wi-Fi takes over at once.
     r.fake.ethernet.unplug();
@@ -747,6 +750,7 @@ TEST(network_ethernet_is_preferred) {
     CHECK_EQ(r.dev.address(), 0xC0A80132u);
     CHECK(memcmp(r.dev.addressMac(), r.dev.info().mac, 6) == 0);
     CHECK_EQ(r.value("/sys/network/ethernet/status/ip"), "\"\"");
+    CHECK_EQ(r.value("/sys/network/connection"), "\"Wi-Fi Home, 192.168.1.50\"");
 
     // Plugged again: the station leaves.
     r.fake.ethernet.plug();

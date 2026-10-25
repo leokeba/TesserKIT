@@ -315,7 +315,7 @@ TEST(mqtt_discovery_announces_published_leaves) {
     CHECK_EQ(at(sw, "payload_on"), "\"true\"");
     CHECK_EQ(at(sw, "availability_topic"), "\"" + r.pre() + "/status\"");
     CHECK_EQ(at(sw, "device/identifiers/0"), "\"" + r.dev.hostname() + "\"");
-    CHECK_EQ(at(sw, "device/name"), "\"Test Device\"");
+    CHECK_EQ(at(sw, "device/name"), "\"Test Device a67c\"");
     std::string num = r.config("number", "led_brightness");
     CHECK_EQ(at(num, "min"), "0");
     CHECK_EQ(at(num, "max"), "255");

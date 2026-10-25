@@ -17,6 +17,8 @@ Bluetooth& Bluetooth::enable(bool on) {
 
 void Bluetooth::describe(tesser::Object& o) {
     o.label("Bluetooth")
+        .ui("group", "Network")
+        .ui("summary", "enabled")
         .ui("icon", "bluetooth")
         .doc("The interface over Bluetooth LE, from TesserUI's launcher")
         .writeAccess(Access::Admin);

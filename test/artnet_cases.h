@@ -185,7 +185,7 @@ TEST(artnet_answers_polls) {
     CHECK(b[14] == 0x36 && b[15] == 0x19);                  // port 6454, low byte first
     CHECK(b[16] == 2 && b[17] == 5);                        // version
     CHECK(b[18] == 0x12 && b[19] == 0x03 && b[190] == 0x04);  // net, sub-net, universe
-    CHECK_EQ(std::string(reinterpret_cast<const char*>(b + 26)), "Test Device");
+    CHECK_EQ(std::string(reinterpret_cast<const char*>(b + 26)), "Test Device a67c");
     CHECK_EQ(std::string(reinterpret_cast<const char*>(b + 44)), r.dev.hostname());
     CHECK(b[173] == 1 && b[174] == 0x80);
     CHECK(memcmp(b + 201, ethMac, 6) == 0);  // the MAC of the interface whose address it gives

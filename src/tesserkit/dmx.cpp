@@ -91,7 +91,7 @@ std::string DmxService::mapped(const DmxMapping& m, const uint8_t* dmx, size_t l
 void DmxService::describeDmx(tesser::Object& o, const char* universeDoc) {
     o.writeAccess(Access::Admin);
     o.value("enabled", enabled_).persist();
-    universeNode_ = &o.value("universe", universe_).range(first_, last_).doc(universeDoc).persist();
+    universeNode_ = &o.value("universe", universe_).range(first_, last_).doc(universeDoc).persist().ui("widget", "number");
     mappingsNode_ =
         &o.list("mappings", mappings_,
                 [this](tesser::Object& e, DmxMapping& m) {

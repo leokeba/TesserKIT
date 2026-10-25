@@ -89,6 +89,8 @@ NowTp& NowTp::pairingCode(const char* code) {
 
 void NowTp::describe(tesser::Object& o) {
     o.label("NowTP")
+        .ui("group", "Nodes")
+        .ui("summary", "enabled")
         .ui("icon", "target")
         .doc("Nodes nearby over ESP-NOW, with no network in common: their pages here, this device on theirs")
         .writeAccess(Access::Admin);

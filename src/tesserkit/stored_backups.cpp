@@ -148,7 +148,7 @@ void StoredBackups::describe(tesser::Object& o) {
                         std::string file = path(f.name);
                         e.value("name", f.name);
                         e.value("size", f.size).unit("B");
-                        e.value("saved", f.modified).ui("advanced");
+                        e.value("saved", f.modified).ui("format", "datetime").ui("advanced");
                         e.file("content")
                             .download([this, file, name = f.name](tesser::FileRequest& r) {
                                 auto src = files_.source(file, r);

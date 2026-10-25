@@ -174,7 +174,7 @@ Device& Device::hostnameSetting(const std::string& h) {
 }
 
 void Device::updateIdentity() {
-    name_ = nameSetting_.empty() ? std::string(label_ ? label_ : "") : nameSetting_;
+    name_ = nameSetting_.empty() ? defaultName_ : nameSetting_;
     api_.label(name_.c_str());  // a pointer: set again with each name
     std::string h = hostnameSetting_;
     if (h.empty()) h = hostnameOf(nameSetting_, 32);
@@ -293,6 +293,9 @@ bool Device::begin() {
     }
     platform_.core->info(info_);
     if (version_.empty()) version_ = info_.version;
+    char macEnd[6];
+    snprintf(macEnd, sizeof(macEnd), "%02x%02x", info_.mac[4], info_.mac[5]);
+    defaultName_ = label_ && *label_ ? std::string(label_) + " " + macEnd : std::string(macEnd);
     // From here the settings' setters (the loading below among them) change
     // the root's label and the hostname at once.
     identityReady_ = true;

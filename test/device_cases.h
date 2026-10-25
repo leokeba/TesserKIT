@@ -142,8 +142,10 @@ TEST(device_name) {
     r.dev.hostname("helio");  // the application's: until the user names it
     CHECK(r.dev.begin());
     CHECK_EQ(r.value("/sys/name"), "\"\"");
-    CHECK_EQ(r.dev.name(), "Test Device");
-    CHECK_EQ(at(r.schema("/sys/name").body, "ui/placeholder"), "\"Test Device\"");
+    // Unnamed, the label and the MAC's end: nodes of one firmware differ.
+    CHECK_EQ(r.dev.name(), "Test Device a67c");
+    CHECK_EQ(r.dev.defaultName(), "Test Device a67c");
+    CHECK_EQ(at(r.schema("/sys/name").body, "ui/placeholder"), "\"Test Device a67c\"");
     CHECK_EQ(at(r.schema("/sys/name").body, "ui/nodeName"), "true");
     CHECK_EQ(r.dev.hostname(), "helio");
     uint32_t hash = r.dev.api().schemaHash();
@@ -164,9 +166,9 @@ TEST(device_name) {
     CHECK_EQ(r.set("/sys/name", "\"a\\nb\"").status, Status::InvalidValue);
     CHECK_EQ(r.set("/sys/name", "\"12345678901234567890123456789012\"").status, Status::Ok);
     CHECK_EQ(r.dev.hostname(), "12345678901234567890123456789012");
-    // Back to the label.
+    // Back to the default name.
     CHECK_EQ(r.set("/sys/name", "\"\"").status, Status::Ok);
-    CHECK_EQ(at(r.schema("/").body, "label"), "\"Test Device\"");
+    CHECK_EQ(at(r.schema("/").body, "label"), "\"Test Device a67c\"");
     CHECK_EQ(r.dev.api().schemaHash(), hash);
     CHECK_EQ(r.dev.hostname(), "helio");
     CHECK_EQ(r.request(r.anon, rig::Op::Set, "/sys/name", "\"x\"").status, Status::Unauthorized);
@@ -203,7 +205,7 @@ TEST(device_sys_tree) {
                            "\"flash\":4194304,\"appSize\":900000,\"appSlot\":2031616,\"idf\":\"v5.4\","
                            "\"mac\":\"c8:f0:9e:f4:a6:7c\"},\"coredumpPresent\":false}}");
     rig::Reply s = r.schema("/");
-    CHECK_EQ(at(s.body, "label"), "\"Test Device\"");
+    CHECK_EQ(at(s.body, "label"), "\"Test Device a67c\"");
     CHECK_EQ(at(s.body, "children/sys/ui/page"), "true");
     CHECK_EQ(at(s.body, "children/sys/children/restart/access"), "\"admin\"");
     CHECK_EQ(at(s.body, "children/sys/children/restart/ui/style"), "\"danger\"");

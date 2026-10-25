@@ -31,6 +31,8 @@ uint32_t be32(const uint8_t* p) {
 
 void Sacn::describe(tesser::Object& o) {
     o.label("sACN")
+        .ui("group", "Integrations")
+        .ui("summary", "enabled")
         .ui("icon", "bulb")
         .doc("Lighting consoles drive nodes of the tree through the DMX channels of one universe, over E1.31 "
              "(streaming ACN)");

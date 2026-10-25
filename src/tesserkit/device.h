@@ -174,10 +174,13 @@ public:
     tesser::Object& sys() { return *sys_; }
     const char* label() const { return label_; }
     // The device's name: the one the user gave it (/sys/name), else the
-    // label. It is the root's label, which TesserUI shows as the node's name
-    // and in its tabs (docs/DESIGN.md section 4.4).
+    // default name. It is the root's label, which TesserUI shows as the
+    // node's name and in its tabs (docs/DESIGN.md section 4.4).
     const std::string& name() const { return name_; }
-    // The name the user gave, "" for the label. Under the API lock once
+    // The label and the MAC's last two bytes, "TesserKIT a67c": a name that
+    // tells apart nodes of one firmware. Set by begin().
+    const std::string& defaultName() const { return defaultName_; }
+    // The name the user gave, "" for the default. Under the API lock once
     // begun: the root's label and the hostname follow at once.
     const std::string& nameSetting() const { return nameSetting_; }
     Device& name(const std::string& name);
@@ -337,7 +340,8 @@ private:
     bool secure_ = false;
     uint32_t secureGen_ = 0;
     uint32_t strictSecureGen_ = 0xFFFFFFFF, strictHostGen_ = 0xFFFFFFFF;  // what applyStrict() last saw
-    std::string name_;             // nameSetting_, else the label
+    std::string name_;             // nameSetting_, else defaultName_
+    std::string defaultName_;
     std::string nameSetting_;
     std::string hostnameOption_;   // hostname(const char*)
     std::string hostnameSetting_;

@@ -86,6 +86,7 @@ public:
     Network& ethernet(std::function<bool(EthernetBoard&)> choose);
 
     void describe(tesser::Object& o) override;
+    std::string connection() const;
     void migrate(uint32_t from, JsonObject settings) override;
 
     // The station joined a network.

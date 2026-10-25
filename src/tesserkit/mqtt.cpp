@@ -130,7 +130,7 @@ std::string Mqtt::topic(const std::string& path) const {
 }
 
 void Mqtt::describe(tesser::Object& o) {
-    o.label("MQTT").ui("icon", "link").doc("Publishes parts of the tree to a broker, and takes writes from it").writeAccess(Access::Admin);
+    o.label("MQTT").ui("icon", "link").ui("group", "Integrations").ui("summary", "status/connected").doc("Publishes parts of the tree to a broker, and takes writes from it").writeAccess(Access::Admin);
     settings_.clear();
     settings_.push_back(&o.value("enabled", enabled_).persist());
     settings_.push_back(&o.value("uri", uri_)

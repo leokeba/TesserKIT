@@ -466,7 +466,7 @@ void Firmware::describe(tesser::Object& o) {
     if (!p.ota) p.ota = espOta();
     ota_ = p.ota;
 
-    o.label("Firmware").ui("icon", "download");
+    o.label("Firmware").ui("icon", "download").ui("group", "Maintenance").ui("summary", "version");
     o.value("version", dev.version());
     o.value("project", info.project).ui("advanced");
     o.value("built", info.built).ui("advanced");

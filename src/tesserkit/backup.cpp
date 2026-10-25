@@ -104,7 +104,7 @@ Check Backup::save(const std::string& name, std::string* saved) {
 
 void Backup::describe(tesser::Object& o) {
     Device& dev = dev_;
-    o.label("Backup").ui("icon", "refresh").writeAccess(Access::Admin);
+    o.label("Backup").ui("icon", "refresh").ui("group", "Maintenance").writeAccess(Access::Admin);
     o.file("settings")
         .label("Settings")
         .readAccess(Access::Admin)

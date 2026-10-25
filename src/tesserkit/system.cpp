@@ -53,10 +53,10 @@ void System::describe(tesser::Object& o) {
         .persist()
         .writeAccess(Access::Admin)
         .doc("Shown by the interface and in its tabs; the hostname follows it")
-        .ui("placeholder", dev.label())
+        .ui("placeholder", dev.defaultName().c_str())
         .ui("nodeName");
 
-    auto& s = o.object("status").label("Status").ui("icon", "info");
+    auto& s = o.object("status").label("Status").ui("icon", "info").ui("group", "Device").ui("summary", "state");
     dev.stateNode(&s.value("state", dev.stateVar(),
                            {"booting", "provisioning", "connecting", "online", "updating", "error"})
                        .readOnly());
@@ -112,7 +112,8 @@ void System::describe(tesser::Object& o) {
     o.action("restart", [&dev] { dev.restartIn(500); })
         .writeAccess(Access::Admin)
         .ui("confirm", "Restart the device?")
-        .ui("style", "danger");
+        .ui("style", "danger")
+        .ui("placement", "node");  // in TesserUI's node menu, on every page
     // Replies at once; the device's task erases, then restarts.
     o.action("factoryReset", [&dev] { dev.factoryReset(); })
         .label("Factory reset")

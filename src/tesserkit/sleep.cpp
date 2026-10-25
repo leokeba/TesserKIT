@@ -26,7 +26,7 @@ void Sleep::describe(tesser::Object& o) {
     if (power_) cause_ = power_->wakeCause();
     Power* power = power_;
 
-    o.label("Sleep").ui("icon", "moon").doc("Deep sleep, woken by a timer or a pin").writeAccess(Access::Admin);
+    o.label("Sleep").ui("icon", "moon").ui("group", "Device").doc("Deep sleep, woken by a timer or a pin").writeAccess(Access::Admin);
     o.action("sleep", [this](uint32_t seconds) { return sleep(seconds); })
         .range(0, kMaxSeconds)
         .unit("s")
@@ -36,6 +36,7 @@ void Sleep::describe(tesser::Object& o) {
         .ui("widget", "number");
     o.value("wakePin", pin_)
         .range(-1, 63)
+        .ui("labels", "-1=none")
         .validate([power](int8_t v) {
             return v < 0 || !power || power->wakePin(v)
                        ? Check::ok()

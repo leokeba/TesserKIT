@@ -83,7 +83,8 @@ void Timers::describe(tesser::Object& o) {
                  .writeAccess(Access::Admin)
                  .persist()
                  .label("Timers")
-                 .ui("icon", "play");
+                 .ui("icon", "play")
+                 .ui("group", "Maintenance");
     o.value("timersCatchUp", catchUp_)
         .label("Run missed timers at boot")
         .doc("At boot, each timer's most recent missed occurrence of today runs once")

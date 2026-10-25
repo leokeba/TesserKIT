@@ -159,6 +159,7 @@ tesser::Object& Peers::nodes() {
 
 void Peers::describe(tesser::Object& o) {
     o.label("Nodes")
+        .ui("group", "Nodes")
         .ui("icon", "target")
         .doc("How this device reaches the nodes under /peers: over UDP, NowTP, or both in order")
         .writeAccess(Access::Admin);
@@ -172,7 +173,8 @@ void Peers::describe(tesser::Object& o) {
     accountNode_ = &o.mount("account", account_)
                         .persist()
                         .label("Account on the nodes")
-                        .doc("Signed in with on each node that has accounts, for more than its level for nodes")
+                        .doc("The account this device signs in with on the nodes that have accounts. Without one, it has their "
+                             "level for nodes")
                         .ui("form");
     settingsNode_ =
         &o.list("nodes", settings_).key("id").maxSize(kMaxNodes).persist().label("Settings per node").ui("advanced");

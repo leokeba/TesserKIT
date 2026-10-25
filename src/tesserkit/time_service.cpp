@@ -60,7 +60,7 @@ Time& Time::sntp(bool on) {
 }
 
 void Time::describe(tesser::Object& o) {
-    o.label("Time").ui("icon", "clock");
+    o.label("Time").ui("icon", "clock").ui("group", "Maintenance").ui("summary", "now");
     o.value("now", [this] { return clock_ ? iso8601(clock_->epochMs()) : std::string(); })
         .label("Local time")
         .watch();

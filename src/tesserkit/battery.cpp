@@ -79,7 +79,7 @@ void Battery::describe(tesser::Object& o) {
     }
     pins_ = p.pins;
 
-    o.label("Battery").ui("icon", "battery").writeAccess(Access::Admin);
+    o.label("Battery").ui("icon", "battery").ui("group", "Device").ui("summary", "soc").writeAccess(Access::Admin);
     socNode_ = &o.value("soc", static_cast<const uint8_t&>(soc_))
                     .range(0, 100)
                     .label("Charge")

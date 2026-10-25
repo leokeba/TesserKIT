@@ -247,7 +247,7 @@ TEST(board_press_and_identify_actions) {
     CHECK_EQ(r.set("/sys/board/button/press", "\"short\"").status, Status::Ok);
     r.step();
     CHECK(r.fake.wifi.apUp);
-    CHECK_EQ(r.set("/sys/board/led/identify").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/board/identify").status, Status::Ok);
     r.step();
     CHECK_EQ(r.pattern(), "\"identify\"");
     r.run(Board::kIdentifyMs);
@@ -256,7 +256,7 @@ TEST(board_press_and_identify_actions) {
     CHECK_EQ(r.set("/sys/board/led/show", "\"off\"").status, Status::Ok);
     r.step();
     CHECK_EQ(r.pattern(), "\"off\"");
-    r.set("/sys/board/led/identify");
+    r.set("/sys/board/identify");
     r.step();
     CHECK_EQ(r.pattern(), "\"identify\"");
 }

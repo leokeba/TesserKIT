@@ -136,7 +136,7 @@ bool Auth::verify(std::string_view password, const std::string& stored) const {
 }
 
 void Auth::describe(tesser::Object& o) {
-    o.label("Users").ui("icon", "lock");
+    o.label("Users").ui("icon", "lock").ui("group", "Security");
     usersNode_ = &o.list("users", users_,
            [this](tesser::Object& u, User& user) {
                u.value("name", user.name);
