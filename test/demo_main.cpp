@@ -105,6 +105,8 @@ int main(int argc, char** argv) {
     tesserkit::Log log(dev);
     tesserkit::Battery battery(dev);  // fed below, as an application with a fuel gauge would
     tesserkit::Sleep sleep(dev);
+    tesserkit::Files files(dev);  // in a temporary directory, removed on exit
+    files.root(fake.fs.dir.c_str());
     sleep.wakePin(0);
     net.defaultNetwork("Workshop", "workshop-pw");
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");
@@ -136,6 +138,16 @@ int main(int argc, char** argv) {
     Led led;
     dev.api().mount("led", led).label("LED").ui("icon", "bulb");
     if (!dev.begin()) return 1;
+    // A small tree for TesserUI's file browser and editor.
+    files.write("readme.txt", "TesserKIT's demo.\nEdit me.\n");
+    files.write("settings.json", "{\"brightness\": 120, \"mode\": \"auto\"}\n");
+    files.write("www/index.html", "<!doctype html>\n<h1>Hello</h1>\n");
+    files.write("www/style.css", "h1 { color: teal; }\n");
+    files.mkdir("www/img");
+    std::string lines;
+    for (int i = 1; i <= 200; i++) lines += "line " + std::to_string(i) + "\n";
+    files.write("logs/boot.log", lines);
+    files.write("data/blob.bin", std::string("\0\1\2\3binary", 10));
     fake.clock.sync(realMs());  // SNTP answers at once
     // Nodes nearby over ESP-NOW, once NowTP has started.
     bool nearby = false;

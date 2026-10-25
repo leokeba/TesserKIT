@@ -82,12 +82,28 @@ class Device:
         return status, payload, headers
 
 
-def entry(name):
-    return '/sys/files/entries/' + urllib.parse.quote(name, safe='')
+FILE = '/sys/files/file'
 
 
 def names(listing):
     return [e['name'] for e in listing or []]
+
+
+def ls(dev, folder):
+    status, body = dev.call('/sys/files/list', folder)
+    return body['entries'] if status == 200 else None
+
+
+def entry(dev, folder, name):
+    return next((e for e in ls(dev, folder) or [] if e['name'] == name), None)
+
+
+def get(dev, path):
+    return dev.download(FILE + '?filename=' + urllib.parse.quote(path, safe='/'))
+
+
+def put(dev, path, data):
+    return dev.upload(FILE, data, path)
 
 
 def test_files(dev):
@@ -95,25 +111,23 @@ def test_files(dev):
     check('mounted', dev.value('/sys/files/mounted') is True, dev.value('/sys/files'))
     total = dev.value('/sys/files/total')
     check('total', total and total > 300000, total)
-    check('dir at the root', dev.call('/sys/files/dir', '/')[0] == 200)
-    base = 'e2e-' + str(int(time.time()))
+    base = '/e2e-' + str(int(time.time()))
     check('mkdir', dev.call('/sys/files/mkdir', base)[0] == 200)
-    check('open', dev.call(entry(base) + '/open')[0] == 200)
-    check('dir', dev.value('/sys/files/dir') == '/' + base, dev.value('/sys/files/dir'))
+    check('mkdir taken', dev.call('/sys/files/mkdir', base)[0] == 422)
+    check('listed folder', (entry(dev, '/', base[1:]) or {}).get('dir') is True, ls(dev, '/'))
 
     # A file of several transfer pieces, timed both ways.
     blob = os.urandom(100 * 1024)
     t = time.time()
-    status, body = dev.upload('/sys/files/upload', blob, 'blob.bin')
+    status, body = put(dev, base + '/blob.bin', blob)
     up = time.time() - t
     check('upload', status == 200, (status, body))
     print(f'     upload {len(blob) / up / 1024:.0f} KB/s')
-    listing = dev.value('/sys/files/entries')
-    check('listed', 'blob.bin' in names(listing), listing)
-    check('size', dev.value(entry('blob.bin') + '/size') == len(blob), dev.value(entry('blob.bin')))
-    check('modified', (dev.value(entry('blob.bin') + '/modified') or 0) > 1577836800, dev.value(entry('blob.bin')))
+    e = entry(dev, base, 'blob.bin') or {}
+    check('listed', e.get('size') == len(blob), ls(dev, base))
+    check('modified', (e.get('modified') or 0) > 1577836800, e)
     t = time.time()
-    status, data, headers = dev.download(entry('blob.bin') + '/content')
+    status, data, headers = get(dev, base + '/blob.bin')
     down = time.time() - t
     check('download', status == 200 and data == blob, (status, len(data)))
     print(f'     download {len(blob) / down / 1024:.0f} KB/s')
@@ -121,17 +135,19 @@ def test_files(dev):
 
     # A name with a space and non-ASCII letters.
     odd = 'été notes.txt'
-    status, body = dev.upload('/sys/files/upload', 'bonjour'.encode(), odd)
+    status, body = put(dev, base + '/' + odd, 'bonjour'.encode())
     check('upload odd name', status == 200, (status, body))
-    status, data, headers = dev.download(entry(odd) + '/content')
+    status, data, headers = get(dev, base + '/' + odd)
     check('download odd name', status == 200 and data == b'bonjour', (status, data))
     check('odd name header', "filename*=UTF-8''" in headers.get('Content-Disposition', ''), headers)
 
     # Refusals.
-    check('no name', dev.upload('/sys/files/upload', b'x')[0] == 422)
-    check('bad name', dev.upload('/sys/files/upload', b'x', '../escape')[0] == 422)
-    check('hidden name', dev.upload('/sys/files/upload', b'x', '.hidden')[0] == 422)
-    schema = dev.request('GET', '/sys/files/upload?view=schema')[1]
+    check('no name', dev.upload(FILE, b'x')[0] == 422)
+    check('bad name', put(dev, '/../escape', b'x')[0] == 422)
+    check('hidden name', put(dev, '/.hidden', b'x')[0] == 422)
+    check('no folder', put(dev, '/nowhere/a.txt', b'x')[0] == 404)
+    check('no such folder', dev.call('/sys/files/list', '/nowhere')[0] == 404)
+    schema = dev.request('GET', FILE + '?view=schema')[1]
     check('max size', schema.get('maxSize') == total, schema)
     # Refused on the announced size. A refused body is drained up to 256 KB
     # (then the connection is closed before the client reads the reply): a
@@ -139,22 +155,24 @@ def test_files(dev):
     # Smaller than Files keeps for the settings (64 KB) and what's stored, so
     # it fits a 384 KB partition beside them.
     filler = b'f' * 64 * 1024
-    got = dev.upload('/sys/files/upload', filler, 'filler.bin')
+    got = put(dev, base + '/filler.bin', filler)
     check('filler', got[0] == 200, got)
     free = total - dev.value('/sys/files/used')
-    check('too large', dev.upload('/sys/files/upload', b'x' * (free + 1), 'huge.bin')[0] == 413, free)
-    check('nothing left behind', 'huge.bin' not in names(dev.value('/sys/files/entries')))
-    dev.call(entry('filler.bin') + '/delete')
-    check('missing', dev.download(entry('nope.txt') + '/content')[0] == 404)
+    check('too large', put(dev, base + '/huge.bin', b'x' * (free + 1))[0] == 413, free)
+    check('nothing left behind', 'huge.bin' not in names(ls(dev, base)))
+    dev.call('/sys/files/delete', base + '/filler.bin')
+    check('missing', get(dev, base + '/nope.txt')[0] == 404)
 
-    # Replace, rename, delete.
-    check('replace', dev.upload(entry('blob.bin') + '/content', b'small')[0] == 200)
-    check('replaced', dev.download(entry('blob.bin') + '/content')[1] == b'small')
-    check('rename', dev.call(entry('blob.bin') + '/rename', 'renamed.bin')[0] == 200)
-    check('renamed', names(dev.value('/sys/files/entries')) == ['renamed.bin', odd], dev.value('/sys/files/entries'))
-    check('up', dev.call('/sys/files/up')[0] == 200 and dev.value('/sys/files/dir') == '/')
-    check('delete dir', dev.call(entry(base) + '/delete')[0] == 200)
-    check('deleted', base not in names(dev.value('/sys/files/entries')), dev.value('/sys/files/entries'))
+    # Replace, move, delete.
+    check('replace', put(dev, base + '/blob.bin', b'small')[0] == 200)
+    check('replaced', get(dev, base + '/blob.bin')[1] == b'small')
+    check('rename', dev.call('/sys/files/move', {'from': base + '/blob.bin', 'to': base + '/renamed.bin'})[0] == 200)
+    check('renamed', names(ls(dev, base)) == ['renamed.bin', odd], ls(dev, base))
+    check('move', dev.call('/sys/files/move', {'from': base + '/renamed.bin', 'to': '/moved.bin'})[0] == 200)
+    check('moved', 'moved.bin' in names(ls(dev, '/')) and get(dev, '/moved.bin')[1] == b'small')
+    dev.call('/sys/files/delete', '/moved.bin')
+    check('delete folder', dev.call('/sys/files/delete', base)[0] == 200)
+    check('deleted', base[1:] not in names(ls(dev, '/')), ls(dev, '/'))
 
 
 def test_backups(dev):

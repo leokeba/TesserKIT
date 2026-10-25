@@ -237,17 +237,17 @@ TEST(settings_hidden_from_files) {
     r.run(2500);
     std::string sys = r.file(".settings/sys.json");
     CHECK(!sys.empty());
-    CHECK_EQ(r.uploadNamed("/sys/files/upload", "a.txt", "A").status, Status::Ok);
-    r.step();
-    std::string listed = r.value("/sys/files/entries");
+    CHECK_EQ(r.uploadNamed("/sys/files/file", "/a.txt", "A").status, Status::Ok);
+    std::string listed = rig::at(r.set("/sys/files/list", "\"/\"").body, "entries");
     CHECK(listed.find("a.txt") != std::string::npos);
     CHECK_EQ(listed.find("settings"), std::string::npos);
     CHECK_EQ(rig::at(listed, "1"), "<missing>");
-    CHECK_EQ(r.uploadNamed("/sys/files/upload", ".settings", "x").status, Status::InvalidValue);
-    CHECK_EQ(r.set("/sys/files/dir", "\"/.settings\"").status, Status::InvalidValue);
-    CHECK_EQ(r.set("/sys/files/mkdir", "\".settings\"").status, Status::InvalidValue);
-    CHECK_EQ(r.set("/sys/files/entries/a.txt/rename", "\".settings\"").status, Status::InvalidValue);
-    CHECK_EQ(r.download("/sys/files/entries/.settings/content").status, Status::NotFound);
+    CHECK_EQ(r.uploadNamed("/sys/files/file", "/.settings", "x").status, Status::InvalidValue);
+    CHECK_EQ(r.uploadNamed("/sys/files/file", "/.settings/sys.json", "x").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/files/list", "\"/.settings\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/files/mkdir", "\"/.settings\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/files/move", "{\"from\":\"/a.txt\",\"to\":\"/.settings\"}").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/files/delete", "\"/.settings\"").status, Status::InvalidValue);
     std::string text;
     CHECK_EQ(r.files.read(".settings/sys.json", text, 100000).status, Status::NotFound);
     CHECK_EQ(r.files.write(".settings/sys.json", "{}").status, Status::InvalidValue);
@@ -255,7 +255,7 @@ TEST(settings_hidden_from_files) {
     CHECK_EQ(r.files.rename(".settings", "s").status, Status::InvalidValue);
     // A file named "settings": its upload's temporary file isn't the
     // settings' directory.
-    CHECK_EQ(r.uploadNamed("/sys/files/upload", "settings", "mine").status, Status::Ok);
+    CHECK_EQ(r.uploadNamed("/sys/files/file", "/settings", "mine").status, Status::Ok);
     CHECK(r.files.write("settings", "again").isOk());
     CHECK_EQ(r.file("settings"), "again");
     CHECK_EQ(r.file(".settings/sys.json"), sys);
@@ -268,19 +268,16 @@ TEST(settings_kept_by_format) {
     CHECK_EQ(r.set("/sys/time/tz", "\"EST5EDT\"").status, Status::Ok);
     r.run(2500);
     std::string sys = r.file(".settings/sys.json");
-    r.set("/sys/files/mkdir", "\"logs\"");
-    r.set("/sys/files/dir", "\"/logs\"");
-    r.uploadNamed("/sys/files/upload", "x.log", "x");
-    r.set("/sys/files/dir", "\"/\"");
-    r.uploadNamed("/sys/files/upload", "a.txt", "A");
+    r.set("/sys/files/mkdir", "\"/logs\"");
+    r.uploadNamed("/sys/files/file", "/logs/x.log", "x");
+    r.uploadNamed("/sys/files/file", "/a.txt", "A");
     CHECK_EQ(r.set("/sys/files/format").status, Status::Ok);
     CHECK_EQ(r.fake.fs.formats, 0);
     CHECK(!r.onDisk("logs"));
     CHECK(!r.onDisk("a.txt"));
     CHECK_EQ(r.file(".settings/sys.json"), sys);
     CHECK_EQ(r.records(), "@moved,@version,sys");
-    r.step();
-    CHECK_EQ(r.value("/sys/files/entries"), "[]");
+    CHECK_EQ(rig::at(r.set("/sys/files/list", "\"/\"").body, "entries"), "[]");
     // Still saved there.
     CHECK_EQ(r.set("/app/level", "8").status, Status::Ok);
     r.run(2500);
@@ -295,7 +292,7 @@ TEST(settings_reserve) {
     r.run(2500);
     uint64_t room = r.files.freeBytes() - tesserkit::Files::kSettingsReserve;
     CHECK_EQ(r.files.roomBytes(), room);
-    rig::Reply u = r.uploadNamed("/sys/files/upload", "big.bin", std::string(room + 1, 'b'));
+    rig::Reply u = r.uploadNamed("/sys/files/file", "/big.bin", std::string(room + 1, 'b'));
     CHECK_EQ(u.status, Status::TooLarge);
     CHECK(u.body.find("kept for the settings") != std::string::npos);
     CHECK(!r.onDisk("big.bin"));
@@ -314,7 +311,7 @@ TEST(settings_reserve) {
     s.reset();
     CHECK(!r.onDisk("sneaky.bin"));
     // Within the room: fine.
-    CHECK_EQ(r.uploadNamed("/sys/files/upload", "fits.bin", std::string(room - 4096, 'f')).status, Status::Ok);
+    CHECK_EQ(r.uploadNamed("/sys/files/file", "/fits.bin", std::string(room - 4096, 'f')).status, Status::Ok);
 }
 
 TEST(settings_factory_reset_erases_them) {
@@ -324,7 +321,7 @@ TEST(settings_factory_reset_erases_them) {
     CHECK_EQ(r.set("/app/level", "9").status, Status::Ok);
     r.run(2500);
     CHECK_EQ(r.records(), "@moved,@version,app,sys");
-    r.uploadNamed("/sys/files/upload", "keep.txt", "data");
+    r.uploadNamed("/sys/files/file", "/keep.txt", "data");
     r.fake.nvs.records["sys"] = "{\"time\":{\"tz\":\"EST5EDT\"}}";  // a copy a move left behind
     r.dev.factoryReset();
     r.step();

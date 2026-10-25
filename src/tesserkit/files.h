@@ -18,7 +18,7 @@ tesser::Check fileWriteError(int err);
 class Backup;
 class StoredBackups;
 
-// An entry of a directory, as /sys/files/entries and /sys/backup/stored list
+// An entry of a directory, as /sys/files/list and /sys/backup/stored list
 // them.
 struct FileEntry {
     std::string name;
@@ -27,8 +27,16 @@ struct FileEntry {
     int64_t modified = 0;  // epoch seconds, 0 if unknown
 };
 
-// /sys/files: a LittleFS partition, browsed one directory at a time
-// (docs/DESIGN.md section 5.12). The application reads and writes its files
+// /sys/files/move's argument: two paths.
+struct FileMove {
+    std::string from;
+    std::string to;
+};
+void describe(tesser::Object& o, FileMove& m);
+
+// /sys/files: a LittleFS partition, addressed by path and kept stateless,
+// so each client browses on its own (TesserUI's "files" widget; see
+// docs/DESIGN.md section 5.12). The application reads and writes its files
 // through stdio below root(), and other services (Backup) through the
 // helpers here.
 class Files : public Service {
@@ -85,8 +93,14 @@ public:
     // no control characters, not "." or "..".
     static tesser::Check checkName(std::string_view name);
 
-    // What the application changed: the listings are read again. Thread-safe.
-    void changed() { generation_.fetch_add(1); }
+    // What the application changed: the listings are read again, and
+    // clients told (`changed` with an empty path: anything may have).
+    // Thread-safe.
+    void changed() { touched(std::string_view(), true); }
+    // The directory holding `rel` (normalized, below the root) changed, or
+    // one unknown: raises the generation, and `changed` follows at the next
+    // tick. Thread-safe: an upload finishes on its transport's task.
+    void touched(std::string_view rel, bool unknown = false);
     // Raised by every change, here or through changed(). Thread-safe.
     uint32_t generation() const { return generation_.load(); }
 
@@ -132,10 +146,10 @@ protected:
     Files* asFiles() override { return this; }
 
 private:
+    // The usage, read again.
     void refresh();
     void refreshBackups();  // stored_backups.cpp
-    std::string relative(std::string_view name) const;  // name in dir_
-    tesser::Check setDir(const std::string& dir);
+    void listCall(const std::string& dir, tesser::Call& call) const;
 
     const char* label_ = nullptr;
     std::string root_ = "/files";
@@ -149,14 +163,14 @@ private:
     size_t reserve_ = kSettingsReserve;
     std::unique_ptr<tesser::FileStorage> settingsFiles_;
     uint64_t total_ = 0, used_ = 0;
-    std::string dir_ = "/";
-    std::vector<FileEntry> entries_;
-    bool truncated_ = false;
     std::atomic<uint32_t> generation_{0};
-    uint32_t listed_ = 0;  // the generation entries_ shows
-    tesser::Node* entriesNode_ = nullptr;
-    tesser::Node* dirNode_ = nullptr;
-    tesser::FileNode* uploadNode_ = nullptr;
+    uint32_t listed_ = 0;  // the generation the usage and backups show
+    // The directories changed since the last tick, as `changed` sends them
+    // ("/", "/www"; "" for unknown), under pendingLock_.
+    tesser::Mutex pendingLock_{tesser::kRankLeaf, "files"};
+    std::vector<std::string> pending_;
+    tesser::FileNode* fileNode_ = nullptr;
+    tesser::EventNode* changedNode_ = nullptr;
     tesser::Object* object_ = nullptr;
     StoredBackups* backups_ = nullptr;  // with a Backup service; owned
 };

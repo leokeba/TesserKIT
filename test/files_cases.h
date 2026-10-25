@@ -27,8 +27,9 @@ struct FilesRig : rig::Rig {
         struct stat st;
         return stat((fake.fs.dir + "/" + rel).c_str(), &st) == 0;
     }
-    std::string names(const char* list) {
-        std::string json = value(list), out;
+    // The names in a list value, or in a listing's entries.
+    static std::string namesIn(const std::string& json) {
+        std::string out;
         for (size_t i = 0;; i++) {
             std::string n = at(json, (std::to_string(i) + "/name").c_str());
             if (n == "<missing>") break;
@@ -36,6 +37,11 @@ struct FilesRig : rig::Rig {
         }
         return out;
     }
+    std::string names(const char* list) { return namesIn(value(list)); }
+    // /sys/files/list of `dir`: the reply.
+    rig::Reply ls(const std::string& dir) { return set("/sys/files/list", "\"" + dir + "\""); }
+    std::string lsNames(const std::string& dir) { return namesIn(at(ls(dir).body, "entries")); }
+    rig::Reply put(const std::string& path, const std::string& data) { return uploadNamed("/sys/files/file", path, data); }
 };
 
 // A failed write says why: a full filesystem, or memory to try again for.
@@ -53,9 +59,9 @@ TEST(files_mount) {
     CHECK(r.files.mounted());
     CHECK_EQ(r.value("/sys/files/mounted"), "true");
     CHECK_EQ(r.value("/sys/files/total"), "262144");
-    CHECK_EQ(at(r.schema("/sys/files/upload").body, "maxSize"), "262144");  // refused before it is sent
-    CHECK_EQ(r.value("/sys/files/dir"), "\"/\"");
-    CHECK_EQ(r.value("/sys/files/entries"), "[]");
+    CHECK_EQ(at(r.schema("/sys/files").body, "ui/widget"), "\"files\"");
+    CHECK_EQ(at(r.schema("/sys/files/file").body, "maxSize"), "262144");  // refused before it is sent
+    CHECK_EQ(r.ls("/").body, "{\"path\":\"/\",\"entries\":[],\"truncated\":false}");
     CHECK_EQ(r.get("/sys/files", tesser::Query(), false).status, Status::Unauthorized);
 }
 
@@ -65,48 +71,56 @@ TEST(files_unmounted) {
     CHECK(r.dev.begin());
     CHECK(!r.files.mounted());
     CHECK_EQ(r.value("/sys/files/mounted"), "false");
-    CHECK_EQ(r.set("/sys/files/mkdir", "\"logs\"").status, Status::NotAllowed);
-    CHECK_EQ(r.uploadNamed("/sys/files/upload", "a.txt", "hello").status, Status::NotAllowed);
+    CHECK_EQ(r.ls("/").status, Status::NotAllowed);
+    CHECK_EQ(r.set("/sys/files/mkdir", "\"/logs\"").status, Status::NotAllowed);
+    CHECK_EQ(r.put("/a.txt", "hello").status, Status::NotAllowed);
     CHECK_EQ(r.set("/sys/backup/save", "\"x\"").status, Status::NotAllowed);
 }
 
-TEST(files_upload_list_download) {
+// Stateless: every transfer and action names its path, so clients browse
+// on their own.
+TEST(files_upload_and_list_by_path) {
     FilesRig r;
     CHECK(r.dev.begin());
     std::string data(5000, 'x');
-    CHECK_EQ(r.uploadNamed("/sys/files/upload", "notes.txt", data).status, Status::Ok);
+    CHECK_EQ(r.put("/notes.txt", data).status, Status::Ok);
     CHECK(r.onDisk("notes.txt"));
     CHECK(!r.onDisk(".notes.txt.part"));  // the temporary file was renamed
+    rig::Reply l = r.ls("/");
+    CHECK_EQ(l.status, Status::Ok);
+    CHECK_EQ(at(l.body, "path"), "\"/\"");
+    CHECK_EQ(at(l.body, "entries/0/name"), "\"notes.txt\"");
+    CHECK_EQ(at(l.body, "entries/0/size"), "5000");
+    CHECK_EQ(at(l.body, "entries/0/dir"), "false");
+    CHECK_EQ(at(l.body, "truncated"), "false");
     r.step();
-    CHECK_EQ(r.names("/sys/files/entries"), "notes.txt");
-    CHECK_EQ(r.value("/sys/files/entries/notes.txt/size"), "5000");
-    CHECK_EQ(r.value("/sys/files/entries/notes.txt/isDir"), "false");
     CHECK_EQ(r.value("/sys/files/used"), "5000");
-    std::string name;
-    rig::Reply d = r.download("/sys/files/entries/notes.txt/content", true, &name);
-    CHECK_EQ(d.status, Status::Ok);
-    CHECK_EQ(d.body, data);
-    CHECK_EQ(name, "notes.txt");
-    // Replaced through the entry, or by an upload of the same name.
-    CHECK_EQ(r.upload("/sys/files/entries/notes.txt/content", "short").status, Status::Ok);
-    CHECK_EQ(r.download("/sys/files/entries/notes.txt/content").body, "short");
-    CHECK_EQ(r.uploadNamed("/sys/files/upload", "notes.txt", "again").status, Status::Ok);
-    CHECK_EQ(r.download("/sys/files/entries/notes.txt/content").body, "again");
-    CHECK_EQ(r.download("/sys/files/entries/gone.txt/content").status, Status::NotFound);
-    CHECK_EQ(r.download("/sys/files/entries/notes.txt/content", false).status, Status::Unauthorized);
+    // Replaced by an upload to the same path; "notes.txt" is the same path.
+    CHECK_EQ(r.put("notes.txt", "short").status, Status::Ok);
+    std::string text;
+    CHECK(r.files.read("notes.txt", text, 100).isOk());
+    CHECK_EQ(text, "short");
+    // Without a path, nothing.
+    CHECK_EQ(r.upload("/sys/files/file", "x").status, Status::InvalidValue);
+    CHECK_EQ(r.download("/sys/files/file").status, Status::InvalidValue);
+    CHECK_EQ(r.ls("/notes.txt").status, Status::NotFound);  // not a directory
+    CHECK_EQ(r.ls("/nowhere").status, Status::NotFound);
+    CHECK_EQ(r.as(tesser::Access::User, tesser::Op::Set, "/sys/files/list", "\"/\"").status, Status::Unauthorized);
 }
 
 TEST(files_refuses_names) {
     FilesRig r;
     CHECK(r.dev.begin());
-    for (const char* bad : {"", ".hidden", "..", "a/b", "../escape", "tab\there"}) {
-        CHECK_EQ(r.uploadNamed("/sys/files/upload", bad, "x").status, Status::InvalidValue);
+    for (const char* bad : {"/", "/.hidden", "/..", "/../escape", "/tab\there", "/.settings/sys"}) {
+        CHECK_EQ(r.put(bad, "x").status, Status::InvalidValue);
     }
-    CHECK_EQ(r.uploadNamed("/sys/files/upload", std::string(33, 'n'), "x").status, Status::InvalidValue);
-    CHECK_EQ(r.uploadNamed("/sys/files/upload", std::string(32, 'n'), "x").status, Status::Ok);
-    CHECK_EQ(r.uploadNamed("/sys/files/upload", "été.txt", "x").status, Status::Ok);  // UTF-8 is fine
-    CHECK_EQ(r.set("/sys/files/dir", "\"/../..\"").status, Status::InvalidValue);
-    CHECK_EQ(r.set("/sys/files/mkdir", "\"a/b\"").status, Status::InvalidValue);
+    CHECK_EQ(r.put("/" + std::string(33, 'n'), "x").status, Status::InvalidValue);
+    CHECK_EQ(r.put("/" + std::string(32, 'n'), "x").status, Status::Ok);
+    CHECK_EQ(r.put("/été.txt", "x").status, Status::Ok);  // UTF-8 is fine
+    CHECK_EQ(r.put("/nowhere/a.txt", "x").status, Status::NotFound);  // folders aren't made by uploads
+    CHECK_EQ(r.ls("/../..").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/files/mkdir", "\"/.hidden\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/files/delete", "\"/\"").status, Status::InvalidValue);  // not the root
     CHECK_EQ(r.files.path("../etc/passwd"), "");
     CHECK_EQ(r.files.path("/a//b/"), r.fake.fs.dir + "/a/b");
 }
@@ -115,91 +129,118 @@ TEST(files_space) {
     FilesRig r;
     r.fake.fs.total = 4096;
     CHECK(r.dev.begin());
-    CHECK_EQ(r.uploadNamed("/sys/files/upload", "big.bin", std::string(5000, 'b')).status, Status::TooLarge);
+    CHECK_EQ(r.put("/big.bin", std::string(5000, 'b')).status, Status::TooLarge);
     CHECK(!r.onDisk("big.bin"));
     // An upload cut short leaves nothing behind.
-    rig::Reply u = r.upload("/sys/files/upload", std::string(3000, 'c'), true, 1000, 2000, "cut.bin");
+    rig::Reply u = r.upload("/sys/files/file", std::string(3000, 'c'), true, 1000, 2000, "/cut.bin");
     CHECK(!u.done);
     CHECK(!r.onDisk("cut.bin"));
     CHECK(!r.onDisk(".cut.bin.part"));
 }
 
-TEST(files_directories) {
+TEST(files_folders) {
     FilesRig r;
     CHECK(r.dev.begin());
-    CHECK_EQ(r.set("/sys/files/mkdir", "\"logs\"").status, Status::Ok);
-    CHECK_EQ(r.uploadNamed("/sys/files/upload", "top.txt", "t").status, Status::Ok);
-    r.step();
-    CHECK_EQ(r.names("/sys/files/entries"), "logs,top.txt");  // directories first
-    CHECK_EQ(r.value("/sys/files/entries/logs/isDir"), "true");
-    CHECK_EQ(r.download("/sys/files/entries/logs/content").status, Status::NotAllowed);
-    CHECK_EQ(r.set("/sys/files/entries/top.txt/open").status, Status::NotAllowed);
-    CHECK_EQ(r.set("/sys/files/entries/logs/open").status, Status::Ok);
-    CHECK_EQ(r.value("/sys/files/dir"), "\"/logs\"");
-    CHECK_EQ(r.value("/sys/files/entries"), "[]");
-    CHECK_EQ(r.uploadNamed("/sys/files/upload", "day1.log", "one").status, Status::Ok);
-    r.step();
+    CHECK_EQ(r.set("/sys/files/mkdir", "\"/logs\"").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/files/mkdir", "\"/logs\"").status, Status::InvalidValue);  // taken
+    CHECK_EQ(r.set("/sys/files/mkdir", "\"/www/img\"").status, Status::Ok);        // with the folders on the way
+    CHECK_EQ(r.put("/top.txt", "t").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/files/mkdir", "\"/top.txt\"").status, Status::InvalidValue);
+    CHECK_EQ(r.lsNames("/"), "logs,www,top.txt");  // folders first
+    CHECK_EQ(at(r.ls("/").body, "entries/0/dir"), "true");
+    CHECK_EQ(r.put("/logs/day1.log", "one").status, Status::Ok);
     CHECK(r.onDisk("logs/day1.log"));
-    CHECK_EQ(r.names("/sys/files/entries"), "day1.log");
-    CHECK_EQ(r.set("/sys/files/up").status, Status::Ok);
-    CHECK_EQ(r.value("/sys/files/dir"), "\"/\"");
-    CHECK_EQ(r.set("/sys/files/dir", "\"/logs/\"").status, Status::Ok);
-    CHECK_EQ(r.value("/sys/files/dir"), "\"/logs\"");
-    CHECK_EQ(r.set("/sys/files/dir", "\"/nowhere\"").status, Status::NotFound);
-    r.set("/sys/files/up");
-    // Deleting a directory deletes what it holds.
-    CHECK_EQ(r.set("/sys/files/entries/logs/delete").status, Status::Ok);
+    CHECK_EQ(r.lsNames("/logs/"), "day1.log");  // a trailing slash is the same folder
+    CHECK_EQ(at(r.ls("/logs/").body, "path"), "\"/logs\"");
+    CHECK_EQ(r.lsNames("/www"), "img");
+    CHECK_EQ(r.upload("/sys/files/file", "x", true, 2048, SIZE_MAX, "/logs").status, Status::InvalidValue);
+    // Deleting a folder deletes what it holds.
+    CHECK_EQ(r.set("/sys/files/delete", "\"/logs\"").status, Status::Ok);
     CHECK(!r.onDisk("logs"));
-    CHECK_EQ(r.names("/sys/files/entries"), "top.txt");
+    CHECK_EQ(r.set("/sys/files/delete", "\"/logs\"").status, Status::NotFound);
+    CHECK_EQ(r.lsNames("/"), "www,top.txt");
 }
 
-TEST(files_rename) {
+TEST(files_move) {
     FilesRig r;
     CHECK(r.dev.begin());
-    r.uploadNamed("/sys/files/upload", "a.txt", "A");
-    r.uploadNamed("/sys/files/upload", "b.txt", "B");
+    r.put("/a.txt", "A");
+    r.put("/b.txt", "B");
+    r.set("/sys/files/mkdir", "\"/www\"");
+    auto move = [&r](const char* from, const char* to) {
+        return r.set("/sys/files/move", std::string("{\"from\":\"") + from + "\",\"to\":\"" + to + "\"}").status;
+    };
+    CHECK_EQ(move("/a.txt", "/b.txt"), Status::InvalidValue);  // taken
+    CHECK_EQ(move("/a.txt", "/../c.txt"), Status::InvalidValue);
+    CHECK_EQ(move("/gone.txt", "/c.txt"), Status::NotFound);
+    CHECK_EQ(move("/a.txt", "/nowhere/a.txt"), Status::NotFound);
+    CHECK_EQ(move("/www", "/www/inner"), Status::InvalidValue);  // into itself
+    CHECK_EQ(move("/a.txt", "/c.txt"), Status::Ok);              // renamed
+    CHECK_EQ(move("/c.txt", "/www/c.txt"), Status::Ok);          // moved
+    CHECK_EQ(r.lsNames("/"), "www,b.txt");
+    CHECK_EQ(r.lsNames("/www"), "c.txt");
+    CHECK_EQ(move("/www", "/site"), Status::Ok);  // a folder, with what it holds
+    CHECK(r.onDisk("site/c.txt"));
+}
+
+// Each change names the folder whose entries changed, so open browsers
+// list it again.
+TEST(files_changed_events) {
+    FilesRig r;
+    CHECK(r.dev.begin());
+    rig::Events ev(r, "/sys/files/changed");
+    auto took = [&ev] {
+        std::string out;
+        for (const std::string& e : ev.take()) out += (out.empty() ? "" : " ") + e;
+        return out;
+    };
+    r.put("/a.txt", "A");
     r.step();
-    CHECK_EQ(r.set("/sys/files/entries/a.txt/rename", "\"b.txt\"").status, Status::InvalidValue);  // taken
-    CHECK_EQ(r.set("/sys/files/entries/a.txt/rename", "\"../c.txt\"").status, Status::InvalidValue);
-    CHECK_EQ(r.set("/sys/files/entries/a.txt/rename", "\"c.txt\"").status, Status::Ok);
-    CHECK_EQ(r.names("/sys/files/entries"), "b.txt,c.txt");
-    CHECK_EQ(r.download("/sys/files/entries/c.txt/content").body, "A");
+    CHECK_EQ(took(), "\"/\"");
+    r.set("/sys/files/mkdir", "\"/www/img\"");
+    r.put("/www/img/logo.svg", "<svg/>");
+    r.step();
+    CHECK_EQ(took(), "\"/\" \"/www/img\"");  // www, made in /, then logo.svg
+    r.set("/sys/files/move", "{\"from\":\"/a.txt\",\"to\":\"/www/a.txt\"}");
+    r.step();
+    CHECK_EQ(took(), "\"/\" \"/www\"");
+    r.set("/sys/files/delete", "\"/www/img\"");
+    r.step();
+    CHECK_EQ(took(), "\"/www\"");
+    // The application's own writes: which folder isn't known.
+    r.files.changed();
+    r.step();
+    CHECK_EQ(took(), "\"\"");
+    r.step();
+    CHECK_EQ(took(), "");
 }
 
 TEST(files_application_writes) {
     FilesRig r;
     CHECK(r.dev.begin());
-    // Through the helpers: listed at once.
     CHECK(r.files.write("data/cal.json", "{\"k\":1}").isOk());
-    r.step();
-    CHECK_EQ(r.names("/sys/files/entries"), "data");
+    CHECK_EQ(r.lsNames("/"), "data");
     std::string text;
     CHECK(r.files.read("data/cal.json", text, 100).isOk());
     CHECK_EQ(text, "{\"k\":1}");
     CHECK_EQ(r.files.read("data/cal.json", text, 3).status, Status::TooLarge);
-    // Through stdio: listed after changed().
+    // Through stdio: listed at once, since a listing reads the folder.
     FILE* f = fopen(r.files.path("own.txt").c_str(), "w");
     CHECK(f != nullptr);
     fputs("mine", f);
     fclose(f);
-    r.step();
-    CHECK_EQ(r.names("/sys/files/entries"), "data");
-    r.files.changed();
-    r.step();
-    CHECK_EQ(r.names("/sys/files/entries"), "data,own.txt");
+    CHECK_EQ(r.lsNames("/"), "data,own.txt");
 }
 
 TEST(files_format) {
     FilesRig r;
     CHECK(r.dev.begin());
-    r.set("/sys/files/mkdir", "\"logs\"");
-    r.set("/sys/files/dir", "\"/logs\"");
-    r.uploadNamed("/sys/files/upload", "x.log", "x");
+    r.set("/sys/files/mkdir", "\"/logs\"");
+    r.put("/logs/x.log", "x");
     CHECK_EQ(r.set("/sys/files/format").status, Status::Ok);
     CHECK_EQ(r.fake.fs.formats, 1);
     CHECK(!r.onDisk("logs"));
-    CHECK_EQ(r.value("/sys/files/dir"), "\"/\"");
-    CHECK_EQ(r.value("/sys/files/entries"), "[]");
+    CHECK_EQ(r.lsNames("/"), "");
 }
 
 TEST(backup_store_and_restore) {
@@ -301,7 +342,7 @@ TEST(backup_factory_reset_removes_stored) {
     FilesRig r;
     CHECK(r.dev.begin());
     r.set("/sys/backup/save", "\"keepme\"");
-    r.uploadNamed("/sys/files/upload", "other.txt", "o");
+    r.put("/other.txt", "o");
     CHECK_EQ(r.set("/sys/factoryReset").status, Status::Ok);
     r.step();
     CHECK(!r.onDisk("backups"));  // they hold secrets

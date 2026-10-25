@@ -52,8 +52,13 @@ Check noRoom() { return Check::fail(Status::TooLarge, "not enough space: the res
 // renamed over it once complete. `room`: the bytes it may take.
 class PathSink : public tesser::FileSink {
 public:
-    PathSink(Files& files, std::string target, std::string temp, FILE* f, uint64_t room)
-        : files_(files), target_(std::move(target)), temp_(std::move(temp)), f_(f), room_(room) {}
+    PathSink(Files& files, std::string rel, std::string target, std::string temp, FILE* f, uint64_t room)
+        : files_(files),
+          rel_(std::move(rel)),
+          target_(std::move(target)),
+          temp_(std::move(temp)),
+          f_(f),
+          room_(room) {}
     ~PathSink() override {
         if (f_) fclose(f_);
         if (!done_) ::remove(temp_.c_str());
@@ -76,13 +81,13 @@ public:
             return Check::fail(Status::Internal, "the file couldn't be written");
         }
         done_ = true;
-        files_.changed();
+        files_.touched(rel_);
         return Check::ok();
     }
 
 private:
     Files& files_;
-    std::string target_, temp_;
+    std::string rel_, target_, temp_;
     FILE* f_;
     uint64_t room_, written_ = 0;
     bool done_ = false;
@@ -194,16 +199,19 @@ Check Files::mkdir(std::string_view rel) {
     if (!mounted_) return unmounted();
     std::string n;
     if (!normalize(rel, n) || n.empty()) return Check::fail(Status::InvalidValue, "not a valid path");
-    // Each directory on the way.
+    // Each directory on the way; the first one made is the change listings see.
+    bool made = false;
     for (size_t slash = n.find('/');; slash = n.find('/', slash + 1)) {
-        std::string p = root_ + "/" + n.substr(0, slash);
+        std::string sub = n.substr(0, slash);
+        std::string p = root_ + "/" + sub;
         if (!isDir(p)) {
             if (exists(p)) return Check::fail(Status::InvalidValue, "a file has that name");
             if (::mkdir(p.c_str(), 0775) != 0) return Check::fail(Status::Internal, "the directory couldn't be made");
+            if (!made) touched(sub);
+            made = true;
         }
         if (slash == std::string::npos) break;
     }
-    changed();
     return Check::ok();
 }
 
@@ -236,7 +244,7 @@ Check Files::write(std::string_view rel, std::string_view data) {
         ::remove(temp.c_str());
         return fileWriteError(err);
     }
-    changed();
+    touched(n);
     return Check::ok();
 }
 
@@ -284,7 +292,7 @@ Check Files::remove(std::string_view rel) {
     std::string p = root_ + "/" + n;
     if (!exists(p)) return Check::fail(Status::NotFound, "no such file");
     bool ok = removeAll(p);
-    changed();
+    touched(n);
     return ok ? Check::ok() : Check::fail(Status::Internal, "it couldn't be removed");
 }
 
@@ -297,10 +305,13 @@ Check Files::rename(std::string_view from, std::string_view to) {
     if (!exists(root_ + "/" + a)) return Check::fail(Status::NotFound, "no such file");
     if (exists(root_ + "/" + b)) return Check::fail(Status::InvalidValue, "that name is taken");
     if (b.compare(0, a.size() + 1, a + "/") == 0) return Check::fail(Status::InvalidValue, "into itself");
+    std::string into = split(b).first;
+    if (!into.empty() && !isDir(root_ + "/" + into)) return Check::fail(Status::NotFound, "no such directory");
     if (::rename((root_ + "/" + a).c_str(), (root_ + "/" + b).c_str()) != 0) {
         return Check::fail(Status::Internal, "it couldn't be renamed");
     }
-    changed();
+    touched(a);
+    if (split(a).first != into) touched(b);
     return Check::ok();
 }
 
@@ -352,7 +363,7 @@ std::unique_ptr<tesser::FileSink> Files::sink(std::string_view rel, tesser::File
     }
     // Checked as it is written, too, when the settings need their room.
     return std::unique_ptr<tesser::FileSink>(
-        new PathSink(*this, std::move(target), std::move(temp), f, settings_ ? room : UINT64_MAX));
+        new PathSink(*this, n, std::move(target), std::move(temp), f, settings_ ? room : UINT64_MAX));
 }
 
 std::unique_ptr<tesser::FileSource> Files::source(std::string_view rel, tesser::FileRequest& request) {
@@ -371,21 +382,30 @@ std::unique_ptr<tesser::FileSource> Files::source(std::string_view rel, tesser::
     return std::unique_ptr<tesser::FileSource>(new PathSource(f, static_cast<int64_t>(st.st_size)));
 }
 
-std::string Files::relative(std::string_view name) const {
-    std::string r = dir_ == "/" ? std::string() : dir_.substr(1) + "/";
-    r.append(name.data(), name.size());
-    return r;
+void describe(tesser::Object& o, FileMove& m) {
+    o.value("from", m.from);
+    o.value("to", m.to);
 }
 
-Check Files::setDir(const std::string& dir) {
-    std::string n;
-    if (!normalize(dir, n)) return Check::fail(Status::InvalidValue, "not a valid path");
-    if (!mounted_) return unmounted();
-    if (!isDir(n.empty() ? root_ : root_ + "/" + n)) return Check::fail(Status::NotFound, "no such directory");
-    dir_ = "/" + n;
-    if (dirNode_) dirNode_->changed();
-    refresh();
-    return Check::ok();
+void Files::touched(std::string_view rel, bool unknown) {
+    std::string dir;
+    if (!unknown) {
+        size_t slash = rel.rfind('/');
+        dir = "/";
+        if (slash != std::string_view::npos) dir.append(rel.data(), slash);
+    }
+    {
+        tesser::MutexGuard g(pendingLock_);
+        if (std::find(pending_.begin(), pending_.end(), dir) == pending_.end()) {
+            // Many at once (a format, an application's burst): one "anything".
+            if (pending_.size() < 8) {
+                pending_.push_back(std::move(dir));
+            } else {
+                pending_.assign(1, std::string());
+            }
+        }
+    }
+    generation_.fetch_add(1);
 }
 
 void Files::refresh() {
@@ -396,105 +416,97 @@ void Files::refresh() {
             total_ = total;
             used_ = used;
         }
-        // The directory shown may have gone.
-        if (!isDir(path(dir_))) {
-            dir_ = "/";
-            if (dirNode_) dirNode_->changed();
-        }
     }
-    entries_ = list(dir_, kMaxEntries, &truncated_);
     if (object_) object_->changed();
+}
+
+void Files::listCall(const std::string& dir, tesser::Call& call) const {
+    std::string n;
+    if (!mounted_) return call.fail(Status::NotAllowed, "no filesystem");
+    if (!normalize(dir, n)) return call.fail(Status::InvalidValue, "not a valid path");
+    if (!isDir(n.empty() ? root_ : root_ + "/" + n)) return call.fail(Status::NotFound, "no such directory");
+    bool truncated = false;
+    std::vector<FileEntry> entries = list(n, kMaxEntries, &truncated);
+    call.replyWith([&](tesser::JsonWriter& w) {
+        w.beginObject();
+        w.key("path");
+        w.string("/" + n);
+        w.key("entries");
+        w.beginArray();
+        for (const FileEntry& e : entries) {
+            w.beginObject();
+            w.key("name");
+            w.string(e.name);
+            w.key("size");
+            w.uinteger(e.size);
+            w.key("dir");
+            w.boolean(e.isDir);
+            w.key("modified");
+            w.integer(e.modified);
+            w.endObject();
+        }
+        w.endArray();
+        w.key("truncated");
+        w.boolean(truncated);
+        w.endObject();
+    });
 }
 
 void Files::describe(tesser::Object& o) {
     object_ = &o;
-    o.label("Files").ui("icon", "folder").ui("group", "Maintenance").ui("summary", "used").readAccess(Access::Admin);
+    // TesserUI's file browser (its "files" widget) speaks to the children
+    // below by name, and keeps the folder shown in its own route.
+    o.label("Files")
+        .ui("icon", "folder")
+        .ui("group", "Maintenance")
+        .ui("summary", "used")
+        .ui("widget", "files")
+        .readAccess(Access::Admin);
     o.value("mounted", static_cast<const bool&>(mounted_)).ui("advanced");
     o.value("total", static_cast<const uint64_t&>(total_)).unit("B");
     o.value("used", static_cast<const uint64_t&>(used_)).unit("B");
-    dirNode_ = &o.value("dir", [this] { return dir_; }, [this](const std::string& d) { return setDir(d); })
-                    .label("Directory");
-    o.action("up", [this] {
-         size_t slash = dir_.rfind('/');
-         return setDir(slash == 0 ? "/" : dir_.substr(0, slash));
-     }).label("Parent directory");
-    entriesNode_ = &o.list("entries", entries_,
-                           [this](tesser::Object& e, FileEntry& f) {
-                               // The element is temporary: handlers keep copies.
-                               std::string rel = relative(f.name);
-                               bool dir = f.isDir;
-                               e.value("name", f.name);
-                               e.value("size", f.size).unit("B");
-                               e.value("isDir", f.isDir).label("Directory").ui("icon", "folder");
-                               e.value("modified", f.modified).ui("format", "datetime").ui("advanced");
-                               e.file("content")
-                                   .download([this, rel, dir](tesser::FileRequest& r) -> std::unique_ptr<tesser::FileSource> {
-                                       if (dir) {
-                                           r.refuse(Status::NotAllowed, "a directory");
-                                           return nullptr;
-                                       }
-                                       return source(rel, r);
-                                   })
-                                   .upload([this, rel, dir](tesser::FileRequest& r) -> std::unique_ptr<tesser::FileSink> {
-                                       if (dir) {
-                                           r.refuse(Status::NotAllowed, "a directory");
-                                           return nullptr;
-                                       }
-                                       return sink(rel, r);
-                                   })
-                                   .maxSize(total_)  // so a client can refuse it before sending
-                                   .label("Content")
-                                   .ui("confirm", "Replace this file?")
-                                   .ui("visibleWhen", "isDir=false");
-                               e.action("open", [this, rel, dir] {
-                                    return dir ? setDir(rel) : Check::fail(Status::NotAllowed, "not a directory");
-                                }).ui("visibleWhen", "isDir=true");
-                               e.action("rename", [this, rel](const std::string& to) {
-                                    Check c = checkName(to);
-                                    if (!c.isOk()) return c;
-                                    c = rename(rel, split(rel).first + (split(rel).first.empty() ? "" : "/") + to);
-                                    if (c.isOk()) refresh();
-                                    return c;
-                                });
-                               e.action("delete", [this, rel] {
-                                    Check c = remove(rel);
-                                    refresh();
-                                    return c;
-                                }).ui("confirm", "Delete it, and what it holds?");
-                           })
-                         .key("name")
-                         .readOnly()
-                         .maxSize(kMaxEntries)
-                         .label("Entries");
-    o.value("truncated", static_cast<const bool&>(truncated_))
-        .doc("The directory holds more entries than are listed")
-        .ui("advanced");
-    uploadNode_ = &o.file("upload").upload([this](tesser::FileRequest& r) -> std::unique_ptr<tesser::FileSink> {
-            Check c = checkName(r.filename);
-            if (!c.isOk()) {
-                r.refuse(c.status, r.filename.empty() ? "the file has no name" : c.message);
-                return nullptr;
-            }
-            return sink(relative(r.filename), r);
-        })
-        .label("Upload a file")
-        .doc("Into the directory shown; a file of the same name is replaced");
-    o.action("mkdir", [this](const std::string& name) {
-         Check c = checkName(name);
-         if (!c.isOk()) return c;
-         c = mkdir(relative(name));
-         if (c.isOk()) refresh();
-         return c;
-     }).label("New directory");
-    o.action("refresh", [this] { refresh(); }).label("Refresh");
+    o.action("list", [this](const std::string& dir, tesser::Call& call) { listCall(dir, call); })
+        .doc("A directory's entries, by its path (\"/\" the root): {path, entries: [{name, size, dir, modified}], "
+             "truncated}, at most 64");
+    fileNode_ = &o.file("file")
+                     .download([this](tesser::FileRequest& r) -> std::unique_ptr<tesser::FileSource> {
+                         if (r.filename.empty()) {
+                             r.refuse(Status::InvalidValue, "which file? its path in ?filename=");
+                             return nullptr;
+                         }
+                         return source(r.filename, r);
+                     })
+                     .upload([this](tesser::FileRequest& r) -> std::unique_ptr<tesser::FileSink> {
+                         if (r.filename.empty()) {
+                             r.refuse(Status::InvalidValue, "which file? its path in ?filename=");
+                             return nullptr;
+                         }
+                         return sink(r.filename, r);
+                     })
+                     .label("File")
+                     .doc("Any file, by its path in ?filename= (/www/index.html); an upload replaces it whole, "
+                          "once complete");
+    o.action("mkdir", [this](const std::string& dir) {
+         std::string p = path(dir);
+         if (!p.empty() && p != root_ && exists(p)) return Check::fail(Status::InvalidValue, "that name is taken");
+         return mkdir(dir);
+     }).label("New folder");
+    o.action("move", [this](const FileMove& m) { return rename(m.from, m.to); })
+        .label("Move")
+        .doc("Renames a file or a folder, or moves it to another folder: {from, to}, two paths");
+    o.action("delete", [this](const std::string& p) { return remove(p); })
+        .label("Delete")
+        .doc("A file, or a folder with what it holds");
+    changedNode_ = &o.event("changed")
+                        .label("Changed")
+                        .doc("A folder whose entries changed (\"/www\"), or \"\" when it isn't known which")
+                        .ui("hidden");
     o.action("format", [this] {
          if (!mounted_) return unmounted();
          // With the settings here, every file but theirs: a format would
          // leave them only in memory until written again, so a power cut
          // or a short heap then would lose them all, Wi-Fi's included.
          bool ok = settings_ ? eraseFiles() : fs_->format();
-         dir_ = "/";
-         if (dirNode_) dirNode_->changed();
          changed();
          refresh();
          return ok ? Check::ok() : Check::fail(Status::Internal, "the filesystem couldn't be formatted");
@@ -553,10 +565,10 @@ bool Files::eraseFiles() {
 
 void Files::start() {
     mount();  // done already if the settings are here
-    changed();
+    generation_.fetch_add(1);  // read at the first tick; no client listed anything yet
     refresh();
     // A file larger than the partition is refused before it is sent.
-    if (mounted_) uploadNode_->maxSize(total_);
+    if (mounted_) fileNode_->maxSize(total_);
     refreshBackups();
 }
 
@@ -566,6 +578,12 @@ void Files::tick(uint32_t nowMs) {
         refresh();
         refreshBackups();
     }
+    std::vector<std::string> dirs;
+    {
+        tesser::MutexGuard g(pendingLock_);
+        dirs.swap(pending_);
+    }
+    for (const std::string& d : dirs) changedNode_->emit(d);
 }
 
 void Files::factoryReset() {

@@ -524,32 +524,29 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 ### 5.12 Files
 
 ```
-/sys/files              Admin, read and write
+/sys/files              Admin, read and write; ui.widget "files" (TesserUI's file browser)
   mounted       boolean, read-only (advanced)
   total, used   integers (B), read-only: the partition, and what its files take
-  dir           string: the directory listed ("/", "/logs"); a write must name one
-  up            action: the parent directory
-  entries       read-only keyed list (key "name"), ≤ 64, directories first, then by name:
-    name, size (B), isDir (ui.icon "folder"), modified (epoch s, 0 if the clock wasn't set; advanced)
-    content     file: download it; upload replaces it (ui.visibleWhen "isDir=false"; maxSize: the partition)
-    open        action: list this directory (ui.visibleWhen "isDir=true")
-    rename      action (string): a new name, in the same directory
-    delete      action: the file, or the directory with what it holds (ui.confirm)
-  truncated     boolean, read-only (advanced): the directory holds more than 64 entries
-  upload        file: a new file in `dir`, named by the client (TesserAPI's ?filename=); one of that name is replaced
-  mkdir         action (string): a directory in `dir`
-  refresh       action: list again (after the application wrote files)
+  list          action (string: a folder's path, "/" the root): {path, entries: [{name, size, dir, modified}], truncated};
+                at most 64 entries, folders first, then by name; modified in epoch s, 0 if unknown (folders, a clock not set)
+  file          file: any file by its path in TesserAPI's ?filename= (/www/index.html), both ways; an upload replaces
+                it whole once complete (maxSize: the partition); its folder must exist
+  mkdir         action (string: a path): a folder, with the folders on the way; a name taken is invalid_value
+  move          action ({from, to}: two paths): renames, or moves to another folder (which must exist)
+  delete        action (string: a path): a file, or a folder with what it holds
+  changed       event, hidden: the folder whose entries changed ("/www"), "" when it isn't known which
   format        action: erase every file (ui.confirm, advanced); the settings stay
 ```
 
 - **The partition** is a LittleFS data partition labelled `files` (TesserKIT's `*_files.csv` tables, §11), else `spiffs` (Arduino's default and `min_spiffs` tables), mounted at `/files`; `files.partition(label)` and `files.root(path)` change them. A partition that holds no filesystem (new, or SPIFFS from an older firmware) is formatted. One an application already mounted (Arduino's `LittleFS.begin()`) is used as it is, at the root it was given. Without a partition, or without LittleFS in the build, `mounted` is false and every operation is `not_allowed`. The device mounts it in `begin()`, before loading the settings, which it keeps there (§6.1), through `Files::settingsStorage()`, virtual so that a firmware without Files doesn't link the filesystem storage or the move; `files.mount()` is idempotent, so the service's start doesn't mount it again.
 - **Names** are 1 to 32 characters, without `/`, `\` or control characters, and don't start with a dot; UTF-8 is fine. Paths below the root are at most 63 characters. Anything else is `invalid_value`, so no request reaches outside the root, nor the hidden entries: the uploads' temporary files and the settings' directory, `/.settings`, which no listing shows and no request or helper can read, write, rename or delete.
-- **Uploads** go to a hidden temporary file (`.<name>.part`) beside the target and are renamed over it once complete, so a cut transfer or a power cut leaves the old file or the new one, never a part. The suffix keeps a file named `settings` from having the settings' directory as its temporary file. An upload announcing more than the free space is `too_large` before any byte is written. Writes run outside the API lock (TesserAPI §4.6); the listing follows within a period of the device's task.
+- **Uploads** go to a hidden temporary file (`.<name>.part`) beside the target and are renamed over it once complete, so a cut transfer or a power cut leaves the old file or the new one, never a part. The suffix keeps a file named `settings` from having the settings' directory as its temporary file. An upload announcing more than the free space is `too_large` before any byte is written. Writes run outside the API lock (TesserAPI §4.6); `changed` follows within a period of the device's task.
 - **Room for the settings:** while the settings live on the filesystem (§6.1), an upload or a helper's write that would leave less than `files.settingsReserve(bytes)` free (`Files::kSettingsReserve`, 64 KB) is `too_large` ("not enough space: the rest is kept for the settings"), before any byte is written if the upload announced its size, else as it writes. So a full filesystem never blocks a settings save. 64 KB is the worst case of TesserKIT's records (§11) in LittleFS's 4 KB blocks: `sys` (16.7 KB: 5 blocks) and `sequencer` (10.3 KB: 3), the temporary copy of `sys` while it is rewritten (5), the directory's metadata pair (2), and a block for LittleFS to move metadata to. It doesn't count the space the settings take already, so it errs on the safe side; an application with large records of its own raises it.
 - **Format** keeps the settings while they live there: it erases every file and directory but `/.settings`, rather than formatting the partition. A format would leave the settings only in memory until written again: a power cut then, or a heap too short for the writes, would lose them all, the Wi-Fi networks included, and the device would come back on its defaults, on its access point. Refusing the format would be as safe but would leave no way to clear the files. A filesystem LittleFS can't mount is formatted when mounted, as before.
 - **Write errors say why:** a write the filesystem refuses for want of space is `too_large` ("the filesystem is full"); one LittleFS can't do for want of heap (its caches, allocated as it writes) is `busy` ("not enough free memory to write the file now"), to try again; any other is `internal`. Seen on DEVKIT-V3 as a gateway (2026-10-14): a 20 KB upload over the serial line, with 24 KB of 384 KB used, was refused as "full" when it was memory.
-- **One directory at a time:** `dir` is the device's, shared by its clients: a browser opening a directory moves the others' listing too. Keys can't hold `/`, so a listing of the whole tree would need another key; one directory keeps every row addressable by name.
-- **The application** reads and writes its own files through stdio below `files.root()`, or with the helpers (`files.write(rel, data)`, `read`, `remove`, `rename`, `mkdir`, `list`), which other services use too. After writing through stdio, `files.changed()` updates the listing.
+- **Stateless, by path** (2026-10-25, Leo): the device keeps no current folder; each request names its paths, absolute and `/`-separated (a trailing `/` and a missing leading one are accepted). TesserUI's file browser keeps the folder shown in its own route (`#/sys/files/~/www/img`), so back, reload and links work and two browsers don't move each other. Until then `dir`, `up` and an `entries` list of one folder were the device's, shared by its clients: a browser opening a folder moved the others' listing too. TesserAPI's paths can't hold a `/` in a key, so a tree of keyed lists would need nested lists; actions with paths keep the schema small and every file reachable. `file` takes the path of a download as of an upload (TesserAPI's `?filename=` on a `GET`, and the download envelope's `filename`, *(TesserAPI, pending)*).
+- **Changes are events:** each upload, `mkdir`, `move`, `delete`, helper write or removal names the folder whose entries changed (`/` for a file at the root; both folders for a move between two), sent as `changed` at the device's next tick, once per folder. Eight or more folders in one tick, and `files.changed()`, send one `""`: list whatever is shown again. Open browsers subscribe to it and list the folder they show again.
+- **The application** reads and writes its own files through stdio below `files.root()`, or with the helpers (`files.write(rel, data)`, `read`, `remove`, `rename`, `mkdir`, `list`), which other services use too. A listing reads the folder each time, so stdio writes show at once; `files.changed()` tells open browsers.
 - **Factory reset** doesn't format: files are often data rather than settings. Only the stored backups go (§5.5), and the settings in `/.settings` (§6.1).
 - Of the examples, only `examples/idf/full` has Files, on `tesserkit_4mb_files.csv`.
 

@@ -154,11 +154,10 @@ TEST(heap_files) {
         std::vector<std::string> names;
         for (int i = 0; i < 40; i++) names.push_back("file-" + std::to_string(i) + ".txt");
         alloccap::Heap h(bytes);
-        CHECK_EQ(upload(r, "/sys/files/upload", big, "big.bin"), Status::Ok);
-        r.step();  // listed
-        CHECK_EQ(download(r, "/sys/files/entries/big.bin/content"), big.size());
-        for (const std::string& n : names) upload(r, "/sys/files/upload", "x", n);
+        CHECK_EQ(upload(r, "/sys/files/file", big, "/big.bin"), Status::Ok);
+        for (const std::string& n : names) upload(r, "/sys/files/file", "x", "/" + n);
         r.step();
+        r.set("/sys/files/list", "\"/\"");
         r.get("/sys/files");
         r.set("/sys/backup/save", "\"one\"");
         r.set("/sys/backup/save", "\"two\"");

@@ -227,11 +227,14 @@ def upload(send, path, data, filename=None, label='', progress=False):
             sys.stdout.flush()
 
 
-def download(send, path):
+def download(send, path, filename=None):
     got = b''
     first = None
     while True:
-        status, body = send({'op': 'download', 'path': path, 'offset': len(got)})
+        req = {'op': 'download', 'path': path, 'offset': len(got)}
+        if filename is not None and not got:
+            req['filename'] = filename  # which file, on the opening request
+        status, body = send(req)
         if status != 'ok':
             return None, (status, body)
         if first is None:
@@ -242,18 +245,18 @@ def download(send, path):
 
 
 def file_round_trip(send, base, label, size=20000):
-    name = f'e2e-{label}.bin'
+    name = f'/e2e-{label}.bin'
     blob = os.urandom(size)
     t0 = time.time()
-    status, body, _ = upload(send, base + '/sys/files/upload', blob, filename=name)
+    status, body, _ = upload(send, base + '/sys/files/file', blob, filename=name)
     up = size / 1024 / max(time.time() - t0, 1e-3)
     check(f'{label}: upload {size} bytes to Files ({up:.1f} KB/s)', status == 'ok', (status, body))
     t0 = time.time()
-    got, first = download(send, base + f'/sys/files/entries/{name}/content')
+    got, first = download(send, base + '/sys/files/file', filename=name)
     down = size / 1024 / max(time.time() - t0, 1e-3)
     check(f'{label}: download it back ({down:.1f} KB/s)', got == blob,
           first if got is None else f'{len(got)} bytes, differ')
-    status, body = send({'op': 'set', 'path': base + f'/sys/files/entries/{name}/delete'})
+    status, body = send({'op': 'set', 'path': base + '/sys/files/delete', 'body': name})
     check(f'{label}: delete it', status == 'ok', (status, body))
 
 
