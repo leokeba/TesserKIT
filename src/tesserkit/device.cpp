@@ -569,6 +569,7 @@ Filesystem* espFilesystem() { return nullptr; }
 LogOutput* espLog() { return nullptr; }
 Power* espPower() { return nullptr; }
 Pins* espPins() { return nullptr; }
+Pins* espDigitalPins() { return nullptr; }
 UdpApiTransport* espUdpApi() { return nullptr; }
 #endif
 

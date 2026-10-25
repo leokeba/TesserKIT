@@ -214,6 +214,9 @@ struct EthernetBoard {
     uint8_t spiMhz = 20;
 
     bool spi() const { return phy == Phy::W5500; }
+    // Whether the wiring takes `pin`: its own pins, and on RMII the ESP32's
+    // fixed data pins (19, 21, 22, 25, 26, 27), so nothing else drives them.
+    bool uses(int8_t pin) const;
 };
 
 struct EthInfo {
@@ -619,6 +622,10 @@ public:
     enum class Pull : uint8_t { None, Up, Down };
     virtual bool inputBegin(int8_t pin, Pull pull) = 0;
     virtual bool input(int8_t pin) = 0;
+    // Prepares `pin` as a digital output, low; false if it can't be one
+    // (input-only, the flash's or PSRAM's, or reserved by another driver).
+    virtual bool outputBegin(int8_t pin) = 0;
+    virtual void output(int8_t pin, bool high) = 0;
 };
 
 // What a device runs on. Null members are filled with the ESP
@@ -668,7 +675,10 @@ NowTpRadio* espNowTp();    // null if the build has no NowTP
 Filesystem* espFilesystem();  // null if the build has no LittleFS
 LogOutput* espLog();
 Power* espPower();
+// The chip's pins. espDigitalPins() is the same object without the ADC, so
+// that its driver isn't linked; espPins() adds it.
 Pins* espPins();
+Pins* espDigitalPins();
 UdpApiTransport* espUdpApi();
 
 }  // namespace tesserkit

@@ -35,6 +35,17 @@ void applyIp(esp_netif_t* netif, const IpConfig& ip);
 // (and Arduino) may have done already (wifi_esp.cpp).
 void netifInit();
 
+// The ADC behind Pins::analogBegin() and analogMv() (adc_esp.cpp), which
+// espPins() attaches to the pins (pins_esp.cpp). A virtual call from there,
+// to a class in another file, so that only espPins() links the driver.
+class Adc {
+public:
+    virtual ~Adc() = default;
+    virtual bool begin(int8_t pin) = 0;
+    virtual bool read(int8_t pin, uint32_t& mv) = 0;
+};
+void attachAdc(Adc* adc);
+
 // UDP sockets with multicast groups (udp_groups_esp.cpp), and what Ethernet
 // installs to pass every multicast frame on while there are any
 // (eth_esp.cpp): called on the first socket's groups and after the last's.

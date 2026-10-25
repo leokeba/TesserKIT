@@ -101,7 +101,7 @@ void loop() {}                           // nothing to do: TesserKIT runs in its
 
 ### 3.3 Platform layer
 
-Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Ethernet` (the internal MAC and its PHY, or a W5500 on SPI), `IpStack` (the IP stack's one list of DNS servers, which Network refills), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads and release checks), `Coredump`, `Udp` (Art-Net and sACN: sockets and a receiving task), `UdpGroups` (sACN's multicast groups, apart so that a build without sACN doesn't link IGMP), `MqttClient`, `Ble` (Bluetooth LE), `NowTpRadio` (ESP-NOW), `Filesystem` (LittleFS: mounting, usage, formatting; the files themselves through stdio and `dirent`, the same on the host), `LogOutput` (the log's lines and level), `Power` (deep sleep and its wake-up), `Pins` (ADC and digital inputs, pulled up, down or not), `UdpApiTransport` (TesserAPI's UDP transport) and, for applications rather than services, `Pwm` (the LEDC, §5.20):
+Services never call ESP-IDF directly. They call `tesserkit::Platform`, a set of narrow interfaces: `Core` (chip information, heap, restart, tasks), `Wifi` (station, access point, captive portal), `Ethernet` (the internal MAC and its PHY, or a W5500 on SPI), `IpStack` (the IP stack's one list of DNS servers, which Network refills), `Mdns`, `Clock` (the clock, the time zone, SNTP), `Ota` (the OTA slots), `HttpClient` (downloads and release checks), `Coredump`, `Udp` (Art-Net and sACN: sockets and a receiving task), `UdpGroups` (sACN's multicast groups, apart so that a build without sACN doesn't link IGMP), `MqttClient`, `Ble` (Bluetooth LE), `NowTpRadio` (ESP-NOW), `Filesystem` (LittleFS: mounting, usage, formatting; the files themselves through stdio and `dirent`, the same on the host), `LogOutput` (the log's lines and level), `Power` (deep sleep and its wake-up), `Pins` (ADC and digital inputs, pulled up, down or not, and digital outputs; `espDigitalPins()` leaves the ADC driver out of the link, `espPins()` adds it), `UdpApiTransport` (TesserAPI's UDP transport) and, for applications rather than services, `Pwm` (the LEDC, §5.20):
 
 - `src/tesserkit/platform/esp/` implements them on ESP-IDF APIs, which Arduino-ESP32 3.x also ships, so one implementation serves both.
 - `test/fake_platform.*` implements them in memory for host tests: a Wi-Fi radio whose scans and connections the test scripts, a clock the test advances, an OTA partition that's a byte vector.
@@ -222,7 +222,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
     securePassword *(p) read-only, Admin-readable, advanced: the access point's password in secure mode (§7) while password is empty: 12 random characters made once per device, printed on the console when the access point comes up
     channel *(p)       integer 1–13, Admin
     hidden *(p)        boolean, Admin
-    status/            active, ip, clients
+    status/            active, ip, clients, override (none, open, closed: by the board's button, §5.24)
   mdns *(p)            boolean (default true), Admin
 ```
 
@@ -258,6 +258,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 **Access point:**
 - `fallback`: up when no saved network is joined within 15 s of trying, and down 30 s after the station connects (time for a phone on the AP to follow the device's new address). `always`: always up (AP+STA). `never`: never, except in recovery (below).
 - **Recovery:** with no saved network, the AP comes up whatever the mode, so a fresh device is always reachable.
+- **Override** (`net.overrideAp(ApOverride::Open or Closed, ms)`, the board's button, §5.24): the access point up, or down, for that long, whatever the mode, recovery and the connection say; `status/override` tells. Not a setting: a restart ends it, and so does the time, after which the rules above apply again (an opened one goes down at once while the device is online, a closed one comes back up at once while it isn't), except that an opened one stays while stations are joined to it. It is for a device online somewhere nobody can reach it (a static address on the wrong subnet, a lease on another network), which the fallback never opens for.
 - **Captive portal:** while the AP is up and the station isn't connected, a DNS server answers every name with the AP's address, and the HTTP server's 404 handler redirects to `/` (`302`). OS connectivity probes (`/generate_204`, `/hotspot-detect.html`, `/connecttest.txt`, `/ncsi.txt`) thus all land on the UI, so phones open it on joining. This costs no URI handler slot.
 
 **mDNS:** `<hostname>.local`, with `_http._tcp` and TXT records `api=/api`, `ws=/ws`, `version=<version>`, `tesser=1`, and `_tesser._tcp` with `api` and `ws`, what TesserAPI's `HttpServer::advertise()` announces and TesserUI's bridge lists for the launcher (§8), on ESP-IDF's `mdns` component (about 34 KB of flash). On by default, since it is how a provisioned device is found; `-DTESSERKIT_NO_MDNS` leaves it out, with the `mdns` setting.
@@ -743,7 +744,38 @@ Not a service: a class for applications, `tesserkit::Button` (`tesserkit/button.
 
 - **Presses:** `Short` on release, before the long time (1 s by default); `Long` once when held that long, while still held; `VeryLong` once more when held `veryLongMs` (0, none, by default; 10 s is WLED's factory reset), whose action is the application's. The release of a long press is nothing. `heldMs()` says how long the press in progress has lasted, for a light that tells the user what letting go now does.
 - **On a pin:** `attach(dev, pin, activeLow, fn)` before `Device::begin()`: active low against the chip's pull-up (a Gledopto's button on GPIO 17, a devkit's BOOT button on GPIO 0), active high against its pull-down, through the platform's `Pins` (`inputBegin(pin, Pull)`); `fn` runs in the device's task. `update(down, nowMs)` is the logic alone, platform-free, for a level the application reads itself.
-- Host-tested (`test/button_cases.h`, from pixled-controller's); not run on hardware.
+- Host-tested (`test/button_cases.h`, from pixled-controller's); on hardware through Board (§5.24).
+
+### 5.24 Board
+
+`tesserkit::Board` (`tesserkit/board.h`): the board's status LED and function button, as a service (Leo, 2026-10-25), declared after Network and given it: `Board board(dev, &net)`.
+
+```
+/sys/board
+  led/
+    gpio *(p)          integer -1–48 (default the application's, -1: none), Admin: applied at the next restart
+    activeLow *(p)     boolean, advanced: lit when low
+    show *(p)          enum status, problems (dark while online), off (default status)
+    status             "on GPIO 2", "no LED", or why not: "GPIO 0 is Ethernet's", "GPIO 2 is in use or can't be an output"
+    pattern            enum: what it shows now (below)
+    identify           action: blinks for 10 s, to find the board
+  button/
+    gpio *(p)          integer -1–48 (default the application's), Admin: applied at the next restart
+    activeLow *(p)     boolean (default true: pressed low, against the chip's pull-up), advanced
+    short *(p)         enum none, accessPoint, restart, factoryReset, application (default accessPoint)
+    long *(p)          the same (default restart): held 3 s
+    veryLong *(p)      the same (default factoryReset): held 10 s
+    status             "on GPIO 17", "no button", or why not
+    press              action "short", "long" or "veryLong", advanced: does that press's action
+    pressed            event, info toast: "Access point open for 10 minutes", "Restarting", "Factory reset"
+```
+
+- **Pins:** the application gives the board's (`board.led(pin, activeLow)`, `board.button(pin, activeLow)`) as factory defaults, and the user can change them; a pin is set up when the service starts, so a change applies at the next restart. A pin the board's Ethernet wiring takes (`EthernetBoard::uses()`: its MDC, MDIO, power and clock pins, and the ESP32's RMII data pins 19, 21, 22, 25, 26, 27; a W5500's SPI pins) is refused, so is the other one's pin, and one the platform refuses: input-only pins, the flash's and PSRAM's, and outputs another driver reserved (`esp_gpio_is_reserved()`; `gpio_config()` would only warn). `status` says which. A Gledopto's button is GPIO 17 (active low); its blue LED is its power LED, not on a GPIO (checked 2026-10-25 on Gledopto C by blinking GPIO 2, 4, 12, 13, 14, 15, 16 and 18 in turn: it stayed on), and WLED's configuration there names no status LED. A devkit's BOOT button is GPIO 0 and its blue LED GPIO 2.
+- **The LED** shows, first what applies: the button held (dark while down, `pressed`; on once letting go does the long press's action, `held`; 5 Hz once it does a factory reset, `factoryReset`; while letting go would do nothing, the state below); `identify` (2.5 Hz for 10 s); with `show` off, nothing; an update (`updating`, 5 Hz); `Device::fail()` (`error`, three quick blinks every 2 s); the access point up while the device isn't online, or opened by the button (`accessPoint`, a double blink each second); online (`online`, on; dark with `show` problems); anything else, connecting or provisioning with the access point closed (`connecting`, 1 Hz). Sampled every period of the device's task (20 ms), and written when it changes. Dark while asleep (`Device::onSleep()`).
+- **The button:** `tesserkit::Button` (§5.23), long at 3 s and very long at 10 s, read every period. Each press's action runs on release, so holding on to the very long time doesn't restart on the way; the LED tells which it will be. `accessPoint` closes the access point if it is up, else opens it, for 10 minutes (Network's override, §5.2): the way into a device that is online where nobody can reach it, or out of one whose access point is unwanted. `restart` restarts after 500 ms (the toast goes first), `factoryReset` is System's (§5.1), `application` calls `board.onPress(fn)` with the press, in the device's task. In secure mode the button resets the device without an account: whoever holds the board can also flash it over USB (§7).
+- **Without Network,** the LED follows `Device::state()` alone and `accessPoint` does nothing.
+- **In `examples/idf/full`:** on, with the button on GPIO 17 with the Gledopto's Ethernet and on GPIO 0 otherwise (Kconfig `FULL_BUTTON_GPIO`, `-DBUTTON_GPIO=n`), and no status LED (`FULL_STATUS_LED_GPIO`, `-DSTATUS_LED_GPIO=n`): a devkit's GPIO 2 is the example's own LED (`/led`).
+- Host-tested (`test/board_cases.h`). On hardware (2026-10-25, Gledopto C, classic-gledopto, on Ethernet): a short press opened the access point (`override` open, the device still online on the cable), another closed it, a 5 s hold restarted on release. On DEVKIT-R1 (the full example): `led/gpio` 2 is refused, "in use", since the example's LEDC has reserved it for `/led`, which keeps working; built with `-DLED_GPIO=4 -DSTATUS_LED_GPIO=2`, its blue LED was steady online, blinked for `identify`, went dark with `show` problems, and the BOOT button's short presses opened the access point (a double blink) and closed it. The full profile, Bluetooth with it, leaves that board 20 to 23 KB free, and with two clients polling and a settings save it fell to 672 B and the station dropped for about 90 s, before any press: with classic (77 KB free) it doesn't. Opening the access point beside a joined station took 4 KB there.
 
 ### 5.17 Later
 
@@ -810,17 +842,17 @@ Storage holds only what differs from the defaults (§6.2), so a changed default 
   - **NowTP's discovery** without a key: goodbyes, move notices and announcements are unauthenticated, so a stranger in radio range can make nodes lose each other or leave their channel *(later)*.
   - **Cross-site requests in open mode:** any page a user visits on the same network can POST to an open device; secure mode refuses them.
   - **Backups** carry the accounts' password hashes, which an attacker holding one can test offline (the token key and this device's own secrets stay out).
-  - **Physical access:** the serial console is Admin (the launcher's USB way), and flash isn't encrypted.
+  - **Physical access:** the serial console is Admin (the launcher's USB way), the board's button can open the access point and reset the device (§5.24), and flash isn't encrypted.
 
 ## 8. User interface
 
 The UI is TesserUI's generic renderer, self-hosted by the device (TesserUI §9.4): `/`, `/ui.js`, and `/ui/widgets-<hash>.js`, the widgets few pages use (tables and lists, files, charts, gauges, knobs, the log, JSON, time zones, custom elements), loaded the first time a page needs one. About 67 KB of flash gzipped (TesserUI dde641f). Nothing is TesserKIT-specific in the bundle:
 
-- **Menu:** `/sys` has `ui.page`, so TesserUI's menu (TesserUI §6.3) shows it as one entry with a sub-entry, and a page, per service. Each service names its icon (`ui.icon`): Status `info`, Network `wifi`, Time `clock`, Firmware `download`, Backup `refresh`, Timers `play`, Users `lock`, MQTT `link`, Art-Net `bulb`, Log `menu`, Battery `battery`, Sleep `moon`, UDP `bolt`, Nodes `target`.
+- **Menu:** `/sys` has `ui.page`, so TesserUI's menu (TesserUI §6.3) shows it as one entry with a sub-entry, and a page, per service. Each service names its icon (`ui.icon`): Status `info`, Network `wifi`, Time `clock`, Firmware `download`, Backup `refresh`, Timers `play`, Users `lock`, MQTT `link`, Art-Net `bulb`, Log `menu`, Battery `battery`, Sleep `moon`, UDP `bolt`, Nodes `target`, LED and button `power`.
 - **This node's own:** `ui.perNode` marks what TesserUI's apply to all (§6.6 there) leaves out: the hostname, the access point's name, the static addresses (Ethernet's, and each saved network's), MQTT's client ID and topic prefix (a broker drops a client whose ID another takes). `/sys/name` has it through `ui.nodeName`. Art-Net's universe and mappings don't: a show's nodes may share them.
 - **Services' pages** are their trees with hints: labels, units, `confirm` on destructive actions, `style danger`, `advanced` on rarely used settings, `form` where several fields must change together (the access point), `visibleWhen` for conditional fields (static IP), `chart` on heap and RSSI.
 - **The application's pages** are its tree, plus TesserUI views (§8 there) for dashboards and custom elements (§9.8 there) for what generic widgets can't draw.
-- **Notifications:** what happens in the background, after any reply, is an event with `ui.toast` (TesserUI §7.8) and `ui.hidden`: a toast, not an events log on the service's page. Network's `joined`, Firmware's `updateFailed` and `newRelease`, `timerFailed`, Mqtt's `lost`, ArtNet's `refused`, the Sequencer's `failed`, Battery's `lowBattery`, and Peers' `lost` and `reached`. TesserUI shows them on any page, as "<parent's label> › <label>: <payload>" ("Wi-Fi › Joined: 192.168.1.50 on Workshop"), so their labels don't repeat their parent's. A moment a reply or a widget already shows isn't one: a failed upload, a manual release check, a pairing (its state is on the page), a restore. Clients only hear events while subscribed, so what a device does at boot (a rollback, a crash) stays a value (`resetReason`, `coredumpPresent`).
+- **Notifications:** what happens in the background, after any reply, is an event with `ui.toast` (TesserUI §7.8) and `ui.hidden`: a toast, not an events log on the service's page. Network's `joined`, Firmware's `updateFailed` and `newRelease`, `timerFailed`, Mqtt's `lost`, ArtNet's `refused`, the Sequencer's `failed`, Battery's `lowBattery`, Board's `pressed`, and Peers' `lost` and `reached`. TesserUI shows them on any page, as "<parent's label> › <label>: <payload>" ("Wi-Fi › Joined: 192.168.1.50 on Workshop"), so their labels don't repeat their parent's. A moment a reply or a widget already shows isn't one: a failed upload, a manual release check, a pairing (its state is on the page), a restore. Clients only hear events while subscribed, so what a device does at boot (a rollback, a crash) stays a value (`resetReason`, `coredumpPresent`).
 - **Login:** when a request answers `unauthorized`, TesserUI's sign-in dialog calls `/sys/auth/login` with a name and password (TesserUI §7.4). Without the Auth service it never needs to: everyone is Admin.
 - **Theming and text:** `dev.web().theme(...)`, `.text(...)`, `.title(...)` (TesserUI §9.4).
 - **Favicon:** TesserKIT's, TesserUI's tesseract on a chip (a pin on each side, the same blue and strokes), inlined in the generated page as an SVG `data:` URL (231 bytes, no request), and on the launcher's page. An application names its own with `dev.web().icon("/icon.svg")` (an asset, or a `data:` URL).
@@ -919,6 +951,7 @@ Budgets, measured on a classic ESP32 (ESP-IDF, same method as TesserAPI §15: an
 | Ethernet on a W5500 (2026-10-16, ESP32-S3, `examples/idf/full` with and without `-DETHERNET_W5500`, ESP-IDF 6.1-dev): `esp_eth`, the SPI master driver, `espressif/w5500` and `wiznet_common`, its netif glue | 54.0 KB |
 | Log, Sleep and Home Assistant discovery together (2026-10-13, `examples/idf/full` before and after) | 28.7 KB |
 | Battery on an ADC pin (2026-10-13, `examples/idf/full` with and without `-DBATTERY_GPIO=34`): the service, the ADC oneshot driver and its calibration | 12.1 KB |
+| Board (2026-10-25, `examples/idf/full -DPROFILE=classic -DETHERNET_BOARD=gledopto` with and without `FULL_BOARD`, ESP-IDF 6.1-dev): the service, Network's override, the GPIO calls. The ADC driver came with any use of `Pins` until it moved behind `espPins()` (`adc_esp.cpp`), and `gpio_config()` brought the GPIO interrupt setup (14.3 KB in all before) | 6.4 KB; 232 B of RAM |
 | UdpApi with TesserAPI's UDP transport (2026-10-13, `examples/idf/full` before and after; ESP32) | 18.1 KB; heap: 11 KB while running (its two tasks' stacks and buffers), measured on the Gledopto |
 | Home Assistant discovery (2026-10-13, ESP32-C3, `CONFIG_TESSERKIT_HOME_ASSISTANT=n` against on; `-DTESSERKIT_NO_HOME_ASSISTANT` elsewhere) | 7.9 KB |
 

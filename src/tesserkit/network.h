@@ -24,6 +24,9 @@ struct WifiNetwork {
 void describe(tesser::Object& o, WifiNetwork& n);
 
 enum class ApMode : uint8_t { Always, Fallback, Never };
+// The access point held open or closed for a while, whatever its mode
+// (Network::overrideAp()).
+enum class ApOverride : uint8_t { None, Open, Closed };
 // When the station joins a network: always, never, or while Ethernet has no
 // DHCP lease (Fallback, the default with a board; Always without).
 enum class StationMode : uint8_t { Always, Never, Fallback };
@@ -91,6 +94,16 @@ public:
     // Reachable on a network: over Wi-Fi or Ethernet.
     bool online() const { return connected() || ethOnline_; }
     bool apActive() const { return apUp_; }
+    // The access point opened, or closed, for `ms`, whatever its mode and the
+    // device's connection: Board's button (docs/DESIGN.md section 5.24). Not
+    // a setting: when the time is up it follows its mode again, except that
+    // an opened one stays while stations are joined to it. None ends it now.
+    // Under the API lock.
+    void overrideAp(ApOverride o, uint32_t ms);
+    ApOverride apOverride() const { return apOverride_; }
+    // The board's Ethernet wiring, null without a board: pins nothing else
+    // may drive.
+    const EthernetBoard* ethernetBoard() const { return ethWanted_ ? &ethBoard_ : nullptr; }
 
     // Station timing (docs/DESIGN.md section 5.2).
     // An attempt has this long to associate (within a deferred scan's
@@ -260,6 +273,8 @@ private:
     bool captive_ = false;
     std::string apIp_;
     int32_t apClients_ = 0;
+    ApOverride apOverride_ = ApOverride::None;
+    uint32_t apOverrideUntilMs_ = 0;
 };
 
 }  // namespace tesserkit

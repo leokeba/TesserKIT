@@ -26,6 +26,7 @@ set(TESSERKIT_CORE_SRCS
     src/tesserkit/peers.cpp
     src/tesserkit/pwm.cpp
     src/tesserkit/pulses.cpp
+    src/tesserkit/board.cpp
     src/tesserkit/button.cpp
     src/tesserkit/settings_store.cpp)
 
@@ -79,6 +80,7 @@ if(ESP_PLATFORM)
              src/tesserkit/platform/esp/log_esp.cpp
              src/tesserkit/platform/esp/power_esp.cpp
              src/tesserkit/platform/esp/pins_esp.cpp
+             src/tesserkit/platform/esp/adc_esp.cpp
              src/tesserkit/platform/esp/pwm_esp.cpp
              src/tesserkit/platform/esp/pulses_esp.cpp
              src/tesserkit/platform/esp/udp_api_esp.cpp

@@ -4,7 +4,7 @@ namespace tesserkit {
 
 bool Button::attach(Device& dev, int8_t pin, bool activeLow, std::function<void(Press)> fn) {
     Platform& p = dev.platform();
-    if (!p.pins) p.pins = espPins();
+    if (!p.pins) p.pins = espDigitalPins();
     Pins* pins = p.pins;
     if (!pins || !pins->inputBegin(pin, activeLow ? Pins::Pull::Up : Pins::Pull::Down)) {
         tesser::logError("tesserkit: GPIO %d can't be a button's input", pin);

@@ -36,7 +36,7 @@ TEST(network_fresh_device_provisions) {
     CHECK(r.fake.wifi.captive);
     CHECK_EQ(r.dev.state(), State::Provisioning);
     CHECK_EQ(r.fake.wifi.scans, 0);
-    CHECK_EQ(r.value("/sys/network/ap/status"), "{\"active\":true,\"ip\":\"192.168.4.1\",\"clients\":0}");
+    CHECK_EQ(r.value("/sys/network/ap/status"), "{\"active\":true,\"ip\":\"192.168.4.1\",\"clients\":0,\"override\":\"none\"}");
     CHECK(r.fake.mdns.on);
     CHECK_EQ(r.fake.mdns.host, "test-device-a67c");
     CHECK_EQ(r.fake.mdns.version, "1.0.0");

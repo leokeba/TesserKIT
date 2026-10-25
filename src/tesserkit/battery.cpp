@@ -71,7 +71,12 @@ uint8_t Battery::socOf(float v) const {
 
 void Battery::describe(tesser::Object& o) {
     Platform& p = dev_.platform();
-    if ((adcPin_ >= 0 || chargePin_ >= 0) && !p.pins) p.pins = espPins();
+    // The ADC only with an ADC pin: espPins() links its driver.
+    if (adcPin_ >= 0 && (!p.pins || p.pins == espDigitalPins())) {
+        p.pins = espPins();
+    } else if (chargePin_ >= 0 && !p.pins) {
+        p.pins = espDigitalPins();
+    }
     pins_ = p.pins;
 
     o.label("Battery").ui("icon", "battery").writeAccess(Access::Admin);

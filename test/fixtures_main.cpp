@@ -27,6 +27,9 @@ int main(int argc, char** argv) {
     tesserkit::Sleep sleep(r.dev);
     tesserkit::UdpApi udp(r.dev);
     tesserkit::Peers peers(r.dev);
+    tesserkit::Board board(r.dev, &network);
+    board.button(17);  // a Gledopto's
+    r.fake.pins.level[17] = true;
     files.root(r.fake.fs.dir.c_str());
     firmware.github("leokeba/TesserKIT", "tesserkit-minimal-{target}.bin");
     network.ethernet(tesserkit::boards::gledopto());

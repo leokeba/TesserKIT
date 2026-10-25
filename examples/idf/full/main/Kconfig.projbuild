@@ -88,6 +88,28 @@ config FULL_SLEEP
     bool "Sleep: deep sleep, woken by a timer or the BOOT button"
     default y
 
+config FULL_BOARD
+    bool "Board: the status LED and the function button"
+    default y
+
+config FULL_BUTTON_GPIO
+    int "Board: the button's GPIO (-1: none)"
+    depends on FULL_BOARD
+    default 17 if FULL_ETHERNET_GLEDOPTO
+    default 0
+    help
+        Pressed low: a Gledopto's function button (GPIO 17), else a devkit's
+        BOOT button (GPIO 0). A factory default: /sys/board/button/gpio.
+
+config FULL_STATUS_LED_GPIO
+    int "Board: the status LED's GPIO (-1: none)"
+    depends on FULL_BOARD
+    default -1
+    help
+        Lit high. None by default: a Gledopto's blue LED is its power LED,
+        and a devkit's (GPIO 2) is the example's /led. A factory default:
+        /sys/board/led/gpio.
+
 config FULL_BATTERY_GPIO
     int "Battery: its ADC1 pin (-1: none)"
     default -1

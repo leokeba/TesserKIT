@@ -75,6 +75,14 @@ endif()
 if(DEFINED LED_GPIO)
     list(APPEND TESSERKIT_FULL_ARGS "CONFIG_FULL_LED_GPIO=${LED_GPIO}")
 endif()
+# -DBUTTON_GPIO=n, -DSTATUS_LED_GPIO=n: the Board service's button and status
+# LED (-1: none).
+if(DEFINED BUTTON_GPIO)
+    list(APPEND TESSERKIT_FULL_ARGS "CONFIG_FULL_BUTTON_GPIO=${BUTTON_GPIO}")
+endif()
+if(DEFINED STATUS_LED_GPIO)
+    list(APPEND TESSERKIT_FULL_ARGS "CONFIG_FULL_STATUS_LED_GPIO=${STATUS_LED_GPIO}")
+endif()
 # -DBATTERY_GPIO=n: the Battery service on that ADC1 pin, through a divider of
 # two equal resistors.
 if(DEFINED BATTERY_GPIO)

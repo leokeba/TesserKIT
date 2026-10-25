@@ -243,6 +243,16 @@ EthernetBoard w5500(int8_t sck, int8_t miso, int8_t mosi, int8_t cs, int8_t irq,
 
 }  // namespace boards
 
+bool EthernetBoard::uses(int8_t pin) const {
+    if (pin < 0) return false;
+    if (spi()) return pin == sck || pin == miso || pin == mosi || pin == cs || pin == irq || pin == reset;
+    static const int8_t kRmii[] = {19, 21, 22, 25, 26, 27};  // TX_EN, TXD0, TXD1, RXD0, RXD1, CRS_DV
+    for (int8_t p : kRmii) {
+        if (pin == p) return true;
+    }
+    return pin == mdc || pin == mdio || pin == power || pin == clockGpio;
+}
+
 Network& Network::defaultNetwork(const char* ssid, const char* password) {
     WifiNetwork n;
     snprintf(n.ssid, sizeof(n.ssid), "%s", ssid ? ssid : "");
@@ -445,6 +455,8 @@ void Network::describe(tesser::Object& o) {
     as.value("active", static_cast<const bool&>(apUp_));
     as.value("ip", static_cast<const std::string&>(apIp_)).label("Address");
     as.value("clients", static_cast<const int32_t&>(apClients_));
+    as.value("override", [this] { return apOverride_; }, {"none", "open", "closed"})
+        .doc("Opened or closed for a while by the board's button, whatever the mode");
 
     Platform& p = dev.platform();
 #if !defined(TESSERKIT_NO_MDNS)
@@ -473,6 +485,7 @@ void Network::start() {
     uint32_t now = static_cast<uint32_t>(dev.core().uptimeMs());
     if (eth_ && ethChoose_ && !ethChoose_(ethBoard_)) {
         eth_ = nullptr;
+        ethWanted_ = false;
         ethState_ = "no board";
         ethStatus_->changed();
     }
@@ -1112,12 +1125,27 @@ void Network::applyMdns() {
     if (mdnsService_) mdnsService_->set(mdns_, dev_.hostname().c_str(), dev_.version().c_str(), dev_.httpPort());
 }
 
+void Network::overrideAp(ApOverride o, uint32_t ms) {
+    if (o != apOverride_) apStatus_->changed();
+    apOverride_ = o;
+    apOverrideUntilMs_ = dev_.loopMs() + ms;
+}
+
 void Network::updateAp(uint32_t nowMs) {
+    // An override ends when its time is up, an opened access point's once
+    // no station is joined to it.
+    if (apOverride_ != ApOverride::None && static_cast<int32_t>(nowMs - apOverrideUntilMs_) >= 0 &&
+        !(apOverride_ == ApOverride::Open && apClients_ > 0)) {
+        apOverride_ = ApOverride::None;
+        apStatus_->changed();
+    }
     // Recovery: a device without a network is always reachable; one with
     // Ethernet gives its cable the fallback's time first.
     bool recovery = networks_.empty();
     bool want;
-    if (apMode_ == ApMode::Always || (recovery && !eth_)) {
+    if (apOverride_ != ApOverride::None) {
+        want = apOverride_ == ApOverride::Open;
+    } else if (apMode_ == ApMode::Always || (recovery && !eth_)) {
         want = true;
     } else if (apMode_ == ApMode::Never && !recovery) {
         want = false;

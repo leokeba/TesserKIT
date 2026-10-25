@@ -7,6 +7,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <random>
 #include <string>
@@ -755,6 +756,14 @@ struct Pins : tesserkit::Pins {
         return level.count(pin) > 0;
     }
     bool input(int8_t pin) override { return level[pin]; }
+    std::map<int, bool> outputs;  // outputs and their levels
+    std::set<int> notOutputs;  // pins outputBegin() refuses
+    bool outputBegin(int8_t pin) override {
+        if (notOutputs.count(pin)) return false;
+        outputs[pin] = false;
+        return true;
+    }
+    void output(int8_t pin, bool high) override { outputs[pin] = high; }
 };
 
 // TesserAPI's UDP link over an in-memory network: what the device sends

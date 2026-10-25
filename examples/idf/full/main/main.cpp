@@ -23,7 +23,8 @@
 // -DBATTERY_GPIO=n adds the Battery service on that ADC pin, through a divider
 // of two equal resistors; -DETHERNET_BOARD=gledopto uses that board's
 // Ethernet; -DETHERNET_W5500="sck,miso,mosi,cs,irq" a W5500 module on those
-// GPIOs; -DLED_GPIO=n the LED's pin.
+// GPIOs; -DLED_GPIO=n the LED's pin; -DBUTTON_GPIO=n and -DSTATUS_LED_GPIO=n
+// the Board service's button and status LED.
 #include <algorithm>
 #include <vector>
 
@@ -181,6 +182,9 @@ tesserkit::Sleep sleeper(dev);        // deep sleep, woken by a timer or the BOO
 #if CONFIG_FULL_BATTERY_GPIO >= 0
 tesserkit::Battery battery(dev);      // charge and voltage
 #endif
+#if CONFIG_FULL_BOARD
+tesserkit::Board board(dev, &net);    // the status LED and the function button
+#endif
 // The launcher's USB way: envelopes on the console's UART, Admin (physical
 // access). Logs stay at warnings (sdkconfig.defaults).
 tesser::UartTransport serialApi(dev.api(), UART_NUM_0);
@@ -276,6 +280,11 @@ extern "C" void app_main() {
 #endif
 #if CONFIG_FULL_BATTERY_GPIO >= 0
     battery.adc(CONFIG_FULL_BATTERY_GPIO, 2.0f);
+#endif
+#if CONFIG_FULL_BOARD
+    // A short press opens (or closes) the access point for 10 minutes, held
+    // 3 s restarts, 10 s resets.
+    board.button(CONFIG_FULL_BUTTON_GPIO).led(CONFIG_FULL_STATUS_LED_GPIO);
 #endif
 
     // The application: the LED, and a dashboard over it and the nodes nearby
