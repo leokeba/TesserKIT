@@ -132,36 +132,36 @@ std::string Mqtt::topic(const std::string& path) const {
 void Mqtt::describe(tesser::Object& o) {
     o.label("MQTT").ui("icon", "link").ui("group", "Integrations").ui("summary", "status/connected").doc("Publishes parts of the tree to a broker, and takes writes from it").writeAccess(Access::Admin);
     settings_.clear();
-    settings_.push_back(&o.value("enabled", enabled_).persist());
-    settings_.push_back(&o.value("uri", uri_)
-                             .validate([](const std::string& v) {
-                                 if (!(v.empty() || startsWith(v, "mqtt://") || startsWith(v, "mqtts://") ||
-                                       startsWith(v, "ws://") || startsWith(v, "wss://"))) {
-                                     return Check::fail(Status::InvalidValue, "mqtt://, mqtts://, ws:// or wss://");
-                                 }
-                                 return limits::length<limits::kUri>(v);
-                             })
-                             .persist()
-                             .label("Broker")
-                             .ui("placeholder", "mqtt://broker.local:1883"));
-    settings_.push_back(
+    settings_.add(&o.value("enabled", enabled_).persist());
+    settings_.add(&o.value("uri", uri_)
+                       .validate([](const std::string& v) {
+                           if (!(v.empty() || startsWith(v, "mqtt://") || startsWith(v, "mqtts://") ||
+                                 startsWith(v, "ws://") || startsWith(v, "wss://"))) {
+                               return Check::fail(Status::InvalidValue, "mqtt://, mqtts://, ws:// or wss://");
+                           }
+                           return limits::length<limits::kUri>(v);
+                       })
+                       .persist()
+                       .label("Broker")
+                       .ui("placeholder", "mqtt://broker.local:1883"));
+    settings_.add(
         &o.value("user", user_).validate(limits::atMost<limits::kSecret>).persist().label("User name"));
-    settings_.push_back(
+    settings_.add(
         &o.value("password", password_).validate(limits::atMost<limits::kLongSecret>).secret().persist());
-    settings_.push_back(&o.value("clientId", clientId_)
-                             .validate(limits::atMost<limits::kSecret>)
-                             .persist()
-                             .label("Client ID")
-                             .ui("placeholder", "the hostname")
-                             .ui("perNode")
-                             .ui("advanced"));
-    settings_.push_back(&o.value("prefix", prefix_)
-                             .validate(topicPart)
-                             .persist()
-                             .label("Topic prefix")
-                             .ui("placeholder", "tesser/<hostname>")
-                             .ui("perNode")
-                             .ui("advanced"));
+    settings_.add(&o.value("clientId", clientId_)
+                       .validate(limits::atMost<limits::kSecret>)
+                       .persist()
+                       .label("Client ID")
+                       .ui("placeholder", "the hostname")
+                       .ui("perNode")
+                       .ui("advanced"));
+    settings_.add(&o.value("prefix", prefix_)
+                       .validate(topicPart)
+                       .persist()
+                       .label("Topic prefix")
+                       .ui("placeholder", "tesser/<hostname>")
+                       .ui("perNode")
+                       .ui("advanced"));
     publishNode_ = &o.list("publish", publish_,
                            [this](tesser::Object& e, MqttPublish& p) {
                                e.value("path", p.path)
@@ -182,21 +182,21 @@ void Mqtt::describe(tesser::Object& o) {
                         .doc("Subtrees published as retained topics, one per leaf, at most once per interval");
     discoverySettings_.clear();
 #if !defined(TESSERKIT_NO_HOME_ASSISTANT)
-    discoverySettings_.push_back(&o.value("homeAssistant", homeAssistant_)
-                                      .persist()
-                                      .label("Home Assistant")
-                                      .doc("Announces the published values and actions to Home Assistant (MQTT discovery)"));
-    discoverySettings_.push_back(&o.value("discoveryPrefix", discoveryPrefix_)
-                                      .validate([](const std::string& v) {
-                                          return v.empty() ? Check::fail(Status::InvalidValue, "empty")
-                                                           : v.size() > limits::kName ? limits::length<limits::kName>(v)
-                                                                                      : topicPart(v);
-                                      })
-                                      .persist()
-                                      .label("Discovery prefix")
-                                      .ui("visibleWhen", "homeAssistant=true")
-                                      .ui("advanced"));
-    discoverySettings_.push_back(publishNode_);
+    discoverySettings_.add(&o.value("homeAssistant", homeAssistant_)
+                                .persist()
+                                .label("Home Assistant")
+                                .doc("Announces the published values and actions to Home Assistant (MQTT discovery)"));
+    discoverySettings_.add(&o.value("discoveryPrefix", discoveryPrefix_)
+                                .validate([](const std::string& v) {
+                                    return v.empty() ? Check::fail(Status::InvalidValue, "empty")
+                                                     : v.size() > limits::kName ? limits::length<limits::kName>(v)
+                                                                                : topicPart(v);
+                                })
+                                .persist()
+                                .label("Discovery prefix")
+                                .ui("visibleWhen", "homeAssistant=true")
+                                .ui("advanced"));
+    discoverySettings_.add(publishNode_);
 #endif
     auto& s = o.object("status").label("Status");
     status_ = &s;
@@ -217,13 +217,6 @@ void Mqtt::describe(tesser::Object& o) {
     lost_ = &o.event("lost").label("Connection lost").ui("toast", "warn").ui("hidden");
 }
 
-uint32_t Mqtt::settingsGen() const {
-    // Generations only grow, so the sum changes whenever one of them does.
-    uint32_t sum = 0;
-    for (const tesser::Node* n : settings_) sum += n->generation();
-    return sum;
-}
-
 void Mqtt::start() {
     Platform& p = dev_.platform();
     if (!p.mqtt) p.mqtt = espMqtt();
@@ -231,20 +224,17 @@ void Mqtt::start() {
     if (!client_) tesser::logError("tesserkit: Mqtt has no MQTT client in this build");
     commander_.reset(new tesser::LocalClient(dev_.api()));
     commander_->setAccess(Access::User);  // the broker's clients aren't the device's admins
-    settingsGen_ = settingsGen();
+    settings_.seen();
     hostnameGen_ = dev_.hostnameGeneration();
     publishGen_ = publishNode_->generation();
-    discoveryGen_ = 0;
-    for (const tesser::Node* n : discoverySettings_) discoveryGen_ += n->generation();
+    discoverySettings_.seen();
 }
 
 void Mqtt::tick(uint32_t nowMs) {
     missed_ = dev_.mqttMessagesDropped();
     if (commander_) commander_->process();
     for (Bridge& b : bridges_) b.client->process();
-    uint32_t gen = settingsGen();
-    if (gen != settingsGen_) {
-        settingsGen_ = gen;
+    if (settings_.changed()) {
         restart_ = true;
         changedAtMs_ = nowMs;
     }
@@ -283,12 +273,7 @@ void Mqtt::tick(uint32_t nowMs) {
             bridge();
         }
     }
-    uint32_t discGen = 0;
-    for (const tesser::Node* n : discoverySettings_) discGen += n->generation();
-    if (discGen != discoveryGen_) {
-        discoveryGen_ = discGen;
-        if (connected_) discover();
-    }
+    if (discoverySettings_.changed() && connected_) discover();
     // The session's state, read back once a second: its events pass
     // through the device's bounded queue, which can lose them (a burst of
     // other events while the task stalls). Without this a lost

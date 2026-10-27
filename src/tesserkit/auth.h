@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "tesserkit/device.h"
+#include "tesserkit/fingerprint.h"
 
 namespace tesserkit {
 
@@ -111,7 +112,7 @@ private:
     // belongs to its boot. Until 2026-10-27 a persisted boot count, which
     // rewrote the whole /sys record at every boot.
     uint32_t bootId_ = 0;
-    uint32_t tokensGen_ = 0;  // users, key and open, as tick() last saw them
+    Fingerprint tokens_;  // the accounts and the key, as tick() last saw them
     const char* defaultName_ = nullptr;
     const char* defaultPassword_ = nullptr;
 };

@@ -55,9 +55,9 @@ tesser::ValueNode& ipField(tesser::Object& o, const char* name, const char* labe
 }
 
 // A static address's settings, collapsed: DHCP unless enabled; this node's
-// own, which TesserUI's apply to all leaves out. Its values' nodes go to
-// `nodes` when given.
-tesser::Object& describeStatic(tesser::Object& parent, StaticIp& ip, std::vector<tesser::Node*>* nodes = nullptr) {
+// own, which TesserUI's apply to all leaves out. Its values' nodes are the
+// inputs of `inputs` when given.
+tesser::Object& describeStatic(tesser::Object& parent, StaticIp& ip, Fingerprint* inputs = nullptr) {
     auto& s = parent.object("static").label("Static IP").ui("collapsed").ui("perNode");
     tesser::Node* n[] = {
         &s.value("enabled", ip.enabled).label("Use a static address"),
@@ -66,7 +66,10 @@ tesser::Object& describeStatic(tesser::Object& parent, StaticIp& ip, std::vector
         &ipField(s, "gateway", "Gateway", ip.gateway).ui("placeholder", "none: no router"),
         &ipField(s, "dns", "DNS server", ip.dns),
     };
-    if (nodes) nodes->assign(std::begin(n), std::end(n));
+    if (inputs) {
+        inputs->clear();
+        for (tesser::Node* x : n) inputs->add(x);
+    }
     return s;
 }
 
@@ -363,7 +366,7 @@ void Network::describe(tesser::Object& o) {
         es.value("speed", static_cast<const uint16_t&>(ethMbps_)).unit("Mbps").ui("visibleWhen", "link=true");
         es.value("mac", static_cast<const std::string&>(ethMac_)).label("MAC").ui("advanced");
         ethJoined_ = &e.event("joined").label("Joined").ui("toast", "ok").ui("hidden");
-        describeStatic(e, ethStatic_, &ethIpNodes_).ui("form").persist();
+        describeStatic(e, ethStatic_, &ethIpSettings_).ui("form").persist();
     }
 
     auto& w = o.object("wifi").label("Wi-Fi").ui("card");
@@ -427,14 +430,15 @@ void Network::describe(tesser::Object& o) {
     ap.value("mode", apMode_, {"always", "fallback", "never"})
         .persist()
         .ui("labels", "Always,When offline,Never");
-    apNodes_.clear();
-    apNodes_.push_back(&ap.value("ssid", apSsid_)
+    apSettings_.clear();
+    apSettings_.add(dev_.secureGeneration());  // secure mode changes the password
+    apSettings_.add(&ap.value("ssid", apSsid_)
                             .validate(limits::atMost<32>)
                             .persist()
                             .label("Name")
                             .ui("placeholder", "the hostname")
                             .ui("perNode"));
-    apNodes_.push_back(&ap.value("password", apPassword_)
+    apSettings_.add(&ap.value("password", apPassword_)
                            .validate([](const std::string& v) {
                                return v.empty() || (v.size() >= 8 && v.size() <= 63)
                                           ? Check::ok()
@@ -455,8 +459,8 @@ void Network::describe(tesser::Object& o) {
                               "access point comes up")
                          .ui("perNode")
                          .ui("advanced");
-    apNodes_.push_back(&ap.value("channel", apChannel_).range(1, 13).persist().ui("widget", "number"));
-    apNodes_.push_back(&ap.value("hidden", apHidden_).persist().ui("advanced"));
+    apSettings_.add(&ap.value("channel", apChannel_).range(1, 13).persist().ui("widget", "number"));
+    apSettings_.add(&ap.value("hidden", apHidden_).persist().ui("advanced"));
     auto& as = ap.object("status").label("Status");
     apStatus_ = &as;
     as.value("active", static_cast<const bool&>(apUp_));
@@ -526,11 +530,19 @@ void Network::start() {
     networksGen_ = networksNode_->generation();
     hostnameGen_ = dev.hostnameGeneration();
     if (mdnsNode_) mdnsGen_ = mdnsNode_->generation();
-    apGen_ = apFingerprint();
-    ethGen_ = ethFingerprint();
+    apSettings_.seen();
+    ethIpSettings_.seen();
     staModeGen_ = staModeNode_->generation();
     if (ethEnabledNode_) ethEnabledGen_ = ethEnabledNode_->generation();
-    settingsSeen_ = settingsFingerprint();
+    settings_.clear();
+    settings_.add(networksNode_)
+        .add(dev.hostnameGeneration())
+        .add(mdnsNode_)
+        .add(powerSaveNode_)
+        .add(staModeNode_)
+        .add(apSettings_);
+    if (eth_) settings_.add(ethEnabledNode_).add(ethIpSettings_);
+    settings_.seen();
     applyMdns();
     lostAtMs_ = now;
     join(now);
@@ -550,19 +562,6 @@ std::string Network::apPasswordInUse() {
         apSecretNode_->changed();
     }
     return apSecret_;
-}
-
-uint32_t Network::apFingerprint() const {
-    // Generations only grow, so the sum changes whenever one of them does.
-    uint32_t sum = 0;
-    for (const tesser::Node* n : apNodes_) sum += n->generation();
-    return sum + dev_.secureGeneration();  // secure mode changes the password
-}
-
-uint32_t Network::ethFingerprint() const {
-    uint32_t sum = 0;
-    for (const tesser::Node* n : ethIpNodes_) sum += n->generation();
-    return sum;
 }
 
 IpConfig Network::ethConfig(bool warn) const { return ipConfig(ethStatic_, warn ? "Ethernet" : nullptr); }
@@ -1053,22 +1052,8 @@ void Network::setApClients(int32_t n) {
     apStatus_->changed();
 }
 
-// Every setting checkSettings() applies: generations only grow, so the sum
-// changes whenever one of them does.
-uint32_t Network::settingsFingerprint() const {
-    uint32_t sum = networksNode_->generation() + dev_.hostnameGeneration() + powerSaveNode_->generation() +
-                   staModeNode_->generation() + apFingerprint();
-    if (mdnsNode_) sum += mdnsNode_->generation();
-    if (eth_) sum += ethEnabledNode_->generation() + ethFingerprint();
-    return sum;
-}
-
 void Network::checkSettings(uint32_t nowMs) {
-    uint32_t seen = settingsFingerprint();
-    if (seen != settingsSeen_) {
-        settingsSeen_ = seen;
-        settingsAtMs_ = nowMs;
-    }
+    if (settings_.changed()) settingsAtMs_ = nowMs;
     if (nowMs - settingsAtMs_ < kApplyAfterMs) return;
     if (networksNode_->generation() != networksGen_) {
         networksGen_ = networksNode_->generation();
@@ -1117,13 +1102,8 @@ void Network::checkSettings(uint32_t nowMs) {
         eth_->enabled(ethEnabled_);
         if (!ethEnabled_) ethLink(false, nowMs);  // the link goes with the MAC
     }
-    if (eth_ && ethFingerprint() != ethGen_) {
-        ethGen_ = ethFingerprint();
-        ethReaddress(nowMs);
-    }
-    uint32_t fp = apFingerprint();
-    if (fp != apGen_) {
-        apGen_ = fp;
+    if (eth_ && ethIpSettings_.changed()) ethReaddress(nowMs);
+    if (apSettings_.changed()) {
         if (apUp_) {  // restarted with the new settings by updateAp()
             wifi_->stopAp();
             apUp_ = false;

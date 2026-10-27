@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "tesserkit/device.h"
+#include "tesserkit/fingerprint.h"
 
 namespace tesserkit {
 
@@ -168,9 +169,6 @@ private:
     // scan).
     StaConfig config(const WifiNetwork& n, bool warn = false) const;
     const WifiNetwork* find(const std::string& ssid) const;
-    uint32_t apFingerprint() const;
-    uint32_t settingsFingerprint() const;
-    uint32_t ethFingerprint() const;
     IpConfig ethConfig(bool warn = false) const;
     std::string apSsid() const { return apSsid_.empty() ? dev_.hostname() : apSsid_; }
 
@@ -206,7 +204,7 @@ private:
     // Nodes whose writes the service follows, by generation.
     tesser::Node* networksNode_ = nullptr;
     tesser::Node* mdnsNode_ = nullptr;
-    std::vector<tesser::Node*> apNodes_;
+    Fingerprint apSettings_;  // what restarts the access point (secure mode included)
     tesser::Node* staStatus_ = nullptr;
     tesser::Node* apStatus_ = nullptr;
     tesser::EventNode* joined_ = nullptr;
@@ -214,12 +212,14 @@ private:
     tesser::Node* staModeNode_ = nullptr;
     tesser::Node* powerSaveNode_ = nullptr;
     tesser::Node* ethEnabledNode_ = nullptr;
-    std::vector<tesser::Node*> ethIpNodes_;
+    Fingerprint ethIpSettings_;  // Ethernet's static address
     tesser::Node* ethStatus_ = nullptr;
     tesser::EventNode* ethJoined_ = nullptr;
     uint32_t networksGen_ = 0, hostnameGen_ = 0, mdnsGen_ = 0;
-    uint32_t apGen_ = 0, ethGen_ = 0;
-    uint32_t settingsSeen_ = 0, settingsAtMs_ = 0;
+    // Every setting checkSettings() applies, listed in start(): a change to
+    // any waits kApplyAfterMs from the last.
+    Fingerprint settings_;
+    uint32_t settingsAtMs_ = 0;
     uint32_t staModeGen_ = 0, ethEnabledGen_ = 0, powerSaveGen_ = 0;
 
     // Station.

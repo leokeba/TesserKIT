@@ -6,6 +6,7 @@
 
 #include "tesser/client.h"
 #include "tesserkit/device.h"
+#include "tesserkit/fingerprint.h"
 
 namespace tesserkit {
 
@@ -64,7 +65,6 @@ private:
         std::unique_ptr<tesser::LocalClient> client;
     };
 
-    uint32_t settingsGen() const;
     void connect();
     void disconnect();
     void onConnected();
@@ -101,9 +101,9 @@ private:
     tesser::Node* status_ = nullptr;
     tesser::EventNode* lost_ = nullptr;
 
-    std::vector<tesser::Node*> settings_;  // a change restarts the session
+    Fingerprint settings_;  // a change restarts the session
     tesser::Node* publishNode_ = nullptr;
-    uint32_t settingsGen_ = 0, publishGen_ = 0;
+    uint32_t publishGen_ = 0;
     uint32_t hostnameGen_ = 0;  // Device::hostnameGeneration(): topics and ids follow it
     uint32_t changedAtMs_ = 0;
     bool restart_ = false;  // settings changed: restart once they settle
@@ -117,8 +117,7 @@ private:
     // Discovery: the paths still to announce, the config topics still to
     // empty, and those announced (kept across sessions, to empty them when
     // they go).
-    std::vector<tesser::Node*> discoverySettings_;
-    uint32_t discoveryGen_ = 0;
+    Fingerprint discoverySettings_;  // a change announces again
     std::vector<std::string> pending_;
     std::vector<std::string> clearing_;
     std::vector<std::string> announced_;

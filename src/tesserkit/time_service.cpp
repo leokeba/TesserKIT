@@ -84,6 +84,8 @@ void Time::describe(tesser::Object& o) {
     auto& s = o.object("sntp").label("Network time").writeAccess(Access::Admin).ui("advanced");
     sntpNode_ = &s.value("enabled", sntpOn_).persist();
     serverNode_ = &s.value("server", server_).validate(limits::atMost<limits::kHost>).persist();
+    sntpSettings_.clear();
+    sntpSettings_.add(sntpNode_).add(serverNode_);
     o.action("set",
              [this](int64_t ms) -> Status {
                  if (ms < kValidAfterMs) return Status::InvalidValue;
@@ -108,7 +110,7 @@ void Time::start() {
     Device& dev = dev_;
     clock_->begin([&dev](Event e) { dev.post(std::move(e)); });
     tzGen_ = tzNode_->generation();
-    sntpGen_ = static_cast<uint32_t>(sntpNode_->generation()) + serverNode_->generation();
+    sntpSettings_.seen();
     applyTz();
     applySntp();
 }
@@ -157,11 +159,7 @@ void Time::tick(uint32_t nowMs) {
         tzGen_ = tzNode_->generation();
         applyTz();
     }
-    uint32_t g = static_cast<uint32_t>(sntpNode_->generation()) + serverNode_->generation();
-    if (g != sntpGen_) {
-        sntpGen_ = g;
-        applySntp();
-    }
+    if (sntpSettings_.changed()) applySntp();
 }
 
 }  // namespace tesserkit

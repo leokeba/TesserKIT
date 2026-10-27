@@ -225,6 +225,33 @@ TEST(device_name_persists) {
     CHECK_EQ(r.dev.hostname(), "porch");
 }
 
+// A Fingerprint tells a change of any input listed once: a node's
+// generation, a counter kept elsewhere, another fingerprint's inputs.
+TEST(device_fingerprint) {
+    rig::Rig r;
+    int a = 0, b = 0;
+    tesser::Node* na = &r.dev.api().object("app").value("a", a);
+    tesser::Node* nb = &r.dev.api().object("app").value("b", b);
+    CHECK(r.dev.begin());
+    uint32_t counter = 0;
+    tesserkit::Fingerprint inner, outer;
+    inner.add(nb).add(static_cast<const tesser::Node*>(nullptr));  // an optional node, absent
+    outer.add(na).add(counter).add(inner);
+    outer.seen();
+    CHECK(!outer.changed());
+    CHECK_EQ(r.set("/app/a", "1").status, Status::Ok);
+    CHECK(outer.changed());
+    CHECK(!outer.changed());  // seen once told
+    counter++;
+    CHECK(outer.changed());
+    CHECK_EQ(r.set("/app/b", "1").status, Status::Ok);  // through the inner one
+    CHECK(outer.changed());
+    CHECK(inner.changed());  // each keeps what it saw
+    CHECK(!inner.changed());
+    outer.clear();  // listed again from nothing
+    CHECK_EQ(outer.sum(), 0u);
+}
+
 TEST(device_without_platform_fails) {
     tesserkit::Device d("Bare");
     d.task(false);

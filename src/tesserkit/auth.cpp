@@ -221,6 +221,8 @@ void Auth::loaded() {
 
 void Auth::start() {
     if (key_.size() != 64) newKey();
+    tokens_.clear();
+    tokens_.add(usersNode_).add(keyNode_);  // not seen: the first tick checks the clients
     // A token made without a clock is valid in this boot only: bound to an
     // id drawn now, which nothing stores.
     uint8_t id[4];
@@ -236,7 +238,8 @@ void Auth::migrate(uint32_t from, JsonObject settings) {
 void Auth::tick(uint32_t nowMs) {
     (void)nowMs;
     bool o = open();
-    if (o != wasOpen_) {  // an admin account was added or removed
+    bool opened = o != wasOpen_;
+    if (opened) {  // an admin account was added or removed
         wasOpen_ = o;
         dev_.secure(!o);
         openNode_->changed();
@@ -245,11 +248,9 @@ void Auth::tick(uint32_t nowMs) {
     // token revoked, or the device closed: the clients that hold a level
     // from a token (or from the open device) are checked again, so an open
     // WebSocket doesn't keep a level it lost (TesserAPI's tokensChanged()).
-    uint32_t gen = usersNode_->generation() + keyNode_->generation() + (o ? 0u : 1u);
-    if (gen != tokensGen_) {
-        tokensGen_ = gen;
-        dev_.api().tokensChanged();
-    }
+    // `open` isn't a generation (it goes back), so it isn't summed: removing
+    // the last admin would raise the accounts' generation as it lowered it.
+    if (tokens_.changed() || opened) dev_.api().tokensChanged();
 }
 
 void Auth::newKey() {

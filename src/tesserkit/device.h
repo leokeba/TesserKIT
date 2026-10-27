@@ -213,7 +213,7 @@ public:
     const std::string& hostnameSetting() const { return hostnameSetting_; }
     Device& hostnameSetting(const std::string& h);
     // Grows whenever hostname() changes, for the services that pass it on.
-    uint32_t hostnameGeneration() const { return hostnameGeneration_; }
+    const uint32_t& hostnameGeneration() const { return hostnameGeneration_; }
     // The label made a hostname, with the MAC's end: the hostname of a device
     // the user hasn't named, unless the application gave one.
     std::string defaultHostname() const;
@@ -233,7 +233,7 @@ public:
     // point's password, UDP's peers' level); the generation grows when it
     // changes, for those that apply it at run time.
     bool secure() const { return secure_; }
-    uint32_t secureGeneration() const { return secureGen_; }
+    const uint32_t& secureGeneration() const { return secureGen_; }
     void secure(bool on) {
         if (on == secure_) return;
         secure_ = on;

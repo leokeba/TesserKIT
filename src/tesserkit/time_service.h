@@ -3,6 +3,7 @@
 #include <string>
 
 #include "tesserkit/device.h"
+#include "tesserkit/fingerprint.h"
 
 namespace tesserkit {
 
@@ -56,7 +57,7 @@ private:
     tesser::Node* syncedNode_ = nullptr;
     tesser::Node* sourceNode_ = nullptr;
     uint32_t tzGen_ = 0;
-    uint32_t sntpGen_ = 0;
+    Fingerprint sntpSettings_;  // enabled and server
     bool online_ = false;
     uint32_t routeGen_ = 0;  // Device::routeGeneration() last seen
 };
