@@ -436,12 +436,29 @@ void Device::loop() {
     if (delay != kNoRestart && !restartArmed_) {
         restartArmed_ = true;
         restartAtMs_ = now + delay;
+        restartSaveAtMs_ = restartAtMs_;
     }
-    if (restartArmed_ && static_cast<int32_t>(now - restartAtMs_) >= 0) {
-        restartArmed_ = false;
-        api_.save();  // what the debounce still holds
-        core().restart();
+    if (restartArmed_ && static_cast<int32_t>(now - restartAtMs_) >= 0) restartWhenSaved(now);
+}
+
+void Device::restartWhenSaved(uint32_t now) {
+    bool last = now - restartAtMs_ >= kRestartWaitMs;
+    bool busy = false;
+    for (Service* s = services_; s && !busy; s = s->next_) busy = s->busy();
+    if (!last && (busy || static_cast<int32_t>(now - restartSaveAtMs_) < 0)) return;
+    // What the debounce still holds, or a save that waits for memory: one
+    // try now, again every 250 ms until the wait is over. Each try rewrites
+    // every record, so not every period.
+    bool saved = api_.save();
+    if (!saved && !last) {
+        restartSaveAtMs_ = now + 250;
+        return;
     }
+    if (!saved || busy) {
+        tesser::logWarning("tesserkit: restarting with %s", !saved ? "settings not saved" : "work in flight");
+    }
+    restartArmed_ = false;
+    core().restart();
 }
 
 void Device::poll() {

@@ -87,6 +87,11 @@ protected:
     virtual void factoryReset() {}
     // The Files service, which Device::files() returns.
     virtual Files* asFiles() { return nullptr; }
+    // Work in flight that a restart now would lose (Auth: a password's hash
+    // still computing, so the account isn't stored yet). Read from the
+    // device's task without the API lock. A restart waits for it, at most
+    // Device::kRestartWaitMs.
+    virtual bool busy() const { return false; }
     // True for a service that needs the Wi-Fi station awake to hear its
     // radio (NowTp: ESP-NOW frames are lost while the modem sleeps), so
     // Network's power save defaults to none (Device::stationAwake()).
@@ -262,8 +267,12 @@ public:
     // The application's own error state (State::Error while set).
     void fail(bool failed);
 
-    // Restarts `ms` from now, from the device's task. Thread-safe.
+    // Restarts `ms` from now, from the device's task. Thread-safe. Then it
+    // waits, at most kRestartWaitMs, for what the restart would lose: the
+    // services' work in flight (Service::busy()) and the settings' save
+    // (the debounce's, or one waiting for memory), tried again every 250 ms.
     void restartIn(uint32_t ms);
+    static constexpr uint32_t kRestartWaitMs = 3000;
     // Erases the persisted state, then restarts. Thread-safe: the erase runs
     // in the device's task at its next loop (services' factoryReset()
     // included), so an action calling this replies first.
@@ -389,6 +398,10 @@ private:
     std::atomic<uint32_t> restartDelayMs_{kNoRestart};  // set by restartIn()
     bool restartArmed_ = false;
     uint32_t restartAtMs_ = 0;
+    uint32_t restartSaveAtMs_ = 0;  // the next try of the save, while the restart waits
+    // The restart, once due: when nothing it would lose is pending, or
+    // kRestartWaitMs after it was due.
+    void restartWhenSaved(uint32_t nowMs);
     std::atomic<bool> resetWanted_{false};     // set by factoryReset()
     tesser::MemoryStorage* erased_ = nullptr;  // after the reset: saves go nowhere
 

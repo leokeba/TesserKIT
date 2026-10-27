@@ -162,6 +162,7 @@ TEST(udp_nodes_go_public_when_an_admin_appears) {
     r.online();
     CHECK_EQ(r.fromPeer(Op::Get, "/sys/udp/peerAccess").status, Status::Ok);
     CHECK_EQ(r.set("/sys/auth/users", R"([{"name":"ada","password":"secret-pass","role":"admin"}])").status, Status::Ok);
+    CHECK(rig::drainBackground());  // closed once the password is hashed
     r.pump();
     CHECK(r.dev.secure());
     CHECK_EQ(r.fromPeer(Op::Get, "/lamp/on").status, Status::Ok);  // Public still reads what Public may

@@ -260,8 +260,10 @@ void Auth::newKey() {
 }
 
 bool Auth::open() const {
+    // An account's stored password is a hash, or "" while its first hash
+    // computes (setPassword()).
     for (const User& u : users_) {
-        if (u.role == Role::Admin) return false;
+        if (u.role == Role::Admin && !u.password.empty()) return false;
     }
     return true;
 }

@@ -464,6 +464,7 @@ TEST(network_access_point_password_in_secure_mode) {
     CHECK_EQ(r.fake.wifi.ap.password, "");
     CHECK_EQ(r.set("/sys/auth/users", R"([{"name":"ada","password":"secret-pass","role":"admin"}])").status,
              Status::Ok);
+    CHECK(rig::drainBackground());  // closed once the password is hashed
     r.settle();
     CHECK_EQ(r.fake.wifi.ap.password, made);  // kept for this device
     CHECK_EQ(r.get("/sys/network/ap/securePassword", tesser::Query(), false).status,

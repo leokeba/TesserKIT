@@ -49,7 +49,10 @@ public:
 
     // The level a token gives (Api::authenticate()). Thread-safe.
     tesser::Access check(std::string_view token);
-    // True while no admin account exists.
+    // True while no admin account exists: an admin whose password's hash
+    // is still computing (a new account) doesn't count yet, since a restart
+    // then would leave it stored without a password, and the device closed
+    // to everyone.
     bool open() const;
     // A token for `name`, valid sessionHours: by the clock, or while the
     // clock isn't set, by this boot's uptime (it dies with the boot).
@@ -68,6 +71,8 @@ public:
 protected:
     void loaded() override;
     void start() override;
+    // Hashes and sign-ins on TesserAPI's background task.
+    bool busy() const override { return jobs_.load() > 0; }
     void tick(uint32_t nowMs) override;
     // Settings version 3 dropped the persisted boot count (/sys/auth/boots).
     void migrate(uint32_t from, JsonObject settings) override;

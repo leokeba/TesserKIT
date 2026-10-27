@@ -97,6 +97,7 @@ TEST(auth_open_until_an_admin_exists) {
     CHECK_EQ(r.dev.api().tokenAccess(""), Access::Admin);
     // A user account doesn't close it.
     CHECK_EQ(r.set("/sys/auth/users", "[{\"name\":\"bob\",\"password\":\"bobpass\"}]").status, Status::Ok);
+    CHECK(rig::drainBackground());  // its password hashed
     CHECK(r.auth.open());
     CHECK_EQ(r.set("/sys/auth/users/bob/role", "\"admin\"").status, Status::Ok);
     CHECK(!r.auth.open());
@@ -500,6 +501,45 @@ TEST(auth_password_writes_hash_off_the_lock) {
     CHECK_EQ(s, Status::Unauthorized);
     r.login("carl", "carl-pw", &s);
     CHECK_EQ(s, Status::Ok);
+}
+
+// A new admin whose hash is still computing doesn't close the device yet,
+// and a restart waits for the hash: restarted meanwhile, the account would
+// be stored without a password and the device closed to everyone.
+TEST(auth_restart_waits_for_a_new_admin) {
+    AuthRig r;
+    CHECK(r.dev.begin());
+    r.run(2500);
+    {
+        Gate gate;  // the background task is busy
+        CHECK_EQ(r.set("/sys/auth/users", R"([{"name":"ada","password":"secret-pass","role":"admin"}])").status,
+                 Status::Ok);
+        r.step();
+        CHECK(r.auth.open());
+        CHECK(!r.dev.secure());
+        r.dev.restartIn(0);
+        r.run(1000);
+        CHECK_EQ(r.fake.core.restarts, 0);
+    }
+    CHECK(rig::drainBackground());
+    r.run(100);
+    CHECK_EQ(r.fake.core.restarts, 1);
+    CHECK(r.auth.verify("secret-pass", storedHash(r, "ada")));  // saved before the restart
+    CHECK(!r.auth.open());
+}
+
+// The wait is bounded: a restart asked for still happens.
+TEST(auth_restart_waits_at_most_three_seconds) {
+    AuthRig r;
+    CHECK(r.dev.begin());
+    Gate gate;
+    CHECK_EQ(r.set("/sys/auth/users", R"([{"name":"ada","password":"secret-pass","role":"admin"}])").status,
+             Status::Ok);
+    r.dev.restartIn(0);
+    r.run(2800);
+    CHECK_EQ(r.fake.core.restarts, 0);
+    r.run(400);
+    CHECK_EQ(r.fake.core.restarts, 1);
 }
 
 // With the background queue full, a password is hashed at once, as before.

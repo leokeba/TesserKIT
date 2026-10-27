@@ -523,6 +523,25 @@ TEST(settings_backup_and_restore_on_files) {
     CHECK(r.onDisk("backups/one.json"));
 }
 
+// A restart waits, a few seconds at most, for a save waiting for memory:
+// the change isn't lost.
+TEST(settings_restart_waits_for_a_save) {
+    SettingsRig r;
+    CHECK(r.dev.begin());
+    r.run(2500);
+    CHECK_EQ(r.set("/sys/time/tz", "\"EST5EDT\"").status, Status::Ok);
+    {
+        rig::BudgetLimit limit(512);  // under the write's buffers
+        r.dev.restartIn(0);
+        r.run(1000);
+        CHECK_EQ(r.fake.core.restarts, 0);
+        CHECK(r.file(".settings/sys.json").find("EST5EDT") == std::string::npos);
+    }
+    r.run(300);
+    CHECK_EQ(r.fake.core.restarts, 1);
+    CHECK(r.file(".settings/sys.json").find("EST5EDT") != std::string::npos);
+}
+
 // A record waiting to be saved stays told until it is saved, whatever other
 // records save meanwhile.
 TEST(settings_waiting_is_per_record) {
