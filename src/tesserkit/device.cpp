@@ -322,6 +322,7 @@ bool Device::begin() {
         api_.persistence(settings_, 2000);
         api_.load();
     }
+    for (Service* s = services_; s; s = s->next_) s->loaded();
     for (Service* s = services_; s; s = s->next_) s->start();
     started_ = true;
     lastNowMs_ = static_cast<uint32_t>(platform_.core->uptimeMs());

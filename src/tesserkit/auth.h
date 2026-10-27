@@ -66,6 +66,7 @@ public:
     static bool isHash(std::string_view s);
 
 protected:
+    void loaded() override;
     void start() override;
     void tick(uint32_t nowMs) override;
 

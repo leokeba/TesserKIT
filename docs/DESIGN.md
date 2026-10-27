@@ -128,9 +128,10 @@ New mechanisms go to the lowest layer that can host them, generically. A service
 1. `begin()` creates `/sys`, has every service describe itself, and sets the device label and the schema metadata.
 2. Opens the settings' storage (one record per top-level node, §6.1): with a Files service whose partition mounts, it is mounted now, and the settings are files in its `/.settings`, moved there from NVS at the first such boot; else NVS (namespace `tesserkit`). It loads the persisted state (TesserAPI §12), migrated first if it was stored under older settings versions (§6.3). An NVS partition NVS can't use (`no free pages` or `new version found`, as a firmware with another partition table leaves it) is erased and initialized again: nothing in it could be read, and Wi-Fi can't start without NVS. Values that don't fit any more are skipped with a warning: a firmware update never breaks a boot.
 3. Applies factory defaults (§6.2) to whatever the stored state didn't set.
-4. Starts each service's platform side: Network brings up Wi-Fi, Time starts SNTP, Firmware checks the rollback state.
-5. Starts the HTTP server: the API at `/api`, WebSocket at `/ws`, the UI at `/`, `/ui.js` and its widgets' chunk under `/ui/` (TesserUI §9.4), the captive portal's error handler (§5.2). The server's URI handler budget is computed from what's used, never set by hand: the API's, the UI's, plus `dev.extraHandlers(n)` (default 4) for the application's own routes and TesserUI assets.
-6. Starts TesserKIT's task.
+4. Tells each service the settings are loaded (`Service::loaded()`), before any of them starts: Auth sets secure mode (§7) here, so Network's access point, which `start()` may raise at once, comes up with its secure-mode password rather than open and restarted 150 ms later (as it did until 2026-10-27, Network being registered before Auth).
+5. Starts each service's platform side: Network brings up Wi-Fi, Time starts SNTP, Firmware checks the rollback state.
+6. Starts the HTTP server: the API at `/api`, WebSocket at `/ws`, the UI at `/`, `/ui.js` and its widgets' chunk under `/ui/` (TesserUI §9.4), the captive portal's error handler (§5.2). The server's URI handler budget is computed from what's used, never set by hand: the API's, the UI's, plus `dev.extraHandlers(n)` (default 4) for the application's own routes and TesserUI assets.
+7. Starts TesserKIT's task.
 
 ### 4.2 Task
 

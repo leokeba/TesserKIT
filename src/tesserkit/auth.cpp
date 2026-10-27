@@ -212,12 +212,18 @@ void Auth::describe(tesser::Object& o) {
     dev_.api().authenticate([this](std::string_view token) { return check(token); });
 }
 
+void Auth::loaded() {
+    // Before any service starts: Network raises its access point in its
+    // start(), with a password in secure mode, and services come in
+    // registration order, Network usually before Auth.
+    wasOpen_ = open();
+    dev_.secure(!wasOpen_);
+}
+
 void Auth::start() {
     if (key_.size() != 64) newKey();
     boots_++;  // a token made without a clock is valid in its boot only
     bootsNode_->changed();
-    wasOpen_ = open();
-    dev_.secure(!wasOpen_);
 }
 
 void Auth::tick(uint32_t nowMs) {

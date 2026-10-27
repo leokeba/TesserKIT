@@ -439,11 +439,16 @@ TEST(network_access_point_password_in_secure_mode) {
     tesserkit::Auth auth{r.dev};
     auth.defaultAdmin("admin", "secret-pass");
     CHECK(r.dev.begin());
-    r.settle();
-    CHECK(r.dev.secure());
+    // Up with its password from the start, though Network starts before
+    // Auth: secure mode is set as the settings load.
     CHECK(r.fake.wifi.apUp);  // recovery: no network yet
+    CHECK_EQ(r.fake.wifi.apStarts, 1);
     std::string made = r.fake.wifi.ap.password;
     CHECK_EQ(made.size(), 12u);
+    r.settle();
+    CHECK(r.dev.secure());
+    CHECK_EQ(r.fake.wifi.apStarts, 1);  // not restarted
+    CHECK_EQ(r.fake.wifi.ap.password, made);
     CHECK_EQ(r.value("/sys/network/ap/securePassword"), "\"" + made + "\"");
     CHECK_EQ(r.value("/sys/network/ap/password"), "null");  // the setting is still empty
     CHECK_EQ(r.set("/sys/network/ap/password", "\"chosen-one\"").status, Status::Ok);

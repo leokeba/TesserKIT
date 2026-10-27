@@ -72,7 +72,11 @@ protected:
     Service(Device& dev, const char* name);
     friend class Device;
 
-    // After the persisted state is loaded: start the platform side.
+    // After the persisted state is loaded, before any service starts: set
+    // what other services' start() reads from the device (Auth: secure
+    // mode, so Network's access point doesn't come up open at boot).
+    virtual void loaded() {}
+    // After every service's loaded(): start the platform side.
     virtual void start() {}
     // Every period of the device's task, under the API lock.
     virtual void tick(uint32_t nowMs) { (void)nowMs; }
