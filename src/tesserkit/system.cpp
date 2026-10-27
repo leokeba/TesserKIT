@@ -137,8 +137,14 @@ void System::describe(tesser::Object& o) {
                 return std::unique_ptr<tesser::FileSource>(new CoredumpSource(*dump));
             })
             .ui("advanced");
-        o.value("coredumpPresent", [dump] { return dump->size() > 0; }).label("Core dump present").ui("advanced");
-        o.action("clearCoredump", [dump] { return dump->erase() ? tesser::Status::Ok : tesser::Status::Internal; })
+        tesser::Node* present =
+            &o.value("coredumpPresent", [dump] { return dump->size() > 0; }).label("Core dump present").ui("advanced");
+        o.action("clearCoredump",
+                 [dump, present] {
+                     bool erased = dump->erase();
+                     present->changed();  // a getter: subscribers are told only so
+                     return erased ? tesser::Status::Ok : tesser::Status::Internal;
+                 })
             .label("Clear the core dump")
             .writeAccess(Access::Admin)
             .ui("advanced");

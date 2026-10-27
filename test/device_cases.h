@@ -503,8 +503,13 @@ TEST(device_coredump) {
     CHECK_EQ(d.body.size(), 3000u);
     CHECK_EQ(name, "test-device-a67c-coredump.bin");
     CHECK_EQ(r.download("/sys/coredump", false).status, Status::Unauthorized);
+    // Clearing it tells subscribers: the value is a getter.
+    const tesser::Node* present = tesserkit::findNode(r.dev.api(), "/sys/coredumpPresent");
+    CHECK(present != nullptr);
+    uint32_t gen = present ? present->generation() : 0;
     CHECK_EQ(r.set("/sys/clearCoredump").status, Status::Ok);
     CHECK_EQ(r.value("/sys/coredumpPresent"), "false");
+    CHECK(present && present->generation() != gen);
 }
 
 }  // namespace device_cases
