@@ -31,6 +31,7 @@ namespace {
 std::atomic<bool> g_on{false};
 std::atomic<long long> g_live{0};
 std::atomic<long long> g_peak{0};
+std::atomic<long long> g_allocs{0};
 long long g_size = 0;
 size_t g_floorBefore = 0;
 std::mutex g_mutex;  // the overruns
@@ -98,6 +99,7 @@ void counted(void* p, size_t size) {
     if (!p || !g_on.load() || t_inside || fake::NotHeap::active()) return;
     size_t real = ALLOCCAP_SIZE(p);
     if (!track(p, real)) return;
+    g_allocs.fetch_add(1);
     long long now = g_live.fetch_add(static_cast<long long>(real)) + static_cast<long long>(real);
     long long peak = g_peak.load();
     while (now > peak && !g_peak.compare_exchange_weak(peak, now)) {
@@ -145,6 +147,7 @@ Heap::Heap(size_t bytes, size_t floor) {
     forgetAll();
     g_live = 0;
     g_peak = 0;
+    g_allocs = 0;
     g_size = static_cast<long long>(bytes);
     {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -166,6 +169,7 @@ Heap::~Heap() {
 
 long long Heap::live() const { return g_live.load(); }
 long long Heap::peak() const { return g_peak.load(); }
+long long Heap::allocations() const { return g_allocs.load(); }
 
 std::vector<Overrun> Heap::overruns() const {
     bool was = t_inside;

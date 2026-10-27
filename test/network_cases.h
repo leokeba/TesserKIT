@@ -4,6 +4,7 @@
 
 #include <map>
 
+#include "alloc_cap.h"
 #include "rig.h"
 
 namespace network_cases {
@@ -1187,6 +1188,42 @@ TEST(network_station_waits_for_ethernet_in_words) {
     r.fake.ethernet.plug();
     r.settle();
     CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"waiting for DHCP\"");
+}
+
+// The allocations of 20 device periods at rest.
+long long tickAllocations(NetRig& r) {
+    alloccap::Heap h(1 << 20);
+    for (int i = 0; i < 20; i++) r.step();
+    return h.allocations();
+}
+
+// The states in words are compared in place every tick: one that hasn't
+// changed allocates nothing (most are past the small-string length), and
+// one that has is rebuilt and told.
+TEST(network_status_words_cost_nothing_when_unchanged) {
+    {
+        NetRig r;
+        r.air("Home", "right-password");
+        r.net.defaultNetwork("Home", "wrong-password");
+        CHECK(r.dev.begin());
+        r.settle();
+        CHECK_EQ(r.value("/sys/network/wifi/status/state"), "\"\\\"Home\\\": wrong password?; retrying\"");
+        CHECK_EQ(tickAllocations(r), 0LL);
+    }
+    {
+        EthRig r;
+        r.air("Home", "password1");
+        r.net.defaultNetwork("Home", "password1");
+        CHECK(r.dev.begin());
+        r.fake.ethernet.plug();
+        r.run(6000);
+        CHECK_EQ(r.value("/sys/network/wifi/status/state"), "\"not needed: Ethernet has a DHCP address\"");
+        CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"connected\"");
+        CHECK_EQ(tickAllocations(r), 0LL);
+        r.fake.ethernet.unplug();
+        r.settle();
+        CHECK_EQ(r.value("/sys/network/ethernet/status/state"), "\"no cable\"");
+    }
 }
 
 // Events lost by the device's queue (full during a burst and a stall): the

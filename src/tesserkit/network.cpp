@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <string_view>
 #include <utility>
 
 #include "tesserkit/limits.h"
@@ -1244,41 +1245,63 @@ void Network::tick(uint32_t nowMs) {
     updateStatus(nowMs);
 }
 
-// Each interface's state, in words: what it does, or why it doesn't.
+namespace {
+
+// Whether `s` reads `a`, `b`, `c` in a row: compared in place, so a state
+// that hasn't changed costs no allocation (this runs every tick).
+bool reads(const std::string& s, std::string_view a, std::string_view b, std::string_view c) {
+    return s.size() == a.size() + b.size() + c.size() && s.compare(0, a.size(), a) == 0 &&
+           s.compare(a.size(), b.size(), b) == 0 && s.compare(a.size() + b.size(), c.size(), c) == 0;
+}
+
+}  // namespace
+
+// Each interface's state, in words: what it does, or why it doesn't. A
+// state is a fixed text, or a fixed text around one string (an SSID, the
+// last failure); the node's string is rebuilt only when that changes.
 void Network::updateStatus(uint32_t nowMs) {
-    std::string s;
+    std::string_view pre, mid, post;  // the text: `pre`, then `mid`, then `post`
     if (staMode_ == StationMode::Never) {
-        s = "off";
+        pre = "off";
     } else if (networks_.empty()) {
-        s = "no network saved";
+        pre = "no network saved";
     } else {
         switch (sta_) {
-            case Sta::Connected: s = "connected"; break;
+            case Sta::Connected: pre = "connected"; break;
             case Sta::Connecting:
-                s = (associated_ ? "getting an address from \"" : "joining \"") + current_.ssid + "\"";
+                pre = associated_ ? "getting an address from \"" : "joining \"";
+                mid = current_.ssid;
+                post = "\"";
                 break;
-            case Sta::Scanning: s = "looking for networks"; break;
+            case Sta::Scanning: pre = "looking for networks"; break;
             case Sta::Waiting:
-                s = ethWaits(nowMs)        ? "waiting for Ethernet"
-                    : failure_.empty() ? "waiting to retry"
-                                       : failure_ + "; retrying";
+                if (ethWaits(nowMs)) {
+                    pre = "waiting for Ethernet";
+                } else if (failure_.empty()) {
+                    pre = "waiting to retry";
+                } else {
+                    mid = failure_;
+                    post = "; retrying";
+                }
                 break;
-            case Sta::Idle: s = stationKeptAway() ? "not needed: Ethernet has a DHCP address" : "idle"; break;
+            case Sta::Idle: pre = stationKeptAway() ? "not needed: Ethernet has a DHCP address" : "idle"; break;
         }
     }
-    if (s != staState_) {
-        staState_ = s;
+    if (!reads(staState_, pre, mid, post)) {
+        staState_.assign(pre.data(), pre.size());
+        staState_.append(mid.data(), mid.size());
+        staState_.append(post.data(), post.size());
         staStatus_->changed();
     }
     if (!eth_) return;
-    s = !ethEnabled_   ? "off"
-        : !ethLink_    ? "no cable"
-        : !ethOnline_  ? (ethStaticOn_ ? "applying the static address" : "waiting for DHCP")
-        : ethStaticOn_ ? "connected, static address"
-        : !ethLease_   ? "connected, link-local address (no DHCP server)"
-                       : "connected";
-    if (s != ethState_) {
-        ethState_ = s;
+    const char* e = !ethEnabled_   ? "off"
+                    : !ethLink_    ? "no cable"
+                    : !ethOnline_  ? (ethStaticOn_ ? "applying the static address" : "waiting for DHCP")
+                    : ethStaticOn_ ? "connected, static address"
+                    : !ethLease_   ? "connected, link-local address (no DHCP server)"
+                                   : "connected";
+    if (ethState_ != e) {
+        ethState_ = e;
         ethStatus_->changed();
     }
 }

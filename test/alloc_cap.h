@@ -40,6 +40,8 @@ public:
     // Bytes live above the start, now and at the most.
     long long live() const;
     long long peak() const;
+    // The allocations counted since the start.
+    long long allocations() const;
     // The allocations that went past the size (the first 8).
     std::vector<Overrun> overruns() const;
     // Them, readable: sizes and symbolized call stacks.
