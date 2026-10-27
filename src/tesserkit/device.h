@@ -166,7 +166,7 @@ public:
     Device& settingsVersion(uint16_t version, Migration migrate = nullptr);
     // TesserKIT's own settings version, for /sys. Stored with the
     // application's as (application << 16) | TesserKIT's.
-    static constexpr uint16_t kSettingsVersion = 2;
+    static constexpr uint16_t kSettingsVersion = 3;
 
     // Mounts the services, loads the persisted state, starts the services,
     // the HTTP server and the task. False if the platform is missing.

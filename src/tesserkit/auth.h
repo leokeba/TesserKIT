@@ -69,6 +69,8 @@ protected:
     void loaded() override;
     void start() override;
     void tick(uint32_t nowMs) override;
+    // Settings version 3 dropped the persisted boot count (/sys/auth/boots).
+    void migrate(uint32_t from, JsonObject settings) override;
 
 private:
     void login(const Credentials& c, tesser::Call& call);
@@ -100,9 +102,11 @@ private:
     };
     Attempts* attemptsOf(const tesser::Client& c, uint32_t nowMs);
     std::vector<Attempts> attempts_;
-    uint32_t boots_ = 0;  // persisted: a clockless token belongs to its boot
+    // Drawn at each start, never stored: a token made without a clock
+    // belongs to its boot. Until 2026-10-27 a persisted boot count, which
+    // rewrote the whole /sys record at every boot.
+    uint32_t bootId_ = 0;
     uint32_t tokensGen_ = 0;  // users, key and open, as tick() last saw them
-    tesser::Node* bootsNode_ = nullptr;
     const char* defaultName_ = nullptr;
     const char* defaultPassword_ = nullptr;
 };

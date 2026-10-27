@@ -243,7 +243,8 @@ bool Device::migrate(std::string_view record, uint32_t version, JsonVariant valu
         // yet, and TesserAPI drops those values as it rewrites the records.
         // A later default change raises kSettingsVersion, and its service's
         // migrate() drops the old default. Version 2 (2026-10-21): the
-        // hostname's setting is empty for the default (Network's).
+        // hostname's setting is empty for the default (Network's). Version
+        // 3 (2026-10-27): Auth's boot count is no longer stored.
         for (Service* s = services_; s; s = s->next_) {
             JsonObject o;
             if (record == "sys") {

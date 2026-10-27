@@ -190,8 +190,8 @@ void Auth::describe(tesser::Object& o) {
         .writeAccess(Access::Admin)
         .persist()
         .ui("advanced");
-    // Neither goes into backups: a backup holding the key could forge
-    // tokens for this device, and the boot count is this device's.
+    // Not in backups: a backup holding the key could forge tokens for this
+    // device.
     keyNode_ = &o.value("key", key_)
                     .validate(limits::atMost<64>)
                     .readOnly()
@@ -200,7 +200,6 @@ void Auth::describe(tesser::Object& o) {
                     .backup(false)
                     .readAccess(Access::Admin)
                     .ui("hidden");
-    bootsNode_ = &o.value("boots", boots_).readOnly().persist().backup(false).readAccess(Access::Admin).ui("hidden");
 
     if (defaultName_ && defaultPassword_) {
         User u;
@@ -222,8 +221,16 @@ void Auth::loaded() {
 
 void Auth::start() {
     if (key_.size() != 64) newKey();
-    boots_++;  // a token made without a clock is valid in its boot only
-    bootsNode_->changed();
+    // A token made without a clock is valid in this boot only: bound to an
+    // id drawn now, which nothing stores.
+    uint8_t id[4];
+    dev_.core().random(id, sizeof(id));
+    bootId_ = static_cast<uint32_t>(id[0]) << 24 | static_cast<uint32_t>(id[1]) << 16 |
+              static_cast<uint32_t>(id[2]) << 8 | id[3];
+}
+
+void Auth::migrate(uint32_t from, JsonObject settings) {
+    if (from < 3) settings.remove("boots");
 }
 
 void Auth::tick(uint32_t nowMs) {
@@ -284,11 +291,12 @@ std::string Auth::token(const std::string& name) {
     if (now) {
         snprintf(expiry, sizeof(expiry), "%lld", static_cast<long long>(now + sessionHours_ * 3600LL));
     } else {
-        // No clock (a show network without SNTP): "b<boot>:<uptime deadline>",
-        // so the token dies with this boot or after sessionHours of uptime.
-        // It used to say 0, never expiring.
+        // No clock (a show network without SNTP): "b<boot id>:<uptime
+        // deadline>", the id eight hex digits, so the token dies with this
+        // boot or after sessionHours of uptime. It used to say 0, never
+        // expiring.
         long long deadline = static_cast<long long>(dev_.core().uptimeMs() / 1000) + sessionHours_ * 3600LL;
-        snprintf(expiry, sizeof(expiry), "b%lu:%lld", static_cast<unsigned long>(boots_), deadline);
+        snprintf(expiry, sizeof(expiry), "b%08lx:%lld", static_cast<unsigned long>(bootId_), deadline);
     }
     std::string payload = name + "." + expiry;
     return payload + "." + sign(payload);
@@ -306,11 +314,12 @@ Access Auth::check(std::string_view token) {
     if (!crypto::equal(sign(payload), token.substr(sig + 1))) return Access::Public;
     std::string expiry(token.substr(exp + 1, sig - exp - 1));
     if (expiry[0] == 'b') {
-        // Made without a clock: this boot, before its uptime deadline.
+        // Made without a clock: this boot, before its uptime deadline. A
+        // token from before boot ids ("b<count>:") has no eight digits.
         unsigned long boot = 0;
         long long deadline = 0;
-        if (sscanf(expiry.c_str(), "b%lu:%lld", &boot, &deadline) != 2 || boot != boots_ ||
-            static_cast<long long>(dev_.core().uptimeMs() / 1000) > deadline) {
+        if (expiry.size() < 11 || expiry[9] != ':' || sscanf(expiry.c_str(), "b%8lx:%lld", &boot, &deadline) != 2 ||
+            boot != bootId_ || static_cast<long long>(dev_.core().uptimeMs() / 1000) > deadline) {
             return Access::Public;
         }
     } else {

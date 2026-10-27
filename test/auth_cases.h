@@ -201,7 +201,9 @@ TEST(auth_tokens_without_a_clock_end_with_the_boot) {
         r.auth.defaultAdmin("admin", "pw");
         CHECK(r.dev.begin());
         token = r.login("admin", "pw");
-        CHECK(token.find(".b1:") != std::string::npos);  // the first boot
+        size_t b = token.find(".b");
+        CHECK(b != std::string::npos);  // ".b<boot id, 8 hex digits>:<deadline>."
+        CHECK_EQ(token[b + 10], ':');
         CHECK_EQ(r.dev.api().tokenAccess(token), Access::Admin);
         r.fake.core.now += 169ULL * 3600 * 1000;  // past 168 h of uptime
         CHECK_EQ(r.dev.api().tokenAccess(token), Access::Public);
@@ -213,12 +215,33 @@ TEST(auth_tokens_without_a_clock_end_with_the_boot) {
         r.run(2500);
         saved = r.storage.records;
     }
+    // The boot's id isn't stored: a boot doesn't rewrite /sys.
+    CHECK(saved["sys"].find("boot") == std::string::npos);
     AuthRig r;
+    r.fake.core.seed = 99;  // the chip's random numbers differ from boot to boot
     r.auth.defaultAdmin("admin", "pw");
     r.storage.records = saved;
     CHECK(r.dev.begin());
+    int saves = r.storage.saves;
+    r.run(2500);
+    CHECK_EQ(r.storage.saves, saves);  // a boot saves nothing
     CHECK_EQ(r.dev.api().tokenAccess(token), Access::Public);  // another boot
-    CHECK(r.login("admin", "pw").find(".b2:") != std::string::npos);
+    std::string again = r.login("admin", "pw");
+    CHECK_EQ(r.dev.api().tokenAccess(again), Access::Admin);
+    CHECK(again.substr(again.find(".b"), 10) != token.substr(token.find(".b"), 10));
+}
+
+// Settings version 3 dropped the stored boot count (/sys/auth/boots): a
+// record stored before it loads without it, and isn't rewritten at each
+// boot any more.
+TEST(auth_boot_count_dropped_by_migration) {
+    AuthRig r;
+    r.storage.records["@version"] = "2";
+    r.storage.records["sys"] = R"({"auth":{"boots":41,"sessionHours":24}})";
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.value("/sys/auth/sessionHours"), "24");
+    CHECK_EQ(r.storage.records["sys"], R"({"auth":{"sessionHours":24}})");
+    CHECK_EQ(r.storage.records["@version"], std::to_string(tesserkit::Device::kSettingsVersion));
 }
 
 // A reply that can be detached (a deferred action, as a sign-in is),
@@ -262,7 +285,7 @@ TEST(auth_revocations_recheck_open_sessions) {
 
 TEST(auth_backups_leave_out_the_key) {
     // A backup holding /sys/auth/key could forge tokens for this device;
-    // the boot count is this device's too. Both stay in its own storage.
+    // it stays in its own storage.
     AuthRig r;
     r.auth.defaultAdmin("admin", "pw");
     CHECK(r.dev.begin());
