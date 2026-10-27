@@ -19,6 +19,7 @@ namespace {
 constexpr uint32_t kReopenMs = 5000;
 constexpr size_t kMaxDatagram = 640;  // E1.31's largest data packet is 638 bytes
 constexpr int kDrain = 64;            // datagrams a period, without the receiving task
+constexpr size_t kFrameBytes = 512;   // a DMX universe
 
 }  // namespace
 
@@ -206,11 +207,11 @@ void DmxService::tick(uint32_t nowMs) {
     }
     if (!listening_) receive(nowMs);
     ticked(nowMs);
-    uint8_t dmx[512];
     size_t len = 0;
     bool fresh;
     {
         tesser::MutexGuard g(lock_);
+        if (!frames_ && !mappings_.empty()) frames(false);  // memory again, quietly
         // What the status shows, as of this period.
         shown_.packets = packets_;
         shown_.sequenceErrors = sequenceErrors_;
@@ -219,14 +220,14 @@ void DmxService::tick(uint32_t nowMs) {
             shown_.received = t->everFrame;
             shown_.frameMs = t->frameMs;
         }
-        fresh = fresh_;
+        fresh = fresh_ && frame_;
         if (fresh) {
             fresh_ = false;
             len = frameLen_;
-            memcpy(dmx, frame_, len);
+            std::swap(frame_, applied_);  // the next frame goes into the other
         }
     }
-    if (fresh) apply(dmx, len);
+    if (fresh) apply(applied_, len);
 }
 
 void DmxService::receive(uint32_t nowMs) {
@@ -241,7 +242,25 @@ void DmxService::receive(uint32_t nowMs) {
     }
 }
 
+void DmxService::frames(bool tell) {
+    if (mappings_.empty()) {
+        frames_.reset();
+        frame_ = applied_ = nullptr;
+    } else if (!frames_) {
+        frames_.reset(static_cast<uint8_t*>(malloc(2 * kFrameBytes)));
+        if (!frames_) {
+            if (tell) tesser::logWarning("tesserkit: %s: no memory for the mappings' frames now", name());
+            return;
+        }
+        frame_ = frames_.get();
+        applied_ = frame_ + kFrameBytes;
+    }
+    frameLen_ = 0;
+    fresh_ = false;
+}
+
 void DmxService::rebuild() {
+    frames();
     std::vector<uint16_t> all = listened_;
     auto at = std::lower_bound(all.begin(), all.end(), universe_);
     if (at == all.end() || *at != universe_) all.insert(at, universe_);
@@ -277,8 +296,8 @@ DmxService::Track* DmxService::track(uint16_t universe) {
 bool DmxService::take(Track* t, const DmxFrame& f) {
     t->everFrame = true;
     t->frameMs = static_cast<uint32_t>(f.atUs / 1000);
-    if (t->mapped) {
-        size_t len = f.length < sizeof(frame_) ? f.length : sizeof(frame_);
+    if (t->mapped && frame_) {
+        size_t len = f.length < kFrameBytes ? f.length : kFrameBytes;
         memcpy(frame_, f.data, len);
         frameLen_ = len;
         fresh_ = true;

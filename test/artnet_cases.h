@@ -142,6 +142,30 @@ TEST(artnet_writes_only_changes) {
     CHECK_EQ(r.writes, 3);
 }
 
+// The mappings' frames exist only while there are mappings (DESIGN 5.9):
+// mappings written at run time apply from the next frame, and none written
+// leave frames alone.
+TEST(artnet_mappings_added_and_removed_at_run_time) {
+    ArtNetRig r;
+    CHECK(r.dev.begin());
+    r.send(dmx(0, {10}));
+    CHECK_EQ(r.writes, 0);
+    CHECK_EQ(r.set("/sys/artnet/mappings", "[{\"path\":\"/led/azimuth\",\"coarse\":1,\"max\":100}]").status,
+             Status::Ok);
+    r.run(60);
+    r.send(dmx(0, {51}));
+    CHECK_EQ(r.writes, 1);
+    CHECK(r.azimuth > 19 && r.azimuth < 21);
+    r.send(dmx(0, {255}));
+    r.send(dmx(0, {0}));
+    CHECK_EQ(r.writes, 3);
+    CHECK_EQ(r.azimuth, 0.0);
+    CHECK_EQ(r.set("/sys/artnet/mappings", "[]").status, Status::Ok);
+    r.run(60);
+    r.send(dmx(0, {200}));
+    CHECK_EQ(r.writes, 3);
+}
+
 // A mapping's writes aren't saved (DESIGN 5.9): a fader on a persisted node
 // rewrote its record every 2 s. An ordinary write still is.
 TEST(artnet_writes_arent_saved) {

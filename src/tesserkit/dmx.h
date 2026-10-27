@@ -4,6 +4,8 @@
 // received over UDP, mapped onto nodes of the tree, and handed raw to an
 // application's sink.
 
+#include <stdlib.h>
+
 #include <atomic>
 #include <memory>
 #include <string>
@@ -185,6 +187,9 @@ protected:
 
 private:
     void rebuild();  // under lock_
+    // The mappings' two frames, allocated while there are mappings (a
+    // warning if the heap can't, unless !tell). Under lock_.
+    void frames(bool tell = true);
     void receive(uint32_t nowMs);
     void apply(const uint8_t* dmx, size_t len);
 
@@ -206,8 +211,15 @@ private:
     uint32_t openedAtMs_ = 0;
     bool opening_ = false;
     std::unique_ptr<tesser::LocalClient> client_;
-    // The mappings' universe: its last frame, under lock_.
-    uint8_t frame_[512] = {};
+    // The mappings' universe: two frames of 512 bytes, only while there are
+    // mappings. take() writes the last one into frame_ (under lock_); tick()
+    // swaps it with applied_, which it reads out of the lock: no copy.
+    struct FreeBytes {
+        void operator()(uint8_t* p) const { free(p); }
+    };
+    std::unique_ptr<uint8_t, FreeBytes> frames_;
+    uint8_t* frame_ = nullptr;
+    uint8_t* applied_ = nullptr;
     size_t frameLen_ = 0;
     bool fresh_ = false;  // a frame since the last apply()
     std::vector<std::string> sent_;  // per mapping: the last value written
