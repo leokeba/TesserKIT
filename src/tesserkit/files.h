@@ -137,8 +137,16 @@ public:
     static constexpr const char* kBackupDir = "backups";
     // What a restore stores first, so it can be undone. Not counted by keep.
     static constexpr const char* kBeforeRestore = "before-restore";
+    // The settings as stored before an update's migration rewrote them
+    // (docs/DESIGN.md section 6.3). Not counted by keep either.
+    static constexpr const char* kBeforeUpdate = "before-update";
     virtual void describeBackups(Backup& backup, tesser::Object& o);
     virtual tesser::Check storeBackup(Backup& backup, const std::string& name, std::string* saved);
+    // Stores `settings`' records as a backup named kBeforeUpdate, under
+    // `version`, the settings version they were stored under: at boot,
+    // before TesserAPI migrates and rewrites them. Without the nodes kept
+    // out of backups (the token key). Nothing stored: nothing to keep.
+    virtual tesser::Check storeBeforeUpdate(tesser::Storage& settings, uint32_t version);
 
 protected:
     void start() override;

@@ -161,7 +161,14 @@ public:
     // ("sys" included, after TesserKIT's own migration of it) with the
     // application's version it was stored under, and changes it in place;
     // false drops the record. Raise the version when a default changes
-    // (docs/DESIGN.md section 6.3).
+    // (docs/DESIGN.md section 6.3). It runs for any version that differs,
+    // a newer one included: after a downgrade (a rollback, an older firmware
+    // installed), `version` is above the application's own, and the
+    // migration should keep what it can (true): the records load leniently,
+    // what the tree lacks skipped, and are rewritten under this version.
+    // TesserKIT's own services migrate /sys only from an older version.
+    // With Files, the records as stored before a migration are kept as the
+    // stored backup "before-update" first.
     using Migration = tesser::Api::Migration;
     Device& settingsVersion(uint16_t version, Migration migrate = nullptr);
     // TesserKIT's own settings version, for /sys. Stored with the

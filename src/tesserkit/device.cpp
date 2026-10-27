@@ -5,6 +5,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include <utility>
 
@@ -316,10 +317,23 @@ bool Device::begin() {
     if (storage_) {
         // TesserKIT's version and the application's, so each migrates its own
         // settings (docs/DESIGN.md section 6.3).
-        api_.persistVersion((static_cast<uint32_t>(appVersion_) << 16) | kSettingsVersion,
-                            [this](std::string_view record, uint32_t version, JsonVariant value) {
-                                return migrate(record, version, value);
-                            });
+        uint32_t version = (static_cast<uint32_t>(appVersion_) << 16) | kSettingsVersion;
+        // Stored under another version: TesserAPI migrates the records and
+        // rewrites them all as it loads them, before the new image is
+        // confirmed. Kept as they were first, so a rollback (or the user)
+        // can restore them.
+        std::string text;
+        uint32_t stored = settings_.load("@version", text) ? static_cast<uint32_t>(strtoul(text.c_str(), nullptr, 10)) : 0;
+        if (files_ && stored != version) {
+            tesser::Check c = files_->storeBeforeUpdate(settings_, stored);
+            if (!c.isOk()) {
+                tesser::logWarning("tesserkit: the settings before the update couldn't be kept: %s",
+                                   c.message ? c.message : "");
+            }
+        }
+        api_.persistVersion(version, [this](std::string_view record, uint32_t v, JsonVariant value) {
+            return migrate(record, v, value);
+        });
         api_.persistence(settings_, 2000);
         api_.load();
     }

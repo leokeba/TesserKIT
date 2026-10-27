@@ -523,4 +523,57 @@ TEST(settings_backup_and_restore_on_files) {
     CHECK(r.onDisk("backups/one.json"));
 }
 
+// An update that changes the settings version migrates and rewrites every
+// record at its first boot, before its image is confirmed. The records as
+// they were are kept first as a stored backup, which the older firmware
+// restores after a rollback (docs/DESIGN.md section 6.3).
+TEST(settings_kept_before_an_update) {
+    struct AuthRig : SettingsRig {
+        tesserkit::Auth auth{dev};
+        using SettingsRig::SettingsRig;
+    };
+    std::string key(64, 'a');
+    std::map<std::string, std::string> nvs = {
+        {"@version", "2"},
+        {"sys", "{\"time\":{\"tz\":\"EST5EDT\"},\"auth\":{\"key\":\"" + key + "\",\"boots\":7},\"gone\":1}"},
+        {"app", "{\"level\":4}"},
+    };
+    std::string dir;
+    {
+        AuthRig r;
+        r.fake.nvs.records = nvs;
+        CHECK(r.dev.begin());
+        std::string kept = r.file("backups/before-update.json");
+        CHECK(kept.find("\"@version\":2") == 1);
+        CHECK(kept.find("\"tz\":\"EST5EDT\"") != std::string::npos);
+        CHECK(kept.find("\"boots\":7") != std::string::npos);  // as stored, for the firmware that stored it
+        CHECK(kept.find("\"gone\":1") != std::string::npos);
+        CHECK(kept.find("\"app\":{\"level\":4}") != std::string::npos);
+        CHECK(kept.find(key) == std::string::npos);  // the token key stays out of backups
+        CHECK(r.value("/sys/backup/stored").find("before-update") != std::string::npos);
+        // Migrated meanwhile.
+        CHECK(r.file(".settings/sys.json").find("boots") == std::string::npos);
+        CHECK_EQ(r.value("/sys/auth/sessionHours"), "168");
+        // Restorable: what the older firmware would do after a rollback.
+        CHECK_EQ(r.set("/sys/backup/stored/before-update/restore").status, Status::Ok);
+        CHECK_EQ(r.value("/sys/time/tz"), "\"EST5EDT\"");
+        // Not counted by keep.
+        r.backup.keep(1);
+        CHECK_EQ(r.set("/sys/backup/save", "\"a\"").status, Status::Ok);
+        CHECK_EQ(r.set("/sys/backup/save", "\"b\"").status, Status::Ok);
+        CHECK(r.onDisk("backups/before-update.json"));
+        unlink(r.path("backups/before-update.json").c_str());
+        r.run(2500);
+        dir = r.keepDir();
+    }
+    // The same version at the next boot: nothing to keep.
+    AuthRig next(dir);
+    CHECK(next.dev.begin());
+    CHECK(!next.onDisk("backups/before-update.json"));
+    // Nor on a new device.
+    AuthRig fresh;
+    CHECK(fresh.dev.begin());
+    CHECK(!fresh.onDisk("backups/before-update.json"));
+}
+
 }  // namespace settings_cases

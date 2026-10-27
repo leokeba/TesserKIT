@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "tesser/budget.h"
+#include "tesser/envelope.h"
 #include "tesserkit/backup.h"
 #include "tesserkit/files.h"
 
@@ -101,7 +103,10 @@ Check StoredBackups::save(const std::string& name, std::string* saved) {
 void StoredBackups::prune(const std::string& justSaved) {
     std::vector<FileEntry> counted;
     for (FileEntry& e : files_.list(Files::kBackupDir, SIZE_MAX)) {
-        if (isBackup(e) && e.name != std::string(Files::kBeforeRestore) + kExt) counted.push_back(std::move(e));
+        if (isBackup(e) && e.name != std::string(Files::kBeforeRestore) + kExt &&
+            e.name != std::string(Files::kBeforeUpdate) + kExt) {
+            counted.push_back(std::move(e));
+        }
     }
     if (counted.size() <= backup_.keep_) return;
     // Oldest first; a clock that wasn't set reads as oldest.
@@ -198,6 +203,64 @@ Check Files::storeBackup(Backup& backup, const std::string& name, std::string* s
 
 void Files::refreshBackups() {
     if (backups_) backups_->refresh();
+}
+
+namespace {
+
+// Drops from a stored record what stays out of backups (backup(false), the
+// token key, with its subtree), by the tree's nodes. A key the tree no
+// longer has is kept: the firmware that stored it knows it.
+void dropUnbackedUp(const tesser::Node& node, JsonObject stored) {
+    if (node.type() != tesser::NodeType::Object) return;
+    const tesser::Object& o = static_cast<const tesser::Object&>(node);
+    std::vector<std::string> gone;
+    for (JsonPair kv : stored) {
+        const tesser::Node* c = o.child(std::string_view(kv.key().c_str(), kv.key().size()));
+        if (!c) continue;
+        if (!c->backedUp()) {
+            gone.emplace_back(kv.key().c_str(), kv.key().size());
+        } else if (kv.value().is<JsonObject>()) {
+            dropUnbackedUp(*c, kv.value().as<JsonObject>());
+        }
+    }
+    for (const std::string& k : gone) stored.remove(k);
+}
+
+}  // namespace
+
+Check Files::storeBeforeUpdate(tesser::Storage& settings, uint32_t version) {
+    if (!mount()) return Check::fail(Status::NotAllowed, "no filesystem");
+    // A backup's form (persistedState()'s): "@version", then the records
+    // under their names, as stored, so that the firmware that stored them
+    // restores them as they were.
+    std::string text = "{\"@version\":" + std::to_string(version);
+    bool any = false;
+    for (const tesser::Node* c = dev_.api().first(); c; c = c->next()) {
+        if (!c->backedUp()) continue;
+        std::string data;
+        if (!settings.load(c->name(), data) || data == "null") continue;
+        // The parsed record, about as large as its text, and the backup's
+        // text growing by as much: reserved, so a short heap skips the
+        // backup rather than aborts the boot.
+        size_t bytes = 3 * data.size();
+        tesser::Reservation held = tesser::reserveBytes(bytes, false, tesser::Pool::Large);
+        if (!held) return Check::fail(Status::Busy, "not enough free memory");
+        JsonDocument doc(tesser::jsonAllocator(tesser::Pool::Large));
+        if (deserializeJson(doc, data, DeserializationOption::NestingLimit(tesser::kWrittenNesting))) continue;
+        if (doc.is<JsonObject>()) dropUnbackedUp(*c, doc.as<JsonObject>());
+        text += ",\"";
+        text += c->name();
+        text += "\":";
+        // Appended in place (serializeJson() into a std::string replaces it).
+        size_t at = text.size(), n = measureJson(doc);
+        text.resize(at + n + 1);
+        serializeJson(doc, &text[at], n + 1);
+        text.resize(at + n);
+        any = true;
+    }
+    if (!any) return Check::ok();  // a new device: nothing to keep
+    text += '}';
+    return write(std::string(kBackupDir) + "/" + kBeforeUpdate + kExt, text);
 }
 
 }  // namespace tesserkit
