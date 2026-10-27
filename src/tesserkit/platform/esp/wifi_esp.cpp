@@ -2,6 +2,7 @@
 // esp_wifi and esp_netif (which Arduino-ESP32 3.x ships).
 #if defined(ESP_PLATFORM)
 
+#include "tesser/budget.h"
 #include "tesser/platform.h"
 #include "tesserkit/platform.h"
 #include "tesserkit/platform/esp/esp_internal.h"
@@ -9,6 +10,7 @@
 #include <string.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "esp_event.h"
@@ -69,16 +71,29 @@ public:
         uint16_t n = 0;
         esp_wifi_scan_get_ap_num(&n);
         if (n > kMaxScanResults) n = kMaxScanResults;
+        // ESP-IDF's records (about 2 KB for 20) and the results: from
+        // TesserAPI's byte budget, so a short heap gives an empty scan
+        // rather than an abort in a plain allocation. ESP-IDF's own list
+        // is freed either way.
+        size_t bytes = n * (sizeof(wifi_ap_record_t) + sizeof(ScanResult) + 33);
+        tesser::Reservation held;
+        if (n) held = tesser::reserveBytes(bytes, false);
+        if (!n || !held) {
+            esp_wifi_clear_ap_list();
+            if (n) tesser::logWarning("tesserkit: no memory for the Wi-Fi scan's %u results", static_cast<unsigned>(n));
+            return {};
+        }
         std::vector<wifi_ap_record_t> records(n);
         if (esp_wifi_scan_get_ap_records(&n, records.data()) != ESP_OK) n = 0;
         esp_wifi_clear_ap_list();  // frees what wasn't fetched
         std::vector<ScanResult> out;
+        out.reserve(n);  // reserved above
         for (uint16_t i = 0; i < n; i++) {
             const wifi_ap_record_t& r = records[i];
             std::string ssid(reinterpret_cast<const char*>(r.ssid), strnlen(reinterpret_cast<const char*>(r.ssid), 32));
             if (ssid.empty()) continue;
             ScanResult s;
-            s.ssid = ssid;
+            s.ssid = std::move(ssid);
             memcpy(s.bssid, r.bssid, sizeof(s.bssid));
             s.rssi = r.rssi;
             s.channel = r.primary;
