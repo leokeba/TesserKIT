@@ -108,7 +108,10 @@ private:
     };
 
     void refresh(uint32_t nowMs);
-    void signIn(tesser::RemoteNode& node, const PeerSettings* settings, uint32_t nowMs, State& state);
+    // Signs in to `node` (its id) when needed; its outcome in `state`, if
+    // the status is being built.
+    void signIn(tesser::RemoteNode& node, const PeerSettings* settings, uint32_t nowMs, const std::string& id,
+                State* state);
     void login(const std::string& nodeName, const std::string& id, const std::string& user,
                const std::string& password);
     SignIn& signInFor(const std::string& id);

@@ -331,6 +331,12 @@ void Peers::refresh(uint32_t nowMs) {
         if (n->routeOrder() != order) n->routeOrder(order);
         if (shown >= kMaxNodes) continue;
         shown++;
+        if (!status) {
+            // No room for the status: none of it is built (its strings, the
+            // routes' copy), but sign-ins go on.
+            if (device.length) signIn(*n, s, nowMs, idOf(device), nullptr);
+            continue;
+        }
         State st;
         st.id = idOf(device);
         st.name = n->name();
@@ -347,8 +353,8 @@ void Peers::refresh(uint32_t nowMs) {
             int32_t ago = static_cast<int32_t>((r.endpoint->now() - r.heardMs) / 1000);
             if (st.heard < 0 || ago < st.heard) st.heard = ago;
         }
-        if (device.length) signIn(*n, s, nowMs, st);
-        if (status) states.push_back(std::move(st));
+        if (device.length) signIn(*n, s, nowMs, st.id, &st);
+        states.push_back(std::move(st));
     }
     if (!status) return;
     // Toasts: a node lost, or reached again or another way. A node seen for
@@ -386,11 +392,12 @@ Peers::SignIn& Peers::signInFor(const std::string& id) {
     return signIns_.back();
 }
 
-void Peers::signIn(RemoteNode& node, const PeerSettings* settings, uint32_t nowMs, State& state) {
+void Peers::signIn(RemoteNode& node, const PeerSettings* settings, uint32_t nowMs, const std::string& id,
+                   State* state) {
     // Its own account, or the one of every node.
     const std::string& user = settings && !settings->user.empty() ? settings->user : account_.name;
     const std::string& password = settings && !settings->user.empty() ? settings->password : account_.password;
-    SignIn& s = signInFor(state.id);
+    SignIn& s = signInFor(id);
     std::string credentials = user.empty() ? std::string() : user + '\n' + password;
     if (credentials != s.credentials) {
         // New credentials (or none any more): the old token goes.
@@ -407,8 +414,9 @@ void Peers::signIn(RemoteNode& node, const PeerSettings* settings, uint32_t nowM
         s.text = "signing in as " + user;
         login(node.name(), s.id, user, password);
     }
-    state.signIn = s.text;
-    if (s.hasToken) state.access = tesser::toString(node.access());
+    if (!state) return;
+    state->signIn = s.text;
+    if (s.hasToken) state->access = tesser::toString(node.access());
 }
 
 void Peers::login(const std::string& nodeName, const std::string& id, const std::string& user,
