@@ -206,6 +206,32 @@ TEST(artnet_can_be_turned_off) {
     CHECK_EQ(r.brightness, 9);
 }
 
+TEST(artnet_closes_its_socket_out_of_the_api_lock) {
+    // Closing waits for the receiving task, which may be in the sink waiting
+    // for the API lock: the socket isn't closed under it.
+    ArtNetRig r;
+    Sink sink;
+    r.artnet.sink(&sink);
+    CHECK(r.dev.begin());
+    r.run(40);
+    CHECK(r.fake.udp.open_[6454]);
+    int closes = 0;
+    bool underLock = false;
+    r.fake.udp.onClose = [&](uint16_t) {
+        closes++;
+        underLock = underLock || r.dev.api().mutex().heldByMe();
+    };
+    CHECK_EQ(r.set("/sys/artnet/enabled", "false").status, Status::Ok);
+    r.step();
+    CHECK_EQ(closes, 1);
+    CHECK(!underLock);
+    CHECK(!r.fake.udp.open_[6454]);
+    CHECK_EQ(r.set("/sys/artnet/enabled", "true").status, Status::Ok);
+    r.step();
+    CHECK(r.fake.udp.open_[6454]);
+    r.fake.udp.onClose = nullptr;
+}
+
 TEST(artnet_retries_its_port) {
     ArtNetRig r;
     r.fake.udp.fails = true;

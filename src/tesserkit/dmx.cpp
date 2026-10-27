@@ -155,6 +155,7 @@ void DmxService::start() {
     client_.reset(new tesser::LocalClient(dev_.api()));  // Admin, as the mappings were set
     settingsGen_ = universeNode_->generation() + mappingsNode_->generation();
     sent_.assign(mappings_.size(), std::string());
+    dev_.poller([this] { closed_.reset(); });
     tesser::MutexGuard g(lock_);
     rebuild();
 }
@@ -174,14 +175,17 @@ void DmxService::tick(uint32_t nowMs) {
         rebuild();
     }
     if (!enabled_) {
-        if (socket_) closing();
-        socket_.reset();  // waits for the receiving task to end
+        if (socket_) {
+            closing();
+            // Closed after this period's lock (closed_).
+            closed_ = std::move(socket_);
+        }
         listening_ = false;
         opening_ = false;
         return;
     }
     if (!socket_) {
-        if (!udp_ || (opening_ && nowMs - openedAtMs_ < kReopenMs)) return;
+        if (closed_ || !udp_ || (opening_ && nowMs - openedAtMs_ < kReopenMs)) return;
         opening_ = true;
         openedAtMs_ = nowMs;
         socket_ = udp_->open(port_);

@@ -452,6 +452,8 @@ struct Udp : tesserkit::Udp {
     bool fails = false;
     bool listenFails = false;
     int opens = 0;
+    // Called as a socket closes, with its port.
+    std::function<void(uint16_t)> onClose;
     uint64_t clockUs = 0;  // the receiving task's clock
 
     std::unique_ptr<tesserkit::UdpSocket> open(uint16_t port) override;

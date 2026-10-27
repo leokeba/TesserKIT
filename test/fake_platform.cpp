@@ -357,6 +357,7 @@ class UdpSocket : public tesserkit::UdpSocket {
 public:
     UdpSocket(Udp& udp, uint16_t port) : udp_(udp), port_(port) { udp_.open_[port] = true; }
     ~UdpSocket() override {
+        if (udp_.onClose) udp_.onClose(port_);
         udp_.open_[port_] = false;
         udp_.listeners.erase(port_);
     }

@@ -41,7 +41,10 @@ struct DmxSync {
 
 // An application's receiver of DMX frames, beside the tree's mappings.
 // Called in the receiving task as datagrams arrive, not under the API lock:
-// copy what is needed and return. It must not call the service back.
+// copy what is needed and return. It must not call the service back. It may
+// take the API lock (tesser::Lock) for a write to the tree, briefly: every
+// frame waits for it, and closing the socket (the service disabled) waits for
+// the call to return, which the service does outside the lock.
 class DmxSink {
 public:
     virtual ~DmxSink() = default;
@@ -174,6 +177,10 @@ protected:
     std::atomic<uint16_t> lastUniverse_{0};
     uint32_t nowMs_ = 0;
     std::unique_ptr<UdpSocket> socket_;
+    // A socket the service closed: destroyed by a poller of the device's
+    // task, out of the API lock, since destroying it waits for its receiving
+    // task, which may be in the sink, waiting for that lock.
+    std::unique_ptr<UdpSocket> closed_;
     DmxSink* sink_ = nullptr;
 
 private:
