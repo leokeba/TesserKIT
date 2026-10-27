@@ -11,6 +11,7 @@
 
 #include <stdio.h>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 
@@ -189,8 +190,10 @@ public:
     bool longRange(bool on) override { return radio_.setLongRange(on) == nowtp::Status::Ok; }
     bool pair(uint32_t timeoutMs) override { return spawnPairing(false, timeoutMs); }
     bool acceptPairing(uint32_t timeoutMs) override { return spawnPairing(true, timeoutMs); }
+    bool pairing() override { return pairing_.load(); }
 
     bool forgetKey() override {
+        if (pairing_.load()) return false;  // the pairing task uses the key
         if (radio_.started()) return radio_.forgetSecurityKey() == nowtp::Status::Ok;
         // Stopped: NowTP keeps the key in its own NVS namespace.
         nvs_handle_t h;
@@ -215,11 +218,14 @@ private:
         if (sink_) sink_(std::move(e));
     }
 
-    // Pairing blocks for up to its timeout: in a task of its own.
+    // Pairing blocks for up to its timeout: in a task of its own, one at a
+    // time.
     bool spawnPairing(bool accept, uint32_t timeoutMs) {
+        if (pairing_.exchange(true)) return false;
         auto* p = new Pairing{this, accept, timeoutMs};
         if (xTaskCreate(pairingTask, "tk_pair", 6144, p, 4, nullptr) == pdPASS) return true;
         delete p;
+        pairing_.store(false);
         return false;
     }
     static void pairingTask(void* arg) {
@@ -232,6 +238,8 @@ private:
         } else {
             p->self->post(Event::Type::NowTpPairing, 1, nowtp::toString(st));
         }
+        // Last: the radio, and the sink begin() sets, are no longer used.
+        p->self->pairing_.store(false);
         p.reset();
         vTaskDelete(nullptr);
     }
@@ -242,6 +250,7 @@ private:
     std::function<void()> queued_;  // wakes the polling task (NowTP's wake hook)
     bool mounted_ = false;
     EventSink sink_;
+    std::atomic<bool> pairing_{false};  // a pairing task runs
 };
 
 }  // namespace

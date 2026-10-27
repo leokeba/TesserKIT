@@ -158,6 +158,33 @@ TEST(nowtp_pairs_and_forgets) {
     CHECK_EQ(r.value("/sys/nowtp/pairing/secured"), "false");
 }
 
+TEST(nowtp_pairing_holds_the_radio) {
+    // The pairing task uses NowTP and its key: neither stopping nor
+    // forgetting while it runs.
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.set("/sys/nowtp/pairing/accept").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/nowtp/enabled", "false").status, Status::Busy);
+    CHECK_EQ(r.set("/sys/nowtp/pairing/forget").status, Status::Busy);
+    r.settle();
+    CHECK_EQ(r.fake.nowtp.ends, 0);
+    CHECK_EQ(r.fake.nowtp.forgets, 0);
+    r.fake.nowtp.paired(false, "timeout");
+    r.settle();
+    CHECK_EQ(r.set("/sys/nowtp/pairing/forget").status, Status::Ok);
+    // A pairing whose event the full queue lost: the radio's word ends it.
+    CHECK_EQ(r.set("/sys/nowtp/pairing/pair").status, Status::Ok);
+    r.fake.nowtp.pairingNow = false;
+    CHECK_EQ(r.set("/sys/nowtp/pairing/accept").status, Status::Ok);
+    r.fake.nowtp.paired(false, "timeout");
+    r.settle();
+    CHECK_EQ(r.set("/sys/nowtp/enabled", "false").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.nowtp.ends, 1);
+    CHECK_EQ(r.set("/sys/nowtp/enabled", "true").status, Status::Ok);  // nothing to wait for while off
+}
+
 TEST(nowtp_settings_for_the_next_boot) {
     NowTpRig r;
     CHECK(r.dev.begin());

@@ -632,14 +632,18 @@ struct NowTp : tesserkit::NowTpRadio {
         config.longRange = on;
         return true;
     }
+    bool pairingNow = false;  // until paired()
     bool pair(uint32_t) override {
         pairings++;
+        pairingNow = true;
         return true;
     }
     bool acceptPairing(uint32_t) override {
         accepts++;
+        pairingNow = true;
         return true;
     }
+    bool pairing() override { return pairingNow; }
     bool forgetKey() override {
         forgets++;
         keyStored = state.secured = false;
@@ -648,6 +652,7 @@ struct NowTp : tesserkit::NowTpRadio {
     // A pairing finished, with the other node's MAC, or failed.
     void paired(bool ok, const char* text) {
         if (ok) keyStored = state.secured = true;
+        pairingNow = false;
         tesserkit::Event e;
         e.type = tesserkit::Event::Type::NowTpPairing;
         e.value = ok ? 0 : 1;

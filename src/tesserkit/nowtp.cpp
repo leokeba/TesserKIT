@@ -94,7 +94,14 @@ void NowTp::describe(tesser::Object& o) {
         .ui("icon", "target")
         .doc("Nodes nearby over ESP-NOW, with no network in common: their pages here, this device on theirs")
         .writeAccess(Access::Admin);
-    enabledNode_ = &o.value("enabled", enabled_).persist();
+    enabledNode_ = &o.value("enabled", enabled_)
+                        .validate([this](bool on) {
+                            // Stopped under a pairing task, NowTP would be
+                            // pulled from under it.
+                            return on || !busy() ? Check::ok()
+                                                 : Check::fail(Status::Busy, "a pairing is in progress (up to 60 s)");
+                        })
+                        .persist();
     restartSettings_.clear();
     restartSettings_.push_back(&o.value("mountPeers", mountPeers_)
                                     .persist()
@@ -136,6 +143,7 @@ void NowTp::describe(tesser::Object& o) {
         .doc("Opens this node's pairing window for 60 s");
     sec.action("forget", [this]() -> Check {
            if (!radio_ || !started_) return Check::fail(Status::NotAllowed, "NowTP is off");
+           if (busy()) return Check::fail(Status::Busy, "a pairing is in progress (up to 60 s)");
            if (!radio_->forgetKey()) return Check::fail(Status::Internal, "the key couldn't be removed");
            setPairing("");
            refresh();
@@ -322,6 +330,12 @@ void NowTp::refresh() {
     }
 }
 
+bool NowTp::busy() const {
+    // The radio's word, not a flag its NowTpPairing clears: that event can
+    // be lost in a full queue, and the flag would stay set.
+    return started_ && radio_ && radio_->pairing();
+}
+
 void NowTp::setPairing(const std::string& s) {
     if (s == pairing_) return;
     pairing_ = s;
@@ -330,11 +344,10 @@ void NowTp::setPairing(const std::string& s) {
 
 Check NowTp::pairing(bool accept) {
     if (!radio_ || !started_) return Check::fail(Status::NotAllowed, "NowTP is off");
-    if (pairingBusy_) return Check::fail(Status::Busy, "a pairing is in progress");
+    if (busy()) return Check::fail(Status::Busy, "a pairing is in progress");
     if (!(accept ? radio_->acceptPairing(kPairingMs) : radio_->pair(kPairingMs))) {
         return Check::fail(Status::Internal, "the pairing couldn't start");
     }
-    pairingBusy_ = true;
     setPairing(accept ? "Waiting for a node to join" : "Looking for a node with an open pairing window");
     return Check::ok();
 }
@@ -358,7 +371,6 @@ void NowTp::tick(uint32_t nowMs) {
         } else if (!enabled_ && started_) {
             radio_->end();
             started_ = false;
-            pairingBusy_ = false;
             setPairing("");
             refresh();
         }
@@ -400,7 +412,6 @@ void NowTp::event(const Event& e) {
             refresh();
             return;
         case Event::Type::NowTpPairing:
-            pairingBusy_ = false;
             setPairing(e.value == 0 ? "Paired with " + e.text : "Not paired: " + e.text);
             refresh();
             return;

@@ -80,6 +80,8 @@ private:
     void setPairing(const std::string& s);
     void applyTimeReference();
     tesser::Check pairing(bool accept);
+    // A pairing runs: stopping and forgetting the key wait for it.
+    bool busy() const;
 
     bool enabled_ = true;
     bool mountPeers_ = true;
@@ -97,7 +99,6 @@ private:
     bool started_ = false;
     bool begun_ = false;    // the first start, once the network settled
     bool restart_ = false;  // a change waits for a restart
-    bool pairingBusy_ = false;
     std::string pairing_;
     NowTpStatus status_;
     std::vector<Node> nodes_;

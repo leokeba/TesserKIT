@@ -524,6 +524,10 @@ public:
     // whose pairing window is open, or opens ours for `timeoutMs`.
     virtual bool pair(uint32_t timeoutMs) = 0;
     virtual bool acceptPairing(uint32_t timeoutMs) = 0;
+    // Whether a pairing still runs, until its NowTpPairing is posted:
+    // stopping the radio or forgetting the key then would pull NowTP from
+    // under it, and another can't start.
+    virtual bool pairing() { return false; }
     // Forgets the installation key, here and in storage, started or not:
     // unsecured again.
     virtual bool forgetKey() = 0;
