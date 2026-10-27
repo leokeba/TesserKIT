@@ -8,7 +8,7 @@ Builds examples/idf/full in each board's build (a profile, or its Ethernet
 variant: the boards file's "builds") against the sibling commits deps.lock
 pins, flashes each board after reading its MAC, waits for every board on the
 network, then runs the end-to-end suites (device, files, secure, ethernet,
-transfers, udp). After each suite it reads every board's lowest free heap
+transfers, udp, services, power, dmx). After each suite it reads every board's lowest free heap
 since boot (/sys/status/minHeap) and fails when one fell below its build's
 floor ("heapFloors", by build; "heapFloor" for the others, 8 KB; internal
 RAM, PSRAM apart): an out-of-memory abort is usually one allocation away
@@ -18,6 +18,18 @@ Phase 1).
 The boards file (test/hil_boards.example.json) names each board's role, MAC,
 serial port, address and build; a build for another chip than the ESP32 names
 it in "targets" ({"psram": "esp32s3"}), and esptool finds the chip itself.
+The services, power and dmx suites run when the boards file has what they
+need, and print a SKIP line saying what is missing otherwise:
+  - "broker": "<host>[:port]", an anonymous MQTT broker (`uvx --from amqtt
+    amqtt`) at an address both this machine and the boards reach: MQTT in
+    services (Art-Net runs without it), Home Assistant discovery in power;
+  - power runs Log and Sleep on the board with the role "power", else the
+    gateway; that board's "battery": true (its build has -DBATTERY_GPIO=<n>)
+    adds the battery checks;
+  - "dmx" on a board whose build has -DDMX_PROBE=<n> (and sACN: the classic
+    and psram profiles): true, or test/e2e_dmx.py's options as {"universes":
+    24, "fps": 44, "seconds": 20, "protocols": "artnet,sacn", "spread": true,
+    "noUi": true}. This machine is the sender.
 Waits are bounded; every step prints what it saw. Exit status: 0 when every
 suite passed and no board fell below the floor.
 """
@@ -181,13 +193,13 @@ def check_heap(boards, floors, after):
 def suite(name, cmd, boards, floors, work):
     logf = os.path.join(work, f'suite-{name}.log')
     rc = run(['uv', 'run', '-q', '--with', 'requests', '--with', 'websocket-client', '--with', 'pyserial',
-              'python', '-u'] + cmd, out=logf, timeout=1800)
+              '--with', 'paho-mqtt', 'python', '-u'] + cmd, out=logf, timeout=1800)
     with open(logf) as f:
         text = f.read()
     passed, failed = text.count('\nPASS'), text.count('\nFAIL')
     log(f'== {name}: exit {rc}, {passed} passed, {failed} failed ({logf})')
     for line in text.splitlines():
-        if line.startswith('FAIL'):
+        if line.startswith('FAIL') or line.startswith('SKIP'):
             log('  ' + line[:200])
     if rc:
         FAILURES.append(f'{name}: exit {rc}')
@@ -263,6 +275,45 @@ def main():
         suite('transfers', cmd, boards, floors, work)
     if len(boards) >= 2 and want('udp'):
         suite('udp', ['test/e2e_udp.py'] + [b['url'] for b in boards], boards, floors, work)
+    broker = cfg.get('broker')
+    # Art-Net needs nothing but the gateway; MQTT a broker.
+    if gw and want('services'):
+        cmd = ['test/e2e_services.py', gw['url']]
+        if broker:
+            cmd += ['--broker', broker]
+        else:
+            log('SKIP services/mqtt: no "broker" in the boards file')
+        suite('services', cmd, boards, floors, work)
+    # Log and Sleep on any board, discovery with a broker, the battery on a
+    # board built with a battery pin. The board sleeps for a few seconds.
+    power = by_role.get('power') or gw
+    if power and want('power'):
+        cmd = ['test/e2e_power.py', power['url']]
+        if broker:
+            cmd += ['--broker', broker]
+        else:
+            log('SKIP power/discovery: no "broker" in the boards file')
+        if power.get('battery'):
+            cmd += ['--battery']
+        else:
+            log(f'SKIP power/battery: {power["name"]} has no "battery" (a build with -DBATTERY_GPIO=<n>)')
+        suite('power', cmd, boards, floors, work)
+    # The DMX load test: this machine sends, the board's probe counts.
+    dmx = next((b for b in boards if b.get('dmx')), None)
+    if want('dmx'):
+        if dmx:
+            opts = dmx['dmx'] if isinstance(dmx['dmx'], dict) else {}
+            cmd = ['test/e2e_dmx.py', dmx['url']]
+            for key in ('universes', 'fps', 'seconds', 'protocols'):
+                if key in opts:
+                    cmd += [f'--{key}', str(opts[key])]
+            if opts.get('spread'):
+                cmd += ['--spread']
+            if opts.get('noUi'):
+                cmd += ['--no-ui']
+            suite('dmx', cmd, boards, floors, work)
+        else:
+            log('SKIP dmx: no board with "dmx" in the boards file (a build with -DDMX_PROBE=<n>)')
 
     log('== result')
     for f in FAILURES:

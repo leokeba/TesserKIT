@@ -3,11 +3,12 @@
 
 Usage:
   uv run --with paho-mqtt python test/e2e_power.py http://<ip> --broker <host>[:port]
-      [--only log|discovery|sleep|battery] [--user e2e --password e2e-pass]
+      [--only log|discovery|sleep|battery] [--battery] [--user e2e --password e2e-pass]
 
 The device runs examples/idf/full (Log, Sleep woken by GPIO 0, Mqtt with
 Home Assistant discovery), built with -DBATTERY_GPIO=<n> for the battery
-checks. The broker must accept anonymous clients (`uvx --from amqtt
+checks: they run when the device has /sys/battery, and --battery makes its
+absence a failure. The broker must accept anonymous clients (`uvx --from amqtt
 amqtt`); the device is pointed at it for the discovery checks and its MQTT
 settings are put back after. The device sleeps once, for a few seconds.
 """
@@ -303,6 +304,7 @@ def main():
     ap.add_argument('base')
     ap.add_argument('--broker', default=None)
     ap.add_argument('--only', choices=['log', 'discovery', 'sleep', 'battery'])
+    ap.add_argument('--battery', action='store_true', help='the build has a battery pin: fail without /sys/battery')
     ap.add_argument('--user')
     ap.add_argument('--password')
     args = ap.parse_args()
@@ -322,8 +324,10 @@ def main():
             test_discovery(dev, host, int(port or 1883))
         else:
             print('SKIP discovery: no --broker')
-    if args.only == 'battery' or (args.only is None and dev.value('/sys/battery')):
+    if args.only == 'battery' or (args.only is None and (args.battery or dev.value('/sys/battery'))):
         test_battery(dev)
+    elif args.only is None:
+        print('SKIP battery: no /sys/battery (build with -DBATTERY_GPIO=<n>)')
     if args.only in (None, 'sleep'):
         test_sleep(dev)
     print(f'DONE pass={PASS} fail={FAIL}')

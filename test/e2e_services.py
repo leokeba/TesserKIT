@@ -2,16 +2,19 @@
 """End-to-end checks of TesserKIT's ArtNet and Mqtt services on a device.
 
 Usage:
-  uv run --with paho-mqtt python test/e2e_services.py http://<ip> --broker <host>[:port] [--only artnet|mqtt]
+  uv run --with paho-mqtt python test/e2e_services.py http://<ip> [--broker <host>[:port]] [--only artnet|mqtt]
       [--user e2e --password e2e-pass]
 
-The device runs examples/idf/minimal built with -DWITH_ARTNET=1 -DWITH_MQTT=1
-and MQTT_URI pointing at the broker: Art-Net universe 0, channel 1 mapped to
+The device runs examples/idf/full (or examples/idf/minimal built with
+-DWITH_ARTNET=1 -DWITH_MQTT=1): Art-Net universe 0, channel 1 mapped to
 /led/brightness and channel 2 gating /led/on; Mqtt publishing /led and
-taking commands. The broker must accept anonymous clients (for instance
-`uvx --from amqtt amqtt`). The device restarts once. A device with an admin
-account (as test/e2e_device.py leaves it) is signed in to with --user and
---password.
+taking commands. Without --broker only the Art-Net checks run. The broker
+must accept anonymous clients (for instance `uvx --from amqtt amqtt`) and be
+reachable at the same address from this machine and from the device: a
+device not already connected to it (MQTT_URI in the example's secrets.h) is
+pointed at it, and its MQTT settings are put back after. The device restarts
+once. A device with an admin account (as test/e2e_device.py leaves it) is
+signed in to with --user and --password.
 """
 import argparse
 import json
@@ -137,8 +140,12 @@ def test_artnet(dev):
         ip = '.'.join(str(b) for b in reply[10:14])
         short = reply[26:44].split(b'\0')[0].decode()
         long_ = reply[44:108].split(b'\0')[0].decode()
-        check('artnet_poll_reply_fields', ip == dev.host and short == 'TesserKIT Demo' and long_.startswith('tesserkit-demo-'),
-              (ip, short, long_))
+        # The short name is the device's name (/sys/name, else its label and
+        # MAC end), cut to 17 characters; the long one its hostname.
+        name = dev.value('/sys/name') or ''
+        host = dev.value('/sys/network/host') or dev.value('/sys/network/hostname')
+        check('artnet_poll_reply_fields', ip == dev.host and short and (not name or short == name[:17]) and
+              long_ == host, (ip, short, long_, name, host))
     sock.close()
 
 
@@ -181,6 +188,16 @@ class Broker:
 def test_mqtt(dev, host, port):
     hostname = dev.value('/sys/network/host') or dev.value('/sys/network/hostname')
     pre = f'tesser/{hostname}'
+    # Pointed at the broker unless it already is (MQTT_URI), and put back after.
+    before = dev.value('/sys/mqtt') or {}
+    ip = socket.gethostbyname(host)
+    uri = f'mqtt://{ip}:{port}'
+    restore = None
+    if not (before.get('enabled') and before.get('uri') in (uri, f'mqtt://{host}:{port}', f'mqtt://{host}') and
+            not before.get('prefix')):
+        restore = {k: before[k] for k in ('uri', 'enabled', 'prefix') if k in before}
+        status = dev.request('PATCH', '/sys/mqtt', {'uri': uri, 'enabled': True, 'prefix': ''})[0]
+        check('mqtt_configured', status == 200, status)
     st = wait_for(lambda: (lambda v: v if v and v['connected'] else None)(dev.value('/sys/mqtt/status')), 15)
     check('mqtt_connected', st and st['connected'], st)
 
@@ -233,13 +250,15 @@ def test_mqtt(dev, host, port):
     time.sleep(3)
     check('mqtt_online_after_restart', b.wait(pre + '/status', 'online', since=t, timeout=60) == 'online',
           b.last(pre + '/status'))
+    if restore is not None:
+        check('mqtt_settings_restored', dev.request('PATCH', '/sys/mqtt', restore)[0] == 200)
     b.client.loop_stop()
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('url')
-    ap.add_argument('--broker', required=True)
+    ap.add_argument('--broker', help='host[:port] of an anonymous MQTT broker; without it, MQTT is skipped')
     ap.add_argument('--only', choices=['artnet', 'mqtt'])
     ap.add_argument('--user', default='e2e')
     ap.add_argument('--password', default='e2e-pass')
@@ -250,11 +269,16 @@ def main():
         if not check('login', status == 200, body):
             sys.exit(1)
         dev.token = body['token']
-    host, _, port = args.broker.partition(':')
+    if args.only == 'mqtt' and not args.broker:
+        sys.exit('--only mqtt needs --broker')
     if args.only in (None, 'artnet'):
         test_artnet(dev)
     if args.only in (None, 'mqtt'):
-        test_mqtt(dev, host, int(port or 1883))
+        if args.broker:
+            host, _, port = args.broker.partition(':')
+            test_mqtt(dev, host, int(port or 1883))
+        else:
+            print('SKIP mqtt: no --broker')
     print(f'DONE pass={PASS} fail={FAIL}')
     sys.exit(1 if FAIL else 0)
 
