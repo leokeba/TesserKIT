@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: library.json pins what deps.lock pins
+      - name: library.json and the workflows pin what deps.lock pins
         run: scripts/pin.sh --check
       # TesserAPI fetched at deps.lock's commit.
       - name: Build and run tests (ASan + UBSan)
@@ -110,12 +110,14 @@ jobs:
   # finds the devices nearby and serves this launcher from localhost, with
   # the flasher built in and the releases' images fetched from GitHub
   # (TesserUI's DESIGN.md section 9.7). The launcher links to the latest
-  # release's, so they are missing there until this job is done.
+  # release's, so they are missing there until this job is done. The workflow
+  # is TesserUI's at deps.lock's commit: scripts/pin.sh updates the ref below,
+  # and its --check (host-tests) fails when they differ.
   bridge:
     needs: firmware
     permissions:
       contents: write
-    uses: leokeba/TesserUI/.github/workflows/bridge.yml@main
+    uses: leokeba/TesserUI/.github/workflows/bridge.yml@6f00cd928506b0b5baf70aa4865d520d479a8732
     with:
       page: pages/index.html
       name: tesserkit-bridge

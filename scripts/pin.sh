@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Pins deps.lock, and library.json's dependencies with it, to the siblings'
-# commits: each one's HEAD in ../<repo>, or the commit given as repo=sha
-# (TesserAPI=390dd57). Refuses a commit GitHub doesn't have, since CI and
-# PlatformIO fetch from there. With --check, changes nothing and fails when
-# library.json and deps.lock disagree (release.yml runs it).
+# Pins deps.lock, and library.json's dependencies and the siblings' reusable
+# workflows (release.yml's `uses: leokeba/TesserUI/...@<sha>`) with it, to
+# the siblings' commits: each one's HEAD in ../<repo>, or the commit given as
+# repo=sha (TesserAPI=390dd57). Refuses a commit GitHub doesn't have, since
+# CI and PlatformIO fetch from there. With --check, changes nothing and fails
+# when library.json or a workflow disagrees with deps.lock (release.yml runs
+# it).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 lock=deps.lock
+workflows=(.github/workflows/*.yml)
 pins() { grep -E '^[^#[:space:]]+@[0-9a-f]{40}$' "$lock"; }
 
 check() {
@@ -19,12 +22,20 @@ check() {
             echo "library.json: ${repo#*/} is $url, deps.lock pins $sha" >&2
             ok=1
         fi
+        # A sibling's reusable workflow called at another ref (comments,
+        # which show callers the usage, aside).
+        while IFS= read -r line; do
+            if [ "${line##*@}" != "$sha" ]; then
+                echo "$line: deps.lock pins ${repo#*/} $sha" >&2
+                ok=1
+            fi
+        done < <(grep -HnE "^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*$repo/" "${workflows[@]}" || true)
     done < <(pins)
     return $ok
 }
 
 if [ "${1:-}" = "--check" ]; then
-    check && echo "library.json matches deps.lock"
+    check && echo "library.json and the workflows match deps.lock"
     exit
 fi
 
@@ -57,5 +68,6 @@ mv "$out" "$lock"
 while IFS=@ read -r repo sha; do
     url="https://github.com/$repo.git"
     perl -pi -e "s{\"\Q$url\E(#[0-9a-f]*)?\"}{\"$url#$sha\"}g" library.json
+    perl -pi -e "s{^(\s*(?:-\s*)?uses:\s*\Q$repo\E/[^@\s]+)\@\S+}{\$1\@$sha}" "${workflows[@]}"
 done < <(pins)
-check
+check && echo "library.json and the workflows match deps.lock"
