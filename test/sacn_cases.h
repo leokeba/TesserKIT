@@ -214,6 +214,163 @@ TEST(sacn_equal_priorities_keep_the_first) {
     CHECK(r.firsts() == std::vector<uint8_t>({1}));
 }
 
+TEST(sacn_refuses_a_fourth_source_while_three_are_live) {
+    SacnRig r;
+    r.sacn.sink(&r.sink);
+    r.sacn.universes({1});
+    CHECK(r.dev.begin());
+    r.run(40);
+    Data s[4];
+    auto send = [&](int i, uint8_t level) {
+        s[i].cid = static_cast<uint8_t>(i + 1);
+        s[i].channels = {level};
+        r.deliver(s[i]);
+        s[i].sequence++;
+        r.fake.udp.clockUs += 10000;
+    };
+    send(0, 1);
+    send(1, 2);
+    send(2, 3);
+    s[3].priority = 150;  // higher than all three, but no room for it
+    send(3, 4);
+    send(0, 5);
+    CHECK(r.firsts() == std::vector<uint8_t>({1, 5}));
+    // One of the three terminated: the fourth gets its place, and wins.
+    s[1].options = 0x40;
+    send(1, 6);
+    send(3, 7);
+    send(0, 8);
+    CHECK(r.firsts() == std::vector<uint8_t>({1, 5, 7}));
+    if (r.sink.frames.size() == 3) CHECK_EQ(r.sink.frames[2].f.priority, 150);
+}
+
+TEST(sacn_drops_a_source_silent_for_the_loss_timeout) {
+    SacnRig r;
+    r.sacn.sink(&r.sink);
+    r.sacn.universes({1});
+    CHECK(r.dev.begin());
+    r.run(40);
+    Data a, b;
+    a.cid = 1;
+    a.priority = 150;
+    b.cid = 2;
+    a.sequence = 10;
+    a.channels = {1};
+    r.deliver(a);
+    // 2.5 s exactly: still live, so the lower one stays out.
+    r.fake.udp.clockUs += 2500000;
+    b.channels = {2};
+    r.deliver(b);
+    b.sequence++;
+    // A millisecond more: lost, checked as this packet arrives.
+    r.fake.udp.clockUs += 1000;
+    b.channels = {3};
+    r.deliver(b);
+    b.sequence++;
+    CHECK(r.firsts() == std::vector<uint8_t>({1, 3}));
+    // The lost source back is a new one: its sequence starts again (5 is
+    // behind its last 10, which would be dropped as late), and its
+    // priority takes over at once.
+    r.fake.udp.clockUs += 10000;
+    a.sequence = 5;
+    a.channels = {4};
+    r.deliver(a);
+    b.channels = {5};
+    r.deliver(b);
+    CHECK(r.firsts() == std::vector<uint8_t>({1, 3, 4}));
+    r.run(20);
+    CHECK_EQ(r.value("/sys/sacn/status/sequenceErrors"), "0");
+    // Every source silent, nothing is checked until a packet arrives: the
+    // first back is a new source, taken with whatever sequence it resumes at.
+    r.fake.udp.clockUs += 10000000;
+    a.sequence = 1;
+    a.channels = {6};
+    r.deliver(a);
+    CHECK(r.firsts() == std::vector<uint8_t>({1, 3, 4, 6}));
+}
+
+TEST(sacn_stream_terminated_drops_its_source) {
+    SacnRig r;
+    r.sacn.sink(&r.sink);
+    r.sacn.universes({1});
+    CHECK(r.dev.begin());
+    r.run(40);
+    Data a, b;
+    a.cid = 1;
+    b.cid = 2;
+    a.sequence = 10;
+    a.channels = {1};
+    r.deliver(a);
+    b.channels = {2};
+    r.deliver(b);  // equal priority: the first keeps it
+    // A loser terminating changes nothing.
+    b.sequence = 1;
+    b.options = 0x40;
+    b.channels = {3};
+    r.deliver(b);
+    a.sequence = 11;
+    a.channels = {4};
+    r.deliver(a);
+    // The winner terminating: its packet's levels aren't delivered.
+    a.sequence = 12;
+    a.options = 0x40;
+    a.channels = {5};
+    r.deliver(a);
+    CHECK(r.firsts() == std::vector<uint8_t>({1, 4}));
+    // Back, it is a new source: its sequence starts again.
+    a.sequence = 3;
+    a.options = 0;
+    a.channels = {6};
+    r.deliver(a);
+    CHECK(r.firsts() == std::vector<uint8_t>({1, 4, 6}));
+    // A source never heard terminating: nothing.
+    Data c;
+    c.cid = 3;
+    c.options = 0x40;
+    c.channels = {7};
+    r.deliver(c);
+    a.sequence = 4;
+    a.channels = {8};
+    r.deliver(a);
+    CHECK(r.firsts() == std::vector<uint8_t>({1, 4, 6, 8}));
+    r.run(20);
+    CHECK_EQ(r.value("/sys/sacn/status/sequenceErrors"), "0");
+}
+
+TEST(sacn_sequence_numbers_wrap) {
+    SacnRig r;
+    r.sacn.sink(&r.sink);
+    r.sacn.universes({1});
+    CHECK(r.dev.begin());
+    r.run(40);
+    Data d;
+    uint8_t level = 0;
+    for (int seq : {253, 254, 255, 0, 1}) {  // E1.31 numbers 0 to 255: no gap at the wrap
+        d.sequence = static_cast<uint8_t>(seq);
+        d.channels = {++level};
+        r.deliver(d);
+    }
+    r.run(20);
+    CHECK(r.firsts() == std::vector<uint8_t>({1, 2, 3, 4, 5}));
+    CHECK_EQ(r.value("/sys/sacn/status/sequenceErrors"), "0");
+    // Late across the wrap: 250 is 7 behind 1, dropped.
+    d.sequence = 250;
+    d.channels = {6};
+    r.deliver(d);
+    // 21 behind (236, back across the wrap) is too far to be late: taken,
+    // as a jump.
+    d.sequence = static_cast<uint8_t>(1 - 21);
+    d.channels = {7};
+    r.deliver(d);
+    // 20 behind is the limit: taken too.
+    d.sequence = static_cast<uint8_t>(1 - 21 - 20);
+    d.channels = {8};
+    r.deliver(d);
+    r.run(20);
+    CHECK(r.firsts() == std::vector<uint8_t>({1, 2, 3, 4, 5, 7, 8}));
+    CHECK_EQ(r.value("/sys/sacn/status/sequenceErrors"), "3");  // the late one, two jumps
+}
+
 TEST(sacn_ignores_previews_other_start_codes_and_late_frames) {
     SacnRig r;
     r.sacn.sink(&r.sink);
