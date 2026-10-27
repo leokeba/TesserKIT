@@ -218,6 +218,63 @@ TEST(mqtt_restarts_on_new_settings) {
     CHECK_EQ(r.dev.api().subscriptionCount(), size_t(0));
 }
 
+TEST(mqtt_follows_a_rename) {
+    // The default prefix and client ID are the hostname's: a rename restarts
+    // the session, so the will and the "/set" subscriptions follow it, and
+    // Home Assistant's configs move to the new hostname.
+    struct Renamed : MqttRig {
+        tesserkit::System sys{dev};
+        Renamed() { mqtt.homeAssistant(true); }
+    } r;
+    r.online();
+    r.run(200);
+    std::string oldPre = r.pre(), oldHost = r.dev.hostname();
+    std::string oldConfig = "homeassistant/switch/" + oldHost + "/led_on/config";
+    CHECK(!r.fake.mqtt.retained[oldConfig].payload.empty());
+    CHECK_EQ(r.set("/sys/name", "\"Kitchen\"").status, Status::Ok);
+    CHECK_EQ(r.dev.hostname(), "kitchen");
+    r.run(1100);  // the settings settle
+    CHECK_EQ(r.fake.mqtt.sessions, 2);
+    CHECK_EQ(r.fake.mqtt.retained[oldPre + "/status"].payload, "offline");  // the old session's will
+    CHECK_EQ(r.fake.mqtt.config.clientId, "kitchen");
+    CHECK_EQ(r.fake.mqtt.config.willTopic, "tesser/kitchen/status");
+    CHECK_EQ(r.fake.mqtt.config.subscriptions[0], "tesser/kitchen/+/set");
+    r.fake.mqtt.connect();
+    r.settle();
+    r.fake.mqtt.message("tesser/kitchen/led/on/set", "true");
+    r.settle();
+    CHECK(r.on);
+    CHECK_EQ(r.fake.mqtt.last("tesser/kitchen/led/on/result"), "{\"status\":\"ok\",\"body\":true}");
+    CHECK_EQ(r.fake.mqtt.retained["tesser/kitchen/led/on"].payload, "true");
+    CHECK_EQ(r.fake.mqtt.retained[oldConfig].payload, "");  // emptied: removed from Home Assistant
+    std::string sw = r.fake.mqtt.retained["homeassistant/switch/kitchen/led_on/config"].payload;
+    CHECK_EQ(at(sw, "unique_id"), "\"kitchen_led_on\"");
+    CHECK_EQ(at(sw, "command_topic"), "\"tesser/kitchen/led/on/set\"");
+}
+
+TEST(mqtt_rename_with_its_own_prefix) {
+    // With a prefix and a client ID of its own, the session stays: only
+    // discovery, whose topics and ids have the hostname, moves.
+    struct Renamed : MqttRig {
+        tesserkit::System sys{dev};
+        Renamed() { mqtt.homeAssistant(true).prefix("home/lamp"); }
+    } r;
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.set("/sys/mqtt/clientId", "\"lamp\"").status, Status::Ok);
+    r.run(1100);
+    r.fake.mqtt.connect();
+    r.settle();
+    int sessions = r.fake.mqtt.sessions;
+    std::string oldConfig = "homeassistant/switch/" + r.dev.hostname() + "/led_on/config";
+    CHECK(!r.fake.mqtt.retained[oldConfig].payload.empty());
+    CHECK_EQ(r.set("/sys/name", "\"Kitchen\"").status, Status::Ok);
+    r.run(1100);
+    CHECK_EQ(r.fake.mqtt.sessions, sessions);
+    CHECK_EQ(r.fake.mqtt.retained[oldConfig].payload, "");
+    std::string sw = r.fake.mqtt.retained["homeassistant/switch/kitchen/led_on/config"].payload;
+    CHECK_EQ(at(sw, "command_topic"), "\"home/lamp/led/on/set\"");
+}
+
 TEST(mqtt_ignores_an_old_session) {
     MqttRig r;
     CHECK(r.dev.begin());

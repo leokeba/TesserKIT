@@ -232,6 +232,7 @@ void Mqtt::start() {
     commander_.reset(new tesser::LocalClient(dev_.api()));
     commander_->setAccess(Access::User);  // the broker's clients aren't the device's admins
     settingsGen_ = settingsGen();
+    hostnameGen_ = dev_.hostnameGeneration();
     publishGen_ = publishNode_->generation();
     discoveryGen_ = 0;
     for (const tesser::Node* n : discoverySettings_) discoveryGen_ += n->generation();
@@ -246,6 +247,21 @@ void Mqtt::tick(uint32_t nowMs) {
         settingsGen_ = gen;
         restart_ = true;
         changedAtMs_ = nowMs;
+    }
+    // A new hostname (a rename through /sys/name, or its own setting): the
+    // default prefix and client ID follow it, and so do the session's will
+    // and subscriptions, which only a new session changes. Discovery's
+    // topics and ids always have it: announced again, the old configs
+    // emptied (discover()).
+    uint32_t hostGen = dev_.hostnameGeneration();
+    if (hostGen != hostnameGen_) {
+        hostnameGen_ = hostGen;
+        if (prefix_.empty() || clientId_.empty()) {
+            restart_ = true;
+            changedAtMs_ = nowMs;
+        } else if (connected_) {
+            discover();
+        }
     }
     if (restart_ && nowMs - changedAtMs_ >= kSettleMs) {
         restart_ = false;

@@ -99,6 +99,7 @@ private:
     std::vector<tesser::Node*> settings_;  // a change restarts the session
     tesser::Node* publishNode_ = nullptr;
     uint32_t settingsGen_ = 0, publishGen_ = 0;
+    uint32_t hostnameGen_ = 0;  // Device::hostnameGeneration(): topics and ids follow it
     uint32_t changedAtMs_ = 0;
     bool restart_ = false;  // settings changed: restart once they settle
     bool tried_ = false;
