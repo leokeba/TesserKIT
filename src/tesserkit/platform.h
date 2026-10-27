@@ -455,6 +455,12 @@ public:
     // Stops the stack and gives its memory back, dropping the client. False
     // if the transport can't (advertise(false) is what's left).
     virtual bool end() = 0;
+    // Before the first begin(), for a device that boots with Bluetooth off:
+    // gives the memory the build sets aside for Bluetooth from the start (on
+    // ESP-IDF, the controller's reserved DRAM and the stack's static data)
+    // to the heap. begin() then fails until the next restart. False if the
+    // build can't.
+    virtual bool release() { return false; }
     // Stops advertising and drops the client, or advertises again. False if
     // the transport can't do it while running (it then applies at the next
     // boot).

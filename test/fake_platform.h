@@ -528,9 +528,12 @@ struct Ble : tesserkit::Ble {
     bool started = false, advertising = false, connectedNow = false;
     bool runtime = true;     // advertise() and name() work while running
     bool releasable = true;  // end() gives the stack's memory back
+    bool bootRelease = true; // release() gives its memory to the heap (ESP-IDF)
+    bool released = false;
     std::string advertised, clientAddress;
     int begins = 0, ends = 0;
     bool begin(tesser::Api&, const char* name) override {
+        if (released) return false;  // as on ESP-IDF: until a restart
         begins++;
         started = advertising = true;
         advertised = name;
@@ -540,6 +543,11 @@ struct Ble : tesserkit::Ble {
         if (!releasable) return false;
         ends++;
         started = advertising = connectedNow = false;
+        return true;
+    }
+    bool release() override {
+        if (!bootRelease || begins) return false;
+        released = true;
         return true;
     }
     bool advertise(bool on) override {

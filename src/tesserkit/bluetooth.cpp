@@ -25,7 +25,14 @@ void Bluetooth::describe(tesser::Object& o) {
     enabledNode_ = &o.value("enabled", enabled_).persist();
     o.value("name", [this] { return name_; }).doc("What the browser's device chooser shows: the hostname");
     restartNode_ = &o.value("restartNeeded", [this] { return restart_; }).ui("hidden");
-    o.value("restartWarning", "Bluetooth can't be switched off while running: the change applies after a restart.")
+    // Which of the two: released_ is decided at boot and stays.
+    o.value("restartWarning",
+            [this] {
+                return std::string(released_ ? "Bluetooth was off at boot, and its memory went to the rest of the "
+                                               "firmware: switching it on applies after a restart."
+                                             : "Bluetooth can't be switched off while running: the change applies "
+                                               "after a restart.");
+            })
         .label("Restart needed")
         .ui("style", "warning")
         .ui("visibleWhen", "restartNeeded=true");
@@ -41,12 +48,19 @@ void Bluetooth::start() {
     ble_ = p.ble;
     if (!ble_) tesser::logError("tesserkit: Bluetooth has no Bluetooth LE in this build");
     enabledGen_ = enabledNode_->generation();
+    // Off at boot: the memory the build sets aside for Bluetooth (about
+    // 56 KB of DRAM on a classic ESP32, plus the stack's static data) goes to
+    // the heap, so a device that doesn't use it doesn't pay for it. Switching
+    // it on then waits for a restart.
+    if (!enabled_ && ble_ && ble_->release()) released_ = true;
     apply();
 }
 
 void Bluetooth::apply() {
     if (!ble_) return;
-    if (enabled_ && !started_) {
+    if (enabled_ && released_) {
+        // Nothing to start with: the restart warning says so.
+    } else if (enabled_ && !started_) {
         name_ = dev_.hostname();
         started_ = advertising_ = ble_->begin(dev_.api(), name_.c_str());
         if (!started_) tesser::logError("tesserkit: Bluetooth didn't start");
@@ -61,7 +75,7 @@ void Bluetooth::apply() {
         }
     }
     // What runs isn't what is asked for: only a restart applies it.
-    bool restart = started_ && enabled_ != advertising_;
+    bool restart = (started_ && enabled_ != advertising_) || (released_ && enabled_);
     if (restart != restart_) {
         restart_ = restart;
         restartNode_->changed();

@@ -81,8 +81,39 @@ TEST(bluetooth_off_without_release_stops_advertising) {
     CHECK_EQ(r.fake.ble.begins, 1);
 }
 
-TEST(bluetooth_off_at_boot_starts_when_enabled) {
+TEST(bluetooth_off_at_boot_gives_its_memory_to_the_heap) {
     BluetoothRig r;
+    r.bt.enable(false);
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK(r.fake.ble.released);
+    CHECK(!r.fake.ble.started);
+    CHECK_EQ(r.value("/sys/bluetooth/restartNeeded"), "false");
+    // Switched on: nothing to start with until a restart, and the warning
+    // says why.
+    CHECK_EQ(r.set("/sys/bluetooth/enabled", "true").status, Status::Ok);
+    r.settle();
+    CHECK(!r.fake.ble.started);
+    CHECK_EQ(r.fake.ble.begins, 0);
+    CHECK_EQ(r.value("/sys/bluetooth/restartNeeded"), "true");
+    CHECK(r.value("/sys/bluetooth/restartWarning").find("off at boot") != std::string::npos);
+    // Off again: nothing waits.
+    CHECK_EQ(r.set("/sys/bluetooth/enabled", "false").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.value("/sys/bluetooth/restartNeeded"), "false");
+}
+
+TEST(bluetooth_on_at_boot_keeps_its_memory) {
+    BluetoothRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK(!r.fake.ble.released);
+    CHECK(r.value("/sys/bluetooth/restartWarning").find("switched off while running") != std::string::npos);
+}
+
+TEST(bluetooth_off_at_boot_without_release_starts_when_enabled) {
+    BluetoothRig r;
+    r.fake.ble.bootRelease = false;  // Arduino's library
     r.bt.enable(false);
     CHECK(r.dev.begin());
     r.settle();
@@ -91,6 +122,7 @@ TEST(bluetooth_off_at_boot_starts_when_enabled) {
     r.settle();
     CHECK(r.fake.ble.started);
     CHECK_EQ(r.fake.ble.begins, 1);
+    CHECK_EQ(r.value("/sys/bluetooth/restartNeeded"), "false");
 }
 
 TEST(bluetooth_without_runtime_control_waits_for_a_restart) {

@@ -89,7 +89,7 @@ if(ESP_PLATFORM)
         INCLUDE_DIRS "src"
         REQUIRES esp_http_server esp_wifi esp_netif nvs_flash
         PRIV_REQUIRES esp_event esp_timer app_update esp_http_client mbedtls lwip mdns mqtt espcoredump joltwallet__littlefs
-                      esp_partition spi_flash efuse esp_app_format esp_eth esp_adc ${TESSERKIT_DRIVER_REQS})
+                      esp_partition spi_flash efuse esp_app_format esp_eth esp_adc bt ${TESSERKIT_DRIVER_REQS})
     if(NOT CONFIG_TESSERKIT_MDNS)
         target_compile_definitions(${COMPONENT_LIB} PRIVATE TESSERKIT_NO_MDNS=1)
     endif()

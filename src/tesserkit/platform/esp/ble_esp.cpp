@@ -21,6 +21,9 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#if !defined(ARDUINO)
+#include "esp_bt.h"
+#endif
 
 namespace tesserkit {
 
@@ -38,6 +41,7 @@ public:
         if (xTaskCreate(pollTask, "tk_ble", 6144, ble_.get(), 4, nullptr) != pdPASS) return false;
         return true;
 #else
+        if (released_) return false;  // its memory is the heap's now
         if (ble_->begun()) return true;
         return ble_->begin(name) == ESP_OK;
 #endif
@@ -47,10 +51,33 @@ public:
         // The BLE library leaks its service at each deinit: stop() instead.
         return false;
 #else
-        // NimBLE's host and the controller, about 45 KB on a classic ESP32.
+        // NimBLE's host and the controller, about 60 KB on a classic ESP32
+        // (TesserAPI's measurement: 53 KB free with it on, 113 KB after).
         // It doesn't wait for the request task: fine under the API lock, and
         // when the client switching it off is a Bluetooth one.
         return ble_ && ble_->end() == ESP_OK;
+#endif
+    }
+    bool release() override {
+#if defined(ARDUINO)
+        // Arduino's core releases it itself when no Bluetooth library is
+        // linked (btInUse()); with one, its library may touch the stack's
+        // static data from the start.
+        return false;
+#else
+        if (released_) return true;
+        if (ble_) return false;  // begun once: NimBLE's data is in use
+        // The controller's DRAM (CONFIG_BTDM_RESERVE_DRAM on the classic
+        // ESP32, about 56 KB) and the static data of the controller and
+        // NimBLE. The classic ESP32's controller does both Bluetooths: BTDM
+        // releases both, and the host's data with them; the others' do BLE.
+#if CONFIG_IDF_TARGET_ESP32
+        esp_err_t err = esp_bt_mem_release(ESP_BT_MODE_BTDM);
+#else
+        esp_err_t err = esp_bt_mem_release(ESP_BT_MODE_BLE);
+#endif
+        released_ = err == ESP_OK;
+        return released_;
 #endif
     }
     bool advertise(bool on) override {
@@ -82,6 +109,9 @@ private:
 #endif
 
     std::unique_ptr<tesser::BleTransport> ble_;
+#if !defined(ARDUINO)
+    bool released_ = false;  // release(): begin() can't until a restart
+#endif
 };
 
 }  // namespace

@@ -33,6 +33,7 @@ private:
     bool started_ = false;      // the stack runs
     bool advertising_ = false;  // what was last applied
     bool restart_ = false;      // a change waits for a restart
+    bool released_ = false;     // off at boot, its memory given to the heap: on waits for a restart
     std::string name_;          // the name advertised
     bool connected_ = false;
     std::string client_;
