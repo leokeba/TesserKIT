@@ -293,7 +293,8 @@ public:
 
     // Used by services.
     // Queues a platform event for the device's task. Thread-safe. The queue
-    // holds 32 events, at most 8 of them MqttMessage (the oldest is dropped
+    // holds 32 events (its room grown from TesserAPI's byte budget: refused,
+    // the event is dropped and counted as below), at most 8 of them MqttMessage (the oldest is dropped
     // for a newer one, and for any other event when the queue is full), and
     // one PeersChanged, one NowTpPeers and one DnsEmpty. Drops are logged by
     // the task.
@@ -414,6 +415,10 @@ private:
     static constexpr size_t kMaxMqttMessages = 8;
     tesser::Mutex eventsMutex_;  // never held with the API lock
     std::vector<Event> events_;  // and the counters below, under eventsMutex_
+    // The device task's: swapped with events_ each period, and cleared, not
+    // freed, so neither vector loses its capacity and post() seldom grows
+    // one (in another task, from the byte budget).
+    std::vector<Event> eventsTaken_;
     size_t mqttQueued_ = 0;      // MqttMessage events in events_
     uint32_t dropped_ = 0, mqttDropped_ = 0;
     uint32_t droppedLogged_ = 0, mqttDroppedSeen_ = 0;  // the device's task's copies

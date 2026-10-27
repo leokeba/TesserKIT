@@ -402,11 +402,10 @@ void Device::loop() {
     if (!started_) return;
     uint32_t now = static_cast<uint32_t>(core().uptimeMs());
     lastNowMs_ = now;
-    std::vector<Event> events;
     uint32_t dropped, mqttDropped;
     {
         tesser::MutexGuard guard(eventsMutex_);
-        events.swap(events_);
+        eventsTaken_.swap(events_);  // events_ gets the emptied one's capacity
         mqttQueued_ = 0;
         dropped = dropped_;
         mqttDropped = mqttDropped_;
@@ -426,9 +425,10 @@ void Device::loop() {
         tesser::Lock lock(api_);
         // Before api_.poll() below can save anything.
         if (resetWanted_.exchange(false)) resetNow();
-        for (const Event& e : events) {
+        for (const Event& e : eventsTaken_) {
             for (Service* s = services_; s; s = s->next_) s->event(e);
         }
+        eventsTaken_.clear();  // its capacity kept for the next swap
         for (Service* s = services_; s; s = s->next_) s->tick(now);
         updateState(now);
         // Under the lock: the hostname and secure mode change in setters and
@@ -511,6 +511,26 @@ void Device::post(Event e) {
             dropped_++;
         }
         return;
+    }
+    if (events_.size() == events_.capacity()) {
+        // Grown here, in a platform task (esp_event's, lwIP's, MQTT's), where
+        // a plain allocation on an exhausted heap aborts: from the byte
+        // budget, or the event is dropped. Rare: the device's task keeps
+        // both vectors' capacity.
+        size_t cap = events_.capacity() ? 2 * events_.capacity() : 8;
+        if (cap > kMaxEvents) cap = kMaxEvents;
+        size_t bytes = cap * sizeof(Event);
+        tesser::Reservation held = tesser::reserveBytes(bytes, true, tesser::mallocPool(bytes));
+        if (!held) {
+            if (mqtt) {
+                mqttDropped_++;
+            } else {
+                dropped_++;
+            }
+            return;
+        }
+        events_.reserve(cap);
+        held.settle();
     }
     if (mqtt) mqttQueued_++;
     events_.push_back(std::move(e));

@@ -112,6 +112,40 @@ TEST(device_event_queue_bounds_mqtt_messages) {
     CHECK_EQ(rec.got.size(), size_t(32));
 }
 
+// The queue's room grows from TesserAPI's byte budget, in the platform's
+// tasks: refused, the event is dropped (and counted) rather than the device
+// aborting. Grown once, the room stays: the device's task keeps it.
+TEST(device_event_queue_grows_from_the_budget) {
+    using T = tesserkit::Event::Type;
+    rig::Rig r;
+    Recorder rec{r.dev};
+    CHECK(r.dev.begin());
+    r.step();
+    rec.got.clear();
+    uint32_t dropped = r.dev.mqttMessagesDropped();
+    {
+        rig::BudgetLimit limit(1);  // nothing to give
+        for (int i = 0; i < 4; i++) r.dev.post(event(T::MqttMessage, 1, "x"));
+    }
+    r.step();
+    CHECK(rec.got.size() < 4);
+    CHECK(r.dev.mqttMessagesDropped() > dropped);
+    // Room enough for 32, in both of the task's vectors.
+    for (int round = 0; round < 2; round++) {
+        for (int i = 0; i < 32; i++) r.dev.post(event(T::ApClients, i));
+        r.step();
+    }
+    rec.got.clear();
+    {
+        rig::BudgetLimit limit(1);
+        for (int round = 0; round < 2; round++) {
+            for (int i = 0; i < 32; i++) r.dev.post(event(T::ApClients, i));
+            r.step();
+        }
+    }
+    CHECK_EQ(rec.got.size(), size_t(64));  // no growth needed
+}
+
 TEST(device_hostname_from_label_and_mac) {
     SysRig r;
     CHECK(r.dev.begin());
