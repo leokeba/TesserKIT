@@ -493,7 +493,7 @@ struct NowTpConfig {
 
 struct NowTpPeer {
     std::string name;
-    std::string mac;      // "aa:bb:cc:dd:ee:ff"
+    uint8_t mac[6] = {};
     int8_t rssi = 0;
     uint8_t channel = 0;
     bool otherChannel = false;  // not on ours: its access point holds it elsewhere, out of reach
@@ -525,7 +525,8 @@ public:
     // Events: NowTpPeers, NowTpChannel, NowTpPairing.
     virtual bool begin(tesser::Api& api, tesser::Object* peers, const NowTpConfig& config, EventSink sink) = 0;
     virtual void end() = 0;
-    virtual std::vector<NowTpPeer> peers() = 0;
+    // Calls `each` with every node nearby, without a copy of the list.
+    virtual void peers(const std::function<void(const NowTpPeer&)>& each) = 0;
     virtual NowTpStatus status() = 0;
     // Changes the channel ESP-NOW uses when nothing fixes it, telling the
     // nodes nearby; false if an access point fixes it.

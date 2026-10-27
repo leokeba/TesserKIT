@@ -85,6 +85,53 @@ TEST(nowtp_lists_the_nodes_nearby) {
     CHECK_EQ(r.get("/sys/nowtp/nodes/10:52:1c:75:f3:7c").status, Status::NotFound);
 }
 
+// The list is updated in place each second, and notified (whole, to every
+// subscriber) when a node comes, goes or changes, or its signal moves by
+// 10 dB: not every second for the signal's jitter.
+TEST(nowtp_nodes_notify_on_change_not_every_second) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    r.fake.nowtp.found("lamp-f37c", "10:52:1c:75:f3:7c");
+    r.settle();
+    const tesser::Node* list = tesserkit::findNode(r.dev.api(), "/sys/nowtp/nodes");
+    CHECK(list != nullptr);
+    if (!list) return;
+    CHECK_EQ(at(r.get("/sys/nowtp/nodes").body, "0/mac"), "\"10:52:1c:75:f3:7c\"");
+    CHECK_EQ(r.value("/sys/nowtp/nodes/10:52:1c:75:f3:7c/rssi"), "-50");
+    uint32_t gen = list->generation();
+    // A few dB each second: read as it is, not notified.
+    for (int8_t rssi : {-54, -47, -58, -52}) {
+        r.fake.nowtp.nearby[0].rssi = rssi;
+        r.run(1100);
+        CHECK_EQ(list->generation(), gen);
+    }
+    CHECK_EQ(r.value("/sys/nowtp/nodes/10:52:1c:75:f3:7c/rssi"), "-52");
+    // 10 dB from what was last notified (-50): notified.
+    r.fake.nowtp.nearby[0].rssi = -61;
+    r.run(1100);
+    CHECK(list->generation() != gen);
+    gen = list->generation();
+    r.fake.nowtp.nearby[0].rssi = -55;  // 6 dB from -61
+    r.run(1100);
+    CHECK_EQ(list->generation(), gen);
+    // Paired: a change of what it is, notified at once.
+    r.fake.nowtp.nearby[0].authenticated = true;
+    r.run(1100);
+    CHECK(list->generation() != gen);
+    CHECK_EQ(r.value("/sys/nowtp/nodes/10:52:1c:75:f3:7c/authenticated"), "true");
+    // Another node comes, and keeps its place after the first.
+    gen = list->generation();
+    r.fake.nowtp.found("sensor", "aa:bb:cc:dd:ee:01", false);
+    r.run(1100);
+    CHECK(list->generation() != gen);
+    CHECK_EQ(at(r.get("/sys/nowtp/nodes").body, "1/name"), "\"sensor\"");
+    // Nothing moves: nothing notified.
+    gen = list->generation();
+    r.run(3300);
+    CHECK_EQ(list->generation(), gen);
+}
+
 TEST(nowtp_keeps_the_station_awake_by_default) {
     // ESP-NOW loses frames while the modem sleeps: beside NowTp, Network's
     // power save defaults to none; the user's setting and the

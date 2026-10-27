@@ -10,6 +10,7 @@
 #if defined(TESSER_HAVE_NOWTP)
 
 #include <stdio.h>
+#include <string.h>
 
 #include <atomic>
 #include <functional>
@@ -145,12 +146,11 @@ public:
         radio_.end();
     }
 
-    std::vector<NowTpPeer> peers() override {
-        std::vector<NowTpPeer> out;
+    void peers(const std::function<void(const NowTpPeer&)>& each) override {
+        NowTpPeer n;  // one, refilled: its name keeps its capacity
         for (const nowtp::PeerInfo& p : radio_.peers()) {
-            NowTpPeer n;
             n.name = p.name;
-            n.mac = macString(p.mac);
+            memcpy(n.mac, p.mac.bytes, sizeof(n.mac));
             n.rssi = p.rssi;
             n.channel = p.channel;
             n.otherChannel = p.otherChannel;
@@ -158,9 +158,8 @@ public:
             uint32_t hash;
             n.tesser = tesser::NowTpTransport::parseAdvertisement(p.metadata, port, hash);
             n.authenticated = p.authenticated;
-            out.push_back(n);
+            each(n);
         }
-        return out;
     }
 
     NowTpStatus status() override {

@@ -1,5 +1,10 @@
 #include "tesserkit/nowtp.h"
 
+#include <stdio.h>
+#include <string.h>
+
+#include <algorithm>
+
 #include "tesserkit/limits.h"
 #include "tesserkit/peers.h"
 
@@ -23,6 +28,12 @@ Check checkTimeReference(const std::string& v) {
         mac = i % 3 == 2 ? c == ':' : (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
     }
     return mac ? Check::ok() : Check::fail(Status::InvalidValue, "auto, this, or a node's MAC (aa:bb:cc:dd:ee:ff)");
+}
+
+std::string macText(const uint8_t* m) {
+    char b[18];
+    snprintf(b, sizeof(b), "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+    return b;
 }
 
 }  // namespace
@@ -157,7 +168,7 @@ void NowTp::describe(tesser::Object& o) {
     nodesNode_ = &o.list("nodes", nodes_,
                          [](tesser::Object& e, Node& n) {
                              e.value("name", static_cast<const std::string&>(n.name));
-                             e.value("mac", static_cast<const std::string&>(n.mac)).label("MAC");
+                             e.value("mac", [&n] { return macText(n.mac); }).label("MAC");
                              e.value("rssi", static_cast<const int32_t&>(n.rssi)).unit("dBm").label("Signal");
                              e.value("channel", static_cast<const uint8_t&>(n.channel));
                              // Its access point holds it on another channel:
@@ -303,29 +314,44 @@ void NowTp::refresh() {
     status_ = std::move(st);
     if (changed) statusNode_->changed();
     if (timeChanged) timeNode_->changed();
-    std::vector<Node> nodes;
+    // The list in place: no copy of it each second, and the signal, which
+    // moves most seconds, notifies only past kRssiStepDb.
+    for (Node& n : nodes_) n.seen = false;
+    bool listChanged = false;
     if (started_) {
-        for (const NowTpPeer& p : radio_->peers()) {
-            if (nodes.size() >= kMaxNodes) break;
-            Node n;
-            n.name = p.name;
-            n.mac = p.mac;
-            n.rssi = p.rssi;
-            n.channel = p.channel;
-            n.otherChannel = p.otherChannel;
-            n.tesser = p.tesser;
-            n.authenticated = p.authenticated;
-            nodes.push_back(n);
-        }
+        radio_->peers([this, &listChanged](const NowTpPeer& p) {
+            Node* n = nullptr;
+            for (Node& m : nodes_) {
+                if (memcmp(m.mac, p.mac, sizeof(m.mac)) == 0) n = &m;
+            }
+            if (!n) {
+                if (nodes_.size() >= kMaxNodes) return;
+                nodes_.emplace_back();
+                n = &nodes_.back();
+                memcpy(n->mac, p.mac, sizeof(n->mac));
+                n->rssiShown = p.rssi;
+                listChanged = true;
+            }
+            n->seen = true;
+            if (n->name != p.name || n->channel != p.channel || n->otherChannel != p.otherChannel ||
+                n->tesser != p.tesser || n->authenticated != p.authenticated) {
+                n->name = p.name;
+                n->channel = p.channel;
+                n->otherChannel = p.otherChannel;
+                n->tesser = p.tesser;
+                n->authenticated = p.authenticated;
+                listChanged = true;
+            }
+            n->rssi = p.rssi;
+            int32_t moved = n->rssi - n->rssiShown;
+            if (moved >= kRssiStepDb || -moved >= kRssiStepDb) listChanged = true;
+        });
     }
-    bool same = nodes.size() == nodes_.size();
-    for (size_t i = 0; same && i < nodes.size(); i++) {
-        const Node &a = nodes[i], &b = nodes_[i];
-        same = a.name == b.name && a.mac == b.mac && a.rssi == b.rssi && a.channel == b.channel &&
-               a.otherChannel == b.otherChannel && a.tesser == b.tesser && a.authenticated == b.authenticated;
-    }
-    if (!same) {
-        nodes_ = std::move(nodes);
+    size_t before = nodes_.size();
+    nodes_.erase(std::remove_if(nodes_.begin(), nodes_.end(), [](const Node& n) { return !n.seen; }), nodes_.end());
+    if (nodes_.size() != before) listChanged = true;
+    if (listChanged) {
+        for (Node& n : nodes_) n.rssiShown = n.rssi;
         nodesNode_->changed();
     }
 }

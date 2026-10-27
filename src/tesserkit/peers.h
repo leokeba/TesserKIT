@@ -85,14 +85,19 @@ protected:
     void event(const Event& e) override;
 
 private:
-    // An element of /sys/peers/status.
+    // An element of /sys/peers/status, updated in place each refresh.
     struct State {
-        std::string id, name;
+        std::string id, name;  // id: 12 hex digits, within the string's own buffer
         bool online = false;
+        bool seen = false;   // in this refresh
         std::string route;   // the transport in use
         std::string routes;  // every transport that reaches it, in the order tried
         uint32_t rtt = 0;    // ms, smoothed, on the route in use (0: no call yet)
         int32_t heard = -1;  // s since the device was last heard (-1: never)
+        // As the list was last notified: rtt and heard notify it only when
+        // they move far from these.
+        uint32_t rttShown = 0;
+        int32_t heardShown = -1;
         std::string access;  // the level the node grants this device's token ("" without one)
         std::string signIn;  // how signing in went: "signed in as show", "wrong name or password"
     };
@@ -109,9 +114,10 @@ private:
 
     void refresh(uint32_t nowMs);
     // Signs in to `node` (its id) when needed; its outcome in `state`, if
-    // the status is being built.
-    void signIn(tesser::RemoteNode& node, const PeerSettings* settings, uint32_t nowMs, const std::string& id,
+    // the status is being updated: true if that changed it.
+    bool signIn(tesser::RemoteNode& node, const PeerSettings* settings, uint32_t nowMs, const std::string& id,
                 State* state);
+    static bool setSignIn(State& state, const char* text, const char* access);
     void login(const std::string& nodeName, const std::string& id, const std::string& user,
                const std::string& password);
     SignIn& signInFor(const std::string& id);

@@ -2,6 +2,8 @@
 
 #include <stdio.h>
 
+#include <algorithm>
+
 #include "tesser/budget.h"
 #include "tesser/client.h"
 #include "tesser/remote.h"
@@ -81,6 +83,18 @@ Check checkOrder(const std::string& v) {
                                 : Check::fail(Status::InvalidValue,
                                               "routes in order: udp/ethernet, udp/wifi, udp/ap, udp (any), nowtp");
 }
+
+// The round trip moved far enough to notify: by half of what was shown, and
+// at least 20 ms, or to or from none.
+bool rttMoved(uint32_t shown, uint32_t now) {
+    if ((shown == 0) != (now == 0)) return true;
+    uint32_t moved = shown > now ? shown - now : now - shown;
+    return moved >= std::max<uint32_t>(shown / 2, 20);
+}
+
+// Seconds since heard, in the steps a subscriber is told of: never, under
+// 5 s (heard as usual), 30 s, 2 min, 10 min, longer.
+int heardBucket(int32_t s) { return s < 0 ? 0 : s < 5 ? 1 : s < 30 ? 2 : s < 120 ? 3 : s < 600 ? 4 : 5; }
 
 std::string namesOf(const std::vector<RemoteNode::Route>& routes) {
     std::string s;
@@ -306,18 +320,24 @@ void Peers::refresh(uint32_t nowMs) {
     refreshedMs_ = nowMs;
     dirty_ = false;
     declare();
-    // The status is rebuilt from the heap: reserved first, so a short heap
-    // skips it (the previous one stands, tried again at the next period)
-    // rather than aborting in the device's task (DEVKIT-V3 as a gateway,
-    // 2026-10-15). Routes and sign-ins below go on regardless.
+    // The status is updated from the heap (a node new to it, a route's
+    // text): reserved first, so a short heap skips it (the previous one
+    // stands, tried again at the next period) rather than aborting in the
+    // device's task (DEVKIT-V3 as a gateway, 2026-10-15). Routes and sign-ins
+    // below go on regardless.
     size_t count = 0;
     for (tesser::Node* c = peers_->first(); c && count < kMaxNodes; c = c->next()) {
         if (c->type() == tesser::NodeType::Remote) count++;
     }
     tesser::Reservation held = tesser::reserveBytes(count * kStateBytes);
     bool status = static_cast<bool>(held);
-    std::vector<State> states;
-    if (status) states.reserve(count);
+    // In place, by name: the round trip and the time since a node was heard
+    // move most seconds, and notify the list (whole, to every subscriber)
+    // only when they move far (rttMoved(), heardBucket()).
+    if (status) {
+        for (State& st : states_) st.seen = false;
+    }
+    bool listChanged = false;
     size_t shown = 0;
     for (tesser::Node* c = peers_->first(); c; c = c->next()) {
         if (c->type() != tesser::NodeType::Remote) continue;
@@ -331,53 +351,72 @@ void Peers::refresh(uint32_t nowMs) {
         if (n->routeOrder() != order) n->routeOrder(order);
         if (shown >= kMaxNodes) continue;
         shown++;
+        std::string id = idOf(device);  // 12 characters: no allocation
         if (!status) {
-            // No room for the status: none of it is built (its strings, the
+            // No room for the status: none of it is updated (its strings, the
             // routes' copy), but sign-ins go on.
-            if (device.length) signIn(*n, s, nowMs, idOf(device), nullptr);
+            if (device.length) signIn(*n, s, nowMs, id, nullptr);
             continue;
         }
-        State st;
-        st.id = idOf(device);
-        st.name = n->name();
-        st.online = n->online();
+        State* st = nullptr;
+        for (State& old : states_) {
+            if (old.name == n->name()) st = &old;
+        }
+        bool fresh = !st;
+        if (fresh) {
+            states_.emplace_back();
+            st = &states_.back();
+            st->name = n->name();
+            listChanged = true;
+        }
+        st->seen = true;
+        bool online = n->online();
         std::vector<RemoteNode::Route> routes = n->routes();
-        st.routes = namesOf(routes);
+        std::string names = namesOf(routes);
+        std::string route;
+        uint32_t rtt = 0;
         RemoteNode::Route cur;
         if (n->route(cur)) {
-            st.route = cur.name();
-            st.rtt = cur.rttMs;
+            route = cur.name();
+            rtt = cur.rttMs;
         }
+        int32_t heard = -1;
         for (const RemoteNode::Route& r : routes) {
             if (!r.heardMs || !r.endpoint) continue;
             int32_t ago = static_cast<int32_t>((r.endpoint->now() - r.heardMs) / 1000);
-            if (st.heard < 0 || ago < st.heard) st.heard = ago;
+            if (heard < 0 || ago < heard) heard = ago;
         }
-        if (device.length) signIn(*n, s, nowMs, st.id, &st);
-        states.push_back(std::move(st));
-    }
-    if (!status) return;
-    // Toasts: a node lost, or reached again or another way. A node seen for
-    // the first time isn't news.
-    for (const State& st : states) {
-        for (const State& old : states_) {
-            if (old.name != st.name) continue;
-            if (old.online && !st.online) {
-                lostEvent_->emit(st.name);
-            } else if (st.online && (!old.online || old.route != st.route)) {
-                reachedEvent_->emit(st.name + " over " + st.route);
+        // Toasts: a node lost, or reached again or another way. A node seen
+        // for the first time isn't news.
+        if (!fresh) {
+            if (st->online && !online) {
+                lostEvent_->emit(st->name);
+            } else if (online && (!st->online || st->route != route)) {
+                reachedEvent_->emit(st->name + " over " + route);
             }
         }
+        if (st->id != id || st->online != online || st->route != route || st->routes != names) {
+            st->id = id;
+            st->online = online;
+            st->route = std::move(route);
+            st->routes = std::move(names);
+            listChanged = true;
+        }
+        st->rtt = rtt;
+        st->heard = heard;
+        if (rttMoved(st->rttShown, rtt) || heardBucket(st->heardShown) != heardBucket(heard)) listChanged = true;
+        if (device.length && signIn(*n, s, nowMs, id, st)) listChanged = true;
     }
-    bool same = states.size() == states_.size();
-    for (size_t i = 0; same && i < states.size(); i++) {
-        const State &a = states[i], &b = states_[i];
-        same = a.id == b.id && a.name == b.name && a.online == b.online && a.route == b.route &&
-               a.routes == b.routes && a.rtt == b.rtt && a.heard == b.heard && a.access == b.access &&
-               a.signIn == b.signIn;
-    }
-    if (!same) {
-        states_ = std::move(states);
+    if (!status) return;
+    size_t before = states_.size();
+    states_.erase(std::remove_if(states_.begin(), states_.end(), [](const State& st) { return !st.seen; }),
+                  states_.end());
+    if (states_.size() != before) listChanged = true;
+    if (listChanged) {
+        for (State& st : states_) {
+            st.rttShown = st.rtt;
+            st.heardShown = st.heard;
+        }
         statusNode_->changed();
     }
     held.settle();
@@ -392,7 +431,7 @@ Peers::SignIn& Peers::signInFor(const std::string& id) {
     return signIns_.back();
 }
 
-void Peers::signIn(RemoteNode& node, const PeerSettings* settings, uint32_t nowMs, const std::string& id,
+bool Peers::signIn(RemoteNode& node, const PeerSettings* settings, uint32_t nowMs, const std::string& id,
                    State* state) {
     // Its own account, or the one of every node.
     const std::string& user = settings && !settings->user.empty() ? settings->user : account_.name;
@@ -408,15 +447,21 @@ void Peers::signIn(RemoteNode& node, const PeerSettings* settings, uint32_t nowM
         s.hasToken = false;
         s.text.clear();
     }
-    if (credentials.empty()) return;
+    if (credentials.empty()) return state && setSignIn(*state, "", "");
     if (s.phase == SignIn::Phase::Needed && node.online() && static_cast<int32_t>(nowMs - s.retryAtMs) >= 0) {
         s.phase = SignIn::Phase::Pending;
         s.text = "signing in as " + user;
         login(node.name(), s.id, user, password);
     }
-    if (!state) return;
-    state->signIn = s.text;
-    if (s.hasToken) state->access = tesser::toString(node.access());
+    if (!state) return false;
+    return setSignIn(*state, s.text.c_str(), s.hasToken ? tesser::toString(node.access()) : "");
+}
+
+bool Peers::setSignIn(State& state, const char* text, const char* access) {
+    if (state.signIn == text && state.access == access) return false;
+    state.signIn = text;
+    state.access = access;
+    return true;
 }
 
 void Peers::login(const std::string& nodeName, const std::string& id, const std::string& user,

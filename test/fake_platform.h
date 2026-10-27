@@ -3,6 +3,8 @@
 // slot that is a byte vector, an HTTP client serving strings.
 #pragma once
 
+#include <stdio.h>
+
 #include <algorithm>
 #include <deque>
 #include <functional>
@@ -620,7 +622,9 @@ struct NowTp : tesserkit::NowTpRadio {
         ends++;
         state = tesserkit::NowTpStatus();
     }
-    std::vector<tesserkit::NowTpPeer> peers() override { return nearby; }
+    void peers(const std::function<void(const tesserkit::NowTpPeer&)>& each) override {
+        for (const tesserkit::NowTpPeer& p : nearby) each(p);
+    }
     tesserkit::NowTpStatus status() override { return state; }
     // Network time: the fake core's clock plus the offset in `state`.
     std::string timeReferenceSet;  // what the radio runs
@@ -676,7 +680,9 @@ struct NowTp : tesserkit::NowTpRadio {
     void found(const char* name, const char* mac, bool tesser = true) {
         tesserkit::NowTpPeer p;
         p.name = name;
-        p.mac = mac;
+        unsigned b[6] = {};
+        sscanf(mac, "%x:%x:%x:%x:%x:%x", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]);
+        for (int i = 0; i < 6; i++) p.mac[i] = static_cast<uint8_t>(b[i]);
         p.rssi = -50;
         p.channel = state.channel;
         p.tesser = tesser;

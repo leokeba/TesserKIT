@@ -66,12 +66,20 @@ protected:
     bool needsStationAwake() const override { return true; }
 
 private:
+    // An element of /sys/nowtp/nodes, updated in place each second: only a node
+    // coming, going or changing, or its signal moving by kRssiStepDb since
+    // the list was last notified, notifies the list (its subscribers get it
+    // whole).
     struct Node {
-        std::string name, mac;
+        std::string name;
+        uint8_t mac[6] = {};  // shown "aa:bb:cc:dd:ee:ff"
         int32_t rssi = 0;
+        int32_t rssiShown = 0;  // as last notified
         uint8_t channel = 0;
         bool otherChannel = false, tesser = false, authenticated = false;
+        bool seen = false;  // in this refresh
     };
+    static constexpr int32_t kRssiStepDb = 10;
 
     uint32_t restartGen() const;
     bool settled(uint32_t nowMs) const;

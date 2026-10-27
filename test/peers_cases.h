@@ -261,6 +261,38 @@ TEST(peers_status_waits_for_memory) {
     CHECK_EQ(r.status("online"), "false");
 }
 
+// The status is updated in place each second; "heard" and "rtt" move most
+// seconds and notify the list (whole, to every subscriber) only when they
+// move far: past 5 s, 30 s, 2 min, 10 min since heard, and half the round
+// trip shown.
+TEST(peers_status_notifies_on_change_not_every_second) {
+    PeersRig r;
+    r.peers.order("nowtp, udp");
+    r.start();
+    r.discoverOverNowTp();
+    r.run(1500);
+    const tesser::Node* list = tesserkit::findNode(r.dev.api(), "/sys/peers/status");
+    CHECK(list != nullptr);
+    if (!list) return;
+    // Heard as usual: nothing to tell.
+    uint32_t gen = list->generation();
+    r.run(3000);
+    CHECK_EQ(list->generation(), gen);
+    // Silent: "heard" counts up, read as it is, and notifies past 5 s only.
+    r.udpUp = r.nowUp = false;
+    int changes = 0;
+    int32_t lastHeard = 0;
+    for (int i = 0; i < 8; i++) {
+        r.run(1000);
+        if (list->generation() != gen) changes++;
+        gen = list->generation();
+        lastHeard = atoi(r.status("heard").c_str());
+    }
+    CHECK(lastHeard >= 7);
+    CHECK_EQ(r.status("online"), "true");  // no request failed: still thought online
+    CHECK_EQ(changes, 1);
+}
+
 // Each device's Peers hooks its own Api: a second one started (and gone)
 // in the same process doesn't take the first's node events.
 TEST(peers_hooks_are_per_device) {
