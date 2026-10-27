@@ -111,6 +111,10 @@ private:
 
 }  // namespace
 
+void sortEntries(std::vector<FileEntry>& entries, bool (*less)(const FileEntry&, const FileEntry&)) {
+    std::sort(entries.begin(), entries.end(), less);
+}
+
 Check fileWriteError(int err) {
     if (err == ENOSPC) return Check::fail(Status::TooLarge, "the filesystem is full");
     // LittleFS allocates its caches as it writes: a short heap fails it.
@@ -185,7 +189,7 @@ std::vector<FileEntry> Files::list(std::string_view dir, size_t max, bool* trunc
         out.push_back(std::move(f));
     }
     closedir(d);
-    std::sort(out.begin(), out.end(), [](const FileEntry& a, const FileEntry& b) {
+    sortEntries(out, [](const FileEntry& a, const FileEntry& b) {
         return a.isDir != b.isDir ? a.isDir : a.name < b.name;
     });
     if (out.size() > max) {

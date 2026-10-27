@@ -664,10 +664,13 @@ void Network::scanDone(const std::vector<ScanResult>& results, uint32_t nowMs) {
         }
         if (!found) groups.push_back({&r});
     }
-    std::stable_sort(groups.begin(), groups.end(),
-                     [](const std::vector<const ScanResult*>& a, const std::vector<const ScanResult*>& b) {
-                         return a[0]->rssi > b[0]->rssi;
-                     });
+    // Strongest first, in the order heard among equals: an insertion sort,
+    // much smaller than std::stable_sort for the few networks a scan hears.
+    for (size_t i = 1; i < groups.size(); i++) {
+        for (size_t j = i; j > 0 && groups[j - 1][0]->rssi < groups[j][0]->rssi; j--) {
+            std::swap(groups[j - 1], groups[j]);
+        }
+    }
     for (tesser::Pending& p : scanWaiters_) {
         p.replyWith([&groups](tesser::JsonWriter& w) {
             w.beginArray();

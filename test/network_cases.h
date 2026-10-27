@@ -338,6 +338,24 @@ TEST(network_scan) {
     CHECK_EQ(r.request(r.anon, rig::Op::Set, "/sys/network/wifi/scan").status, Status::Unauthorized);
 }
 
+// Networks strongest first, those as strong in the order heard; a network
+// ranks by its strongest access point.
+TEST(network_scan_order) {
+    NetRig r;
+    r.air("A", "", -70, 1);
+    r.air("B", "", -60, 1);
+    r.air("C", "", -70, 1);
+    r.air("D", "", -80, 1);
+    r.air("A", "", -50, 1);  // A's second access point, the strongest heard
+    r.air("E", "", -60, 1);
+    CHECK(r.dev.begin());
+    rig::Reply s = r.request(r.admin, rig::Op::Set, "/sys/network/wifi/scan", {}, tesser::Query(), 200);
+    CHECK_EQ(s.status, Status::Ok);
+    std::string order;
+    for (int i = 0; i < 5; i++) order += at(s.body, (std::to_string(i) + "/ssid").c_str());
+    CHECK_EQ(order, "\"A\"\"B\"\"E\"\"C\"\"D\"");
+}
+
 // A scan's results that come after it timed out are still fetched, which
 // frees the platform's list of access points (ESP-IDF keeps it allocated
 // until then), and are dropped.

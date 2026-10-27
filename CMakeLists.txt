@@ -28,7 +28,8 @@ set(TESSERKIT_CORE_SRCS
     src/tesserkit/pulses.cpp
     src/tesserkit/board.cpp
     src/tesserkit/button.cpp
-    src/tesserkit/settings_store.cpp)
+    src/tesserkit/settings_store.cpp
+    src/tesserkit/limits.cpp)
 
 if(ESP_PLATFORM)
     # TesserAPI and TesserUI are hard dependencies. Their component names

@@ -358,4 +358,21 @@ TEST(record_string_limits) {
     CHECK(r.storage.records == before);
 }
 
+// A refusal says the limit; its message is made once for each limit, and
+// stays (a Check keeps a pointer to it).
+TEST(record_limits_say_the_limit) {
+    CHECK(limits::length(chars(limits::kName), limits::kName).isOk());
+    tesser::Check a = limits::atMost<limits::kName>(chars(limits::kName + 1));
+    CHECK_EQ(a.status, Status::InvalidValue);
+    CHECK_EQ(std::string(a.message), "at most 32 characters");
+    tesser::Check b = limits::length<limits::kPath>(chars(limits::kPath + 1));
+    CHECK_EQ(std::string(b.message), "at most 96 characters");
+    CHECK(limits::length(chars(40), limits::kName).message == a.message);
+    FullRig r;
+    CHECK(r.dev.begin());
+    rig::Reply rep = r.set("/sys/time/sntp/server", quoted(chars(limits::kHost + 1)));
+    CHECK_EQ(rep.status, Status::InvalidValue);
+    CHECK(rep.body.find("at most 64 characters") != std::string::npos);
+}
+
 }  // namespace record_cases

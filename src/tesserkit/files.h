@@ -27,6 +27,10 @@ struct FileEntry {
     int64_t modified = 0;  // epoch seconds, 0 if unknown
 };
 
+// Sorts `entries` by `less`. Every order of entries goes through it, so
+// std::sort is instantiated once for them (files.cpp).
+void sortEntries(std::vector<FileEntry>& entries, bool (*less)(const FileEntry&, const FileEntry&));
+
 // /sys/files/move's argument: two paths.
 struct FileMove {
     std::string from;

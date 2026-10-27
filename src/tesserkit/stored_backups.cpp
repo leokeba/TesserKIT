@@ -110,7 +110,7 @@ void StoredBackups::prune(const std::string& justSaved) {
     }
     if (counted.size() <= backup_.keep_) return;
     // Oldest first; a clock that wasn't set reads as oldest.
-    std::sort(counted.begin(), counted.end(), [](const FileEntry& a, const FileEntry& b) {
+    sortEntries(counted, [](const FileEntry& a, const FileEntry& b) {
         return a.modified != b.modified ? a.modified < b.modified : a.name < b.name;
     });
     size_t extra = counted.size() - backup_.keep_;
@@ -125,14 +125,14 @@ void StoredBackups::prune(const std::string& justSaved) {
 void StoredBackups::refresh() {
     stored_.clear();
     for (FileEntry& e : files_.list(Files::kBackupDir, SIZE_MAX)) {
-        if (!isBackup(e)) continue;
-        e.name.resize(e.name.size() - kExtLen);
-        stored_.push_back(std::move(e));
+        if (isBackup(e)) stored_.push_back(std::move(e));
     }
-    // Newest first.
-    std::stable_sort(stored_.begin(), stored_.end(),
-                     [](const FileEntry& a, const FileEntry& b) { return a.modified > b.modified; });
+    // Newest first, then by name (with the extension, as listed).
+    sortEntries(stored_, [](const FileEntry& a, const FileEntry& b) {
+        return a.modified != b.modified ? a.modified > b.modified : a.name < b.name;
+    });
     if (stored_.size() > Files::kMaxEntries) stored_.resize(Files::kMaxEntries);
+    for (FileEntry& e : stored_) e.name.resize(e.name.size() - kExtLen);
     if (node_) node_->changed();
 }
 

@@ -23,18 +23,23 @@ constexpr size_t kPath = 96;         // tree paths: timers, the sequencer, MQTT,
 constexpr size_t kValue = 96;        // JSON values: timers, the sequencer
 constexpr size_t kResult = 48;       // a timer's last result, cut to it
 
-// Ok when `v` has at most N characters (bytes).
+// Ok when `v` has at most `n` characters (bytes), else invalid_value with
+// "at most <n> characters". Not a template: one copy of the check and its
+// message for every limit (limits.cpp).
+tesser::Check length(const std::string& v, size_t n);
+
+// The same with the limit as a template argument: a call, nothing more.
 template <size_t N>
 tesser::Check length(const std::string& v) {
-    if (v.size() <= N) return tesser::Check::ok();
-    static const std::string message = "at most " + std::to_string(N) + " characters";
-    return tesser::Check::fail(tesser::Status::InvalidValue, message.c_str());
+    return length(v, N);
 }
 
-// As a validator: .validate(limits::atMost<limits::kName>).
+// As a validator: .validate(limits::atMost<limits::kName>). Every limit is
+// the same function type, so TesserAPI's validator wrapper is instantiated
+// once.
 template <size_t N>
 tesser::Check atMost(const std::string& v) {
-    return length<N>(v);
+    return length(v, N);
 }
 
 }  // namespace limits
