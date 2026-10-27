@@ -81,7 +81,7 @@ private:
     void applyTimeReference();
     tesser::Check pairing(bool accept);
     // A pairing runs: stopping and forgetting the key wait for it.
-    bool busy() const;
+    bool pairingRuns() const;
 
     bool enabled_ = true;
     bool mountPeers_ = true;

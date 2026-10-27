@@ -98,7 +98,7 @@ void NowTp::describe(tesser::Object& o) {
                         .validate([this](bool on) {
                             // Stopped under a pairing task, NowTP would be
                             // pulled from under it.
-                            return on || !busy() ? Check::ok()
+                            return on || !pairingRuns() ? Check::ok()
                                                  : Check::fail(Status::Busy, "a pairing is in progress (up to 60 s)");
                         })
                         .persist();
@@ -143,7 +143,7 @@ void NowTp::describe(tesser::Object& o) {
         .doc("Opens this node's pairing window for 60 s");
     sec.action("forget", [this]() -> Check {
            if (!radio_ || !started_) return Check::fail(Status::NotAllowed, "NowTP is off");
-           if (busy()) return Check::fail(Status::Busy, "a pairing is in progress (up to 60 s)");
+           if (pairingRuns()) return Check::fail(Status::Busy, "a pairing is in progress (up to 60 s)");
            if (!radio_->forgetKey()) return Check::fail(Status::Internal, "the key couldn't be removed");
            setPairing("");
            refresh();
@@ -330,7 +330,7 @@ void NowTp::refresh() {
     }
 }
 
-bool NowTp::busy() const {
+bool NowTp::pairingRuns() const {
     // The radio's word, not a flag its NowTpPairing clears: that event can
     // be lost in a full queue, and the flag would stay set.
     return started_ && radio_ && radio_->pairing();
@@ -344,7 +344,7 @@ void NowTp::setPairing(const std::string& s) {
 
 Check NowTp::pairing(bool accept) {
     if (!radio_ || !started_) return Check::fail(Status::NotAllowed, "NowTP is off");
-    if (busy()) return Check::fail(Status::Busy, "a pairing is in progress");
+    if (pairingRuns()) return Check::fail(Status::Busy, "a pairing is in progress");
     if (!(accept ? radio_->acceptPairing(kPairingMs) : radio_->pair(kPairingMs))) {
         return Check::fail(Status::Internal, "the pairing couldn't start");
     }
