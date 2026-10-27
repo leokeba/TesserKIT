@@ -184,25 +184,33 @@ public:
     }
 
     // The GPTimer counts µs from its own start: the alarm is its count now
-    // plus the lead, both read with the local clock.
+    // plus the lead, both read with the local clock. All of it in the
+    // critical section, the restart's state first: the task can't be
+    // preempted between the lead's check and the arming (an alarm armed
+    // behind the counter waits for the counter's wrap, while the call said
+    // true), and an alarm that fires as it is armed finds what to restart.
+    // The counter is read again after arming, as PulseOutput's step() does:
+    // an alarm already behind it is a failure.
     bool restartAt(int output, int64_t localUs) override {
         if (!valid(output)) return false;
         if (!alarm_ && !startAlarm()) return false;
-        uint64_t count = 0;
         portENTER_CRITICAL(&lock_);
-        pending_ = false;  // an earlier restart, replaced
+        restart_ = slot(output);  // an earlier restart, replaced
+        pending_ = true;
+        uint64_t count = 0;
         int64_t lead = localUs - esp_timer_get_time();
         gptimer_get_raw_count(alarm_, &count);
+        bool armed = lead >= kMinLeadUs;
+        if (armed) {
+            gptimer_alarm_config_t a = {};
+            a.alarm_count = count + static_cast<uint64_t>(lead);
+            armed = gptimer_set_alarm_action(alarm_, &a) == ESP_OK;
+            gptimer_get_raw_count(alarm_, &count);
+            armed = armed && a.alarm_count > count;
+        }
+        if (!armed) pending_ = false;  // an alarm still to come restarts nothing
         portEXIT_CRITICAL(&lock_);
-        if (lead < kMinLeadUs) return false;
-        gptimer_alarm_config_t a = {};
-        a.alarm_count = count + static_cast<uint64_t>(lead);
-        if (gptimer_set_alarm_action(alarm_, &a) != ESP_OK) return false;
-        portENTER_CRITICAL(&lock_);
-        restart_ = slot(output);
-        pending_ = true;
-        portEXIT_CRITICAL(&lock_);
-        return true;
+        return armed;
     }
 
 private:
