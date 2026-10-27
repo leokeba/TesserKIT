@@ -271,8 +271,16 @@ jobs:
           set -o pipefail
           idf.py -B build -DPROJECT_VER="$VERSION" $BUILD_ARGS set-target "$TARGET" build 2>&1 | tee build.log
           # Room left in the app partition: the next update must fit it.
-          sizes=$(grep -oE 'binary size 0x[0-9a-f]+ bytes. Smallest app partition is 0x[0-9a-f]+ bytes' build.log | tail -1 | grep -oE '0x[0-9a-f]+' | tr '\n' ' ')
-          if [ -n "$sizes" ]; then
+          # ESP-IDF's size line is the only source: if a new ESP-IDF words
+          # it otherwise, the gate fails rather than passing everything.
+          sizes=$(grep -oE 'binary size 0x[0-9a-f]+ bytes. Smallest app partition is 0x[0-9a-f]+ bytes' build.log | tail -1 | grep -oE '0x[0-9a-f]+' | tr '\n' ' ' || true)
+          if [ -z "$sizes" ]; then
+            if [ "$MIN_FREE" -gt 0 ]; then
+              echo "::error::$NAME-$TARGET: no size line in ESP-IDF's output, so min-free ($MIN_FREE) can't be checked"
+              exit 1
+            fi
+            echo "::warning::$NAME-$TARGET: no size line in ESP-IDF's output: the room left in its slot is unknown"
+          else
             read -r size slot <<< "$sizes"
             size=$((size)); slot=$((slot)); free=$((slot - size))
             echo "$NAME-$TARGET: $size bytes, $((free / 1024)) KB of the $((slot / 1024)) KB slot free" >> "$GITHUB_STEP_SUMMARY"
