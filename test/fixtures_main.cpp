@@ -19,6 +19,7 @@ int main(int argc, char** argv) {
     tesserkit::Auth auth(r.dev);
     tesserkit::Mqtt mqtt(r.dev);
     tesserkit::ArtNet artnet(r.dev);
+    tesserkit::Sacn sacn(r.dev);
     tesserkit::Bluetooth bluetooth(r.dev);
     tesserkit::NowTp nowtp(r.dev);
     tesserkit::Sequencer sequencer(r.dev);
