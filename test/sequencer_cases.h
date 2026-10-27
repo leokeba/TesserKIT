@@ -100,6 +100,52 @@ TEST(sequencer_reply_timeouts_go_on) {
     CHECK_EQ(ev.take().size(), size_t(0));
 }
 
+TEST(sequencer_timed_steps_dont_drift) {
+    // Ten 50 ms steps over periods of 20 ms: each starts at the previous
+    // one's deadline, not at the period that noticed it (which took 580 ms).
+    for (uint32_t period : {10u, 20u}) {
+        struct Count : SeqRig {
+            int n = 0;
+            Count() {
+                dev.api().value("count", [this] { return n; }, [this](int v) { n = v; });
+                for (int i = 0; i < 10; i++) {
+                    std::string v = std::to_string(i);
+                    seq.add(mk("", "/count", v.c_str(), Wait::Time, 50, i < 9 ? "+1" : ""));
+                }
+            }
+        } r;
+        CHECK(r.dev.begin());
+        r.settle();
+        CHECK_EQ(r.play(""), Status::Ok);
+        uint32_t t = 0, start = 0;
+        bool started = false;
+        for (; t < 2000; t += period) {
+            r.step(period);
+            if (!started && r.seq.current() == 0) {
+                started = true;
+                start = t;
+            }
+            if (started && !r.seq.running()) break;
+        }
+        CHECK_EQ(r.n, 9);
+        CHECK(t - start >= 500 && t - start <= 500 + period);
+    }
+    // A deadline noticed long after (a stalled task) isn't caught up: the
+    // next step gets its whole time.
+    SeqRig r;
+    r.seq.add(r.mk("on", "/led/on", "true", Wait::Time, 50, "+1"))
+        .add(r.mk("press", "/led/press", "null", Wait::Time, 100, ""));
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.play(""), Status::Ok);
+    r.step();
+    r.step(500);  // the task stalled
+    CHECK_EQ(r.presses, 1);
+    r.run(80);
+    CHECK(r.seq.running());
+    r.run(40);
+    CHECK(!r.seq.running());
+}
+
 TEST(sequencer_executes_one_step) {
     SeqRig r;
     r.seq.add(r.mk("on", "/led/on", "true", Wait::Time, 100, "+1"))

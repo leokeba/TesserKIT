@@ -25,6 +25,9 @@ bool relative(std::string_view s) { return s.size() > 1 && (s[0] == '+' || s[0] 
 // A step's name: anything an index or a relative reference can't be.
 // A step's name (24 characters at most), its index, or "+1", "-2".
 constexpr size_t kStepRef = 24;
+// The device's period: a step noticed later than this after its end (a
+// stalled task) isn't caught up.
+constexpr uint32_t kPeriodMs = 20;
 
 bool nameOk(std::string_view s) { return s.empty() || !(s[0] == '+' || s[0] == '-' || (s[0] >= '0' && s[0] <= '9')); }
 
@@ -251,8 +254,21 @@ void Sequencer::tick(uint32_t nowMs) {
             end(true);
             break;
         }
-        begin(i, nowMs);
+        begin(i, endedMs(nowMs));
     }
+}
+
+uint32_t Sequencer::endedMs(uint32_t nowMs) const {
+    // A timed step ended at its deadline, which the period that noticed it
+    // passed by up to a period: the next one starts from there, so a show
+    // of timed steps doesn't drift by a period each. A step that doesn't
+    // wait ended when it started (itself perhaps at a deadline). A reply
+    // ends a step when it is noticed.
+    const Step& s = steps_[static_cast<size_t>(current_)];
+    uint32_t end = nowMs;
+    if (s.wait == Wait::Time) end = startedMs_ + s.ms;
+    if (s.wait == Wait::None) end = startedMs_;
+    return nowMs - end > kPeriodMs ? nowMs : end;
 }
 
 void Sequencer::begin(int index, uint32_t nowMs) {

@@ -65,6 +65,8 @@ private:
     tesser::Status request(std::string_view step, Mode mode);
     void begin(int index, uint32_t nowMs);
     bool waited(uint32_t nowMs);
+    // When the running step, whose wait is over, ended: where the next starts.
+    uint32_t endedMs(uint32_t nowMs) const;
     void end(bool runFinally);
     void failed(const std::string& what, const std::string& error);
     std::string label(int index) const;
