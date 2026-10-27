@@ -11,6 +11,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
+#include "tesserkit/log_ring.h"
 #include "tesserkit/platform.h"
 
 namespace tesserkit {
@@ -22,10 +23,13 @@ constexpr size_t kLineMax = 160;  // longer lines are cut: this runs on every ta
 class EspLog : public LogOutput {
 public:
     bool begin(size_t bytes) override {
-        if (ring_) return true;
-        ring_ = static_cast<char*>(malloc(bytes));
-        if (!ring_) return false;
-        cap_ = bytes;
+        if (buf_) return true;
+        char* buf = static_cast<char*>(malloc(bytes));
+        if (!buf) return false;
+        portENTER_CRITICAL(&mux_);
+        ring_.attach(buf, bytes);
+        buf_ = buf;
+        portEXIT_CRITICAL(&mux_);
         previous_ = esp_log_set_vprintf(&EspLog::hook);
         return true;
     }
@@ -36,17 +40,24 @@ public:
         char buf[kLineMax];
         size_t n = 0;
         portENTER_CRITICAL(&mux_);
-        bool any = used_ > 0;
-        while (used_ > 0) {
-            char c = ring_[tail_];
-            tail_ = (tail_ + 1) % cap_;
-            used_--;
-            if (c == '\n') break;
-            if (n < sizeof(buf)) buf[n++] = c;
-        }
+        bool any = ring_.next(buf, sizeof(buf), n);
         portEXIT_CRITICAL(&mux_);
-        if (any) line.assign(buf, n);
+        if (any) line.assign(buf, n);  // out of the critical section: it may allocate
         return any;
+    }
+    size_t recentSize() override {
+        portENTER_CRITICAL(&mux_);
+        size_t n = ring_.size();
+        portEXIT_CRITICAL(&mux_);
+        return n;
+    }
+    size_t recent(char* out, size_t cap) override {
+        // Two memcpys of up to the ring's size (4 KB by default): a few µs
+        // with interrupts off on this core.
+        portENTER_CRITICAL(&mux_);
+        size_t n = ring_.copy(out, cap);
+        portEXIT_CRITICAL(&mux_);
+        return n;
     }
     uint32_t dropped() override { return dropped_; }
     void mute(bool on) override { muted_ = on ? xTaskGetCurrentTaskHandle() : nullptr; }
@@ -92,27 +103,18 @@ private:
         portEXIT_CRITICAL(&mux_);
     }
 
-    // The assembled line into the ring, with its newline. In the critical
-    // section.
+    // The assembled line into the ring, dropping the oldest lines the Log
+    // service has taken already. In the critical section.
     void keep() {
         size_t n = partialLen_;
         partialLen_ = 0;
-        if (!n) return;
-        if (cap_ - used_ < n + 1) {
-            dropped_ = dropped_ + 1;
-            return;
-        }
-        for (size_t i = 0; i <= n; i++) {
-            ring_[head_] = i < n ? partial_[i] : '\n';
-            head_ = (head_ + 1) % cap_;
-        }
-        used_ += n + 1;
+        if (n && !ring_.push(partial_, n)) dropped_ = dropped_ + 1;
     }
 
     vprintf_like_t previous_ = nullptr;
     portMUX_TYPE mux_ = portMUX_INITIALIZER_UNLOCKED;
-    char* ring_ = nullptr;
-    size_t cap_ = 0, head_ = 0, tail_ = 0, used_ = 0;
+    char* buf_ = nullptr;  // the ring's, allocated once
+    LogRing ring_;
     char partial_[kLineMax];
     size_t partialLen_ = 0;
     volatile uint32_t dropped_ = 0;

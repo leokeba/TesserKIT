@@ -35,14 +35,20 @@ TEST(log_lines_are_events) {
 
 TEST(log_keeps_recent_lines_for_download) {
     LogRig r;
-    r.log.history(64);
+    r.log.history(1024);
     CHECK(r.dev.begin());
-    for (int i = 0; i < 10; i++) r.fake.log.write("I (" + std::to_string(i) + ") app: line");
-    r.step();
+    CHECK_EQ(r.fake.log.capacity, size_t(1024));  // one ring for both
+    for (int i = 0; i < 100; i++) {
+        r.fake.log.write("I (" + std::to_string(i) + ") app: line");
+        if (i % 10 == 9) r.step();
+    }
     rig::Reply d = r.download("/sys/log/recent");
     CHECK_EQ(d.status, Status::Ok);
-    // 64 bytes hold the last four lines of 15 bytes and their newlines.
-    CHECK_EQ(d.body, "I (6) app: line\nI (7) app: line\nI (8) app: line\nI (9) app: line\n");
+    // The last lines that fit whole, oldest first.
+    CHECK(d.body.size() <= 1024);
+    CHECK(d.body.size() > 1024 - 18);
+    CHECK_EQ(d.body.substr(d.body.size() - 34), "I (98) app: line\nI (99) app: line\n");
+    CHECK_EQ(d.body.substr(0, 3), "I (");
     CHECK_EQ(r.download("/sys/log/recent", false).status, Status::Unauthorized);
     CHECK_EQ(r.as(tesser::Access::User, Op::Get, "/sys/log/level").status, Status::Unauthorized);
 }
@@ -52,28 +58,37 @@ TEST(log_keeps_recent_lines_for_download) {
 // 2026-10-15, in Log::keep's copy). And the ring wraps, line by line.
 TEST(log_keeps_lines_without_allocating) {
     LogRig r;
-    r.log.history(256);
+    r.log.history(64);
     CHECK(r.dev.begin());
+    CHECK_EQ(r.fake.log.capacity, size_t(512));  // the least, for lines waiting
     r.step();
-    // The lines wait in the fake's queue first: only the device's keeping
-    // of them runs under the cap.
-    for (int i = 0; i < 50; i++) r.fake.log.write("W (" + std::to_string(i) + ") app: a line of some length");
     {
         alloccap::Heap h(1024, 0);
-        for (int round = 0; round < 5; round++) r.step();
+        for (int i = 0; i < 50; i++) {
+            r.fake.log.write("W (" + std::to_string(i) + ") app: a line of some length");
+            if (i % 5 == 4) r.step();
+        }
         CHECK(h.overruns().empty());
         if (!h.overruns().empty()) printf("%s\n", h.report().c_str());
     }
     std::string recent = r.log.recent();
-    CHECK(recent.size() <= 256);
-    CHECK(recent.size() > 200);
+    CHECK(recent.size() <= 512);
+    CHECK(recent.size() > 512 - 35);
     CHECK_EQ(recent.substr(recent.size() - 34), "W (49) app: a line of some length\n");
     CHECK_EQ(recent.find("W (0) "), std::string::npos);
     CHECK_EQ(recent.substr(0, 3), "W (");  // whole lines only
     // A line longer than the history is cut to fit.
-    r.fake.log.write(std::string(400, 'x'));
+    r.fake.log.write(std::string(600, 'x'));
     r.step();
-    CHECK_EQ(r.log.recent(), std::string(255, 'x') + "\n");
+    CHECK_EQ(r.log.recent(), std::string(511, 'x') + "\n");
+    // Lines not taken yet aren't dropped for newer ones: the newer ones are.
+    for (int i = 0; i < 20; i++) r.fake.log.write("W (" + std::to_string(i) + ") app: a line of some length");
+    CHECK(r.fake.log.lost > 0);
+    rig::Events ev(r, "/sys/log/line");
+    r.step();
+    std::vector<std::string> got = ev.take();
+    CHECK(!got.empty());
+    if (!got.empty()) CHECK_EQ(got[0], "\"W (0) app: a line of some length\"");
 }
 
 TEST(log_level_applies_and_persists) {

@@ -591,9 +591,11 @@ public:
 class LogOutput {
 public:
     virtual ~LogOutput() = default;
-    // Captures the log's lines from now on, keeping up to `bytes` of them
-    // until next() takes them; more are counted in dropped(). False if it
-    // can't.
+    // Captures the log's lines from now on into one ring of `bytes`
+    // (tesserkit::LogRing), allocated here once: lines wait there until
+    // next() takes them, then stay as the recent history until newer ones
+    // need the room. A line that finds the ring full of lines not taken yet
+    // is counted in dropped(). False if it can't.
     virtual bool begin(size_t bytes) = 0;
     // The level the whole firmware logs at, the console included: 0 none,
     // 1 error, 2 warn, 3 info, 4 debug, 5 verbose.
@@ -605,6 +607,11 @@ public:
     // The oldest captured line, without colours or its newline: "W (1234)
     // wifi: ...". False if there is none.
     virtual bool next(std::string& line) = 0;
+    // The bytes kept (lines ending with newlines), and a copy of them, oldest
+    // first: the newest `cap` bytes if there are more. Returns the bytes
+    // copied.
+    virtual size_t recentSize() = 0;
+    virtual size_t recent(char* out, size_t cap) = 0;
     // Lines lost because nothing took them in time.
     virtual uint32_t dropped() = 0;
     // While muted, what the calling task logs isn't captured (the console

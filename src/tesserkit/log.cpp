@@ -16,8 +16,8 @@ using tesser::Status;
 
 namespace {
 
-constexpr size_t kCaptureBytes = 2048;  // lines waiting for the task
-constexpr int kLinesPerTick = 16;        // the rest wait for the next period
+constexpr size_t kMinRingBytes = 512;  // room for lines waiting for the task, whatever history()
+constexpr int kLinesPerTick = 16;       // the rest wait for the next period
 
 // The recent lines' download: a copy, freed with the transfer.
 class Snapshot : public tesser::FileSource {
@@ -79,17 +79,18 @@ void Log::describe(tesser::Object& o) {
         .label("Recent lines")
         .contentType("text/plain")
         .download([this](tesser::FileRequest& r) -> std::unique_ptr<tesser::FileSource> {
-            // A copy taken under the API lock: the ring goes on filling
-            // while the download is sent. Refused when the heap can't hold it.
-            tesser::Reservation held = tesser::reserveBytes(kept_ + 1, true, tesser::mallocPool(kept_ + 1));
-            char* copy = held ? static_cast<char*>(malloc(kept_ + 1)) : nullptr;
+            // A copy: the ring goes on filling while the download is sent.
+            // Refused when the heap can't hold it.
+            size_t size = out_ ? out_->recentSize() : 0;
+            tesser::Reservation held = tesser::reserveBytes(size + 1, true, tesser::mallocPool(size + 1));
+            char* copy = held ? static_cast<char*>(malloc(size + 1)) : nullptr;
             if (!copy) {
                 r.refuse(Status::Busy, "not enough free memory for the log now");
                 return nullptr;
             }
-            copyRing(copy);
+            size_t n = out_ ? out_->recent(copy, size) : 0;
             held.settle();
-            return std::unique_ptr<tesser::FileSource>(new Snapshot(copy, kept_, std::move(held)));
+            return std::unique_ptr<tesser::FileSource>(new Snapshot(copy, n, std::move(held)));
         })
         .ui("filename", "log.txt");
     droppedNode_ = &o.value("dropped", static_cast<const uint32_t&>(dropped_))
@@ -98,13 +99,7 @@ void Log::describe(tesser::Object& o) {
                         .ui("advanced");
 }
 
-Log::~Log() { free(ring_); }
-
 void Log::start() {
-    if (historyBytes_ && !ring_) {
-        ring_ = static_cast<char*>(malloc(historyBytes_));
-        if (!ring_) tesser::logError("tesserkit: Log couldn't keep recent lines (no memory)");
-    }
     if (!out_) {
         tesser::logError("tesserkit: Log has no log output in this build");
         return;
@@ -112,7 +107,10 @@ void Log::start() {
     if (static_cast<uint8_t>(level_) > out_->maxLevel()) level_ = static_cast<LogLevel>(out_->maxLevel());
     out_->level(static_cast<uint8_t>(level_));
     levelGen_ = levelNode_->generation();
-    if (!out_->begin(kCaptureBytes)) tesser::logError("tesserkit: Log couldn't capture the log");
+    // One ring for the lines waiting for this task and the recent history.
+    if (!out_->begin(std::max(historyBytes_, kMinRingBytes))) {
+        tesser::logError("tesserkit: Log couldn't capture the log (no memory)");
+    }
 }
 
 void Log::tick(uint32_t nowMs) {
@@ -126,10 +124,7 @@ void Log::tick(uint32_t nowMs) {
     // per event would feed itself.
     out_->mute(true);
     std::string line;
-    for (int i = 0; i < kLinesPerTick && out_->next(line); i++) {
-        keep(line);
-        line_->emit(line);
-    }
+    for (int i = 0; i < kLinesPerTick && out_->next(line); i++) line_->emit(line);
     out_->mute(false);
     uint32_t d = out_->dropped();
     if (d != dropped_) {
@@ -138,30 +133,10 @@ void Log::tick(uint32_t nowMs) {
     }
 }
 
-void Log::keep(const std::string& line) {
-    if (!ring_) return;
-    size_t n = std::min(line.size(), historyBytes_ - 1) + 1;  // with its newline
-    // Room by dropping the oldest lines whole.
-    while (kept_ + n > historyBytes_) {
-        size_t i = 0;
-        while (i < kept_ && ring_[(head_ + i) % historyBytes_] != '\n') i++;
-        i = std::min(i + 1, kept_);
-        head_ = (head_ + i) % historyBytes_;
-        kept_ -= i;
-    }
-    size_t at = (head_ + kept_) % historyBytes_;
-    for (size_t i = 0; i + 1 < n; i++) ring_[(at + i) % historyBytes_] = line[i];
-    ring_[(at + n - 1) % historyBytes_] = '\n';
-    kept_ += n;
-}
-
-void Log::copyRing(char* out) const {
-    for (size_t i = 0; i < kept_; i++) out[i] = ring_[(head_ + i) % historyBytes_];
-}
-
 std::string Log::recent() const {
-    std::string s(kept_, '\0');
-    if (kept_) copyRing(&s[0]);
+    if (!out_) return std::string();
+    std::string s(out_->recentSize(), '\0');
+    s.resize(out_->recent(&s[0], s.size()));
     return s;
 }
 

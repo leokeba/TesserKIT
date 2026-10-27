@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "tesser/udp_link.h"
+#include "tesserkit/log_ring.h"
 #include "tesserkit/device.h"
 
 namespace fake {
@@ -710,43 +711,46 @@ struct Filesystem : tesserkit::Filesystem {
     bool format() override;
 };
 
-// The log: the test writes lines as the firmware would.
+// The log: the test writes lines as the firmware would, into the same ring
+// as ESP-IDF's (tesserkit::LogRing).
 struct Log : tesserkit::LogOutput {
     bool began = false;
     size_t capacity = 0;
     uint8_t lvl = 2, max = 5;
-    std::deque<std::string> lines;
-    size_t bytes = 0;
+    std::vector<char> buf;
+    tesserkit::LogRing ring;
     uint32_t lost = 0;
     bool muted = false;
     int mutedLines = 0;  // written while muted: not captured
 
     bool begin(size_t b) override {
+        if (began) return true;
         began = true;
         capacity = b;
+        buf.assign(b, 0);
+        ring.attach(buf.data(), b);
         return true;
     }
     uint8_t level() override { return lvl; }
     void level(uint8_t l) override { lvl = l; }
     uint8_t maxLevel() override { return max; }
     bool next(std::string& line) override {
-        if (lines.empty()) return false;
-        line = lines.front();
-        bytes -= line.size();
-        lines.pop_front();
+        char text[1024];
+        size_t n = 0;
+        if (!ring.next(text, sizeof(text), n)) return false;
+        line.assign(text, n);
         return true;
     }
+    size_t recentSize() override { return ring.size(); }
+    size_t recent(char* out, size_t cap) override { return ring.copy(out, cap); }
     uint32_t dropped() override { return lost; }
     void mute(bool on) override { muted = on; }
     // A line the firmware logs.
     void write(const std::string& line) {
         if (muted) {
             mutedLines++;
-        } else if (!began || bytes + line.size() > capacity) {
+        } else if (!began || !ring.push(line.data(), line.size())) {
             lost++;
-        } else {
-            lines.push_back(line);
-            bytes += line.size();
         }
     }
 };
