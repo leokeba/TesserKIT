@@ -221,6 +221,7 @@ struct Wifi : tesserkit::Wifi {
     std::vector<Air> air;
     bool scanStarts = true;
     bool scanSilent = false;  // a scan that never ends
+    int resultsRead = 0;      // scanResults() calls: the platform frees its list then
     int scans = 0;
     bool connectSilent = false;  // connections that never answer
     bool dhcpSilent = false;     // associated, but no address comes (giveAddress())

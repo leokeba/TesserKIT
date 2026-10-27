@@ -337,6 +337,25 @@ TEST(network_scan) {
     CHECK_EQ(r.request(r.anon, rig::Op::Set, "/sys/network/wifi/scan").status, Status::Unauthorized);
 }
 
+// A scan's results that come after it timed out are still fetched, which
+// frees the platform's list of access points (ESP-IDF keeps it allocated
+// until then), and are dropped.
+TEST(network_late_scan_results_freed) {
+    NetRig r;
+    r.air("Home", "pw", -55, 3);
+    CHECK(r.dev.begin());
+    r.settle();
+    r.fake.wifi.scanSilent = true;
+    r.request(r.admin, rig::Op::Set, "/sys/network/wifi/scan", {}, tesser::Query(), 200);
+    r.run(tesserkit::Network::kScanTimeoutMs + 1000);  // timed out
+    r.fake.wifi.scanStarts = false;  // no other scan meanwhile
+    r.run(100);
+    int read = r.fake.wifi.resultsRead;
+    r.fake.wifi.post(tesserkit::Event::Type::ScanDone);
+    r.step();
+    CHECK_EQ(r.fake.wifi.resultsRead, read + 1);
+}
+
 // Two access points of one network: a router and its repeater.
 struct MeshRig : NetRig {
     MeshRig() {

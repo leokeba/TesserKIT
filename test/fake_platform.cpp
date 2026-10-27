@@ -112,6 +112,7 @@ bool Wifi::scan() {
 }
 
 std::vector<tesserkit::ScanResult> Wifi::scanResults() {
+    resultsRead++;
     std::vector<tesserkit::ScanResult> out;
     for (const Air& a : air) {
         if (a.hidden) continue;

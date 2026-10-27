@@ -169,7 +169,8 @@ public:
     virtual void txPower(int8_t dBm) = 0;
     virtual void powerSave(PowerSave mode) = 0;
     // Asynchronous: Event::ScanDone, then scanResults(): one per access
-    // point heard, hidden networks left out.
+    // point heard, hidden networks left out. Called once per ScanDone,
+    // wanted or not: the platform frees its own list then.
     virtual bool scan() = 0;
     virtual std::vector<ScanResult> scanResults() = 0;
     // Asynchronous: Event::StaAssociated then Event::StaGotIp, or

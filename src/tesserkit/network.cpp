@@ -858,9 +858,13 @@ void Network::event(const Event& e) {
         case Event::Type::EthGotIp:
             if (eth_) ethGotIp(now);
             break;
-        case Event::Type::ScanDone:
-            if (scanning_) scanDone(wifi_->scanResults(), now);
+        case Event::Type::ScanDone: {
+            // Fetched even when no scan waits for it any more (one that
+            // timed out): the platform frees its list as it hands it over.
+            std::vector<ScanResult> results = wifi_->scanResults();
+            if (scanning_) scanDone(results, now);
             break;
+        }
         case Event::Type::StaAssociated:
             if (sta_ == Sta::Connecting && !associated_) {
                 associated_ = true;
