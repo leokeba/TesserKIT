@@ -469,14 +469,52 @@ TEST(mqtt_tls_waits_for_memory) {
     r.run(1100);
     CHECK(!r.fake.mqtt.running);
     CHECK_EQ(tesser::memoryBudget().used(), before);
-    // Plain MQTT needs none.
+    // Plain MQTT needs less: its tasks and buffers.
     {
-        rig::BudgetLimit low(20000);
+        rig::BudgetLimit low(before + tesserkit::Mqtt::kSessionBytes + 1024);
         CHECK_EQ(r.set("/sys/mqtt/uri", "\"mqtt://broker.local:1883\"").status, Status::Ok);
         CHECK_EQ(r.set("/sys/mqtt/enabled", "true").status, Status::Ok);
         r.run(1100);
         CHECK(r.fake.mqtt.running);
+        CHECK_EQ(tesser::memoryBudget().used(), before + tesserkit::Mqtt::kSessionBytes);
     }
+}
+
+TEST(mqtt_plain_sessions_wait_for_memory) {
+    MqttRig r;
+    size_t before = tesser::memoryBudget().used();
+    {
+        rig::BudgetLimit low(before + tesserkit::Mqtt::kSessionBytes / 2);
+        CHECK(r.dev.begin());
+        r.settle();
+        CHECK(!r.fake.mqtt.running);
+        CHECK(r.value("/sys/mqtt/status/error").find("memory") != std::string::npos);
+    }
+    r.run(10100);
+    CHECK(r.fake.mqtt.running);
+    CHECK_EQ(tesser::memoryBudget().used(), before + tesserkit::Mqtt::kSessionBytes);
+}
+
+TEST(mqtt_restart_waits_for_the_old_session) {
+    // On a restart the old session tears down while the new one would
+    // connect: its memory stays reserved until it has ended, so both can't
+    // count on the same heap.
+    MqttRig r;
+    r.mqtt.broker("mqtts://broker.local:8883", "device", "pw");
+    r.fake.mqtt.lingering = true;
+    size_t before = tesser::memoryBudget().used();
+    rig::BudgetLimit low(before + tesserkit::kTlsBytes + 1024);
+    r.online();
+    CHECK_EQ(r.value("/sys/mqtt/status/connected"), "true");
+    CHECK_EQ(r.set("/sys/mqtt/prefix", "\"home/lamp\"").status, Status::Ok);
+    r.run(1100);
+    CHECK_EQ(r.fake.mqtt.stops, 1);
+    CHECK_EQ(r.fake.mqtt.sessions, 1);  // the old one still holds its memory
+    CHECK(r.value("/sys/mqtt/status/error").find("memory") != std::string::npos);
+    r.fake.mqtt.ended();
+    r.run(10100);
+    CHECK_EQ(r.fake.mqtt.sessions, 2);
+    CHECK_EQ(tesser::memoryBudget().used(), before + tesserkit::kTlsBytes);
 }
 
 }  // namespace mqtt_cases

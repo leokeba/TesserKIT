@@ -445,9 +445,14 @@ void Mqtt::stop() {
     stops++;
     // The will, as the ESP client publishes it before disconnecting.
     publish(config.willTopic, config.willPayload, true);
+    if (lingering) {
+        ending.push_back(std::move(memory));
+    } else {
+        memory.release();
+    }
 }
 
-bool Mqtt::publish(const std::string& topic, const std::string& payload, bool retain) {
+bool Mqtt::publish(std::string topic, std::string payload, bool retain) {
     if (full) return false;
     Message m{topic, payload, retain};
     published.push_back(m);

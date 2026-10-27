@@ -490,11 +490,15 @@ struct Mqtt : tesserkit::MqttClient {
     bool running = false;
     bool linked = false;  // the session is connected to the broker
     bool full = false;    // the outbox refuses messages
+    bool lingering = false;  // a stopped session holds its memory until ended()
     int stops = 0;
+    tesser::Reservation memory;                // the running session's
+    std::vector<tesser::Reservation> ending;  // stopped sessions still tearing down
     std::vector<Message> published;
     std::map<std::string, Message> retained;  // the broker's
 
-    int32_t start(const tesserkit::MqttConfig& c, tesserkit::EventSink s) override {
+    int32_t start(const tesserkit::MqttConfig& c, tesserkit::EventSink s, tesser::Reservation m) override {
+        memory = std::move(m);
         config = c;
         sink = std::move(s);
         running = true;
@@ -502,7 +506,9 @@ struct Mqtt : tesserkit::MqttClient {
         return session = ++sessions;
     }
     void stop() override;
-    bool publish(const std::string& topic, const std::string& payload, bool retain) override;
+    bool publish(std::string topic, std::string payload, bool retain) override;
+    // The stopped sessions have torn down: their memory goes back.
+    void ended() { ending.clear(); }
     bool connectedNow(bool& c) override {
         if (!running) return false;
         c = linked;

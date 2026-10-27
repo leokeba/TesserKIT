@@ -48,11 +48,18 @@ struct Session {
     std::atomic<size_t> queuedBytes{0};
     esp_mqtt_client_handle_t handle = nullptr;
     QueueHandle_t queue = nullptr;  // messages for its publishing task
+    // The session's bytes (Mqtt's reservation): released with the session,
+    // once its task and buffers are freed, so a restart's new session can't
+    // count on the heap the old one still holds while it tears down.
+    tesser::Reservation memory;
 };
 
+// A queued message: its strings, moved in from the device's task, and their
+// bytes in the byte budget while they wait.
 struct Message {
     std::string topic, payload;
     bool retain;
+    tesser::Reservation held;
 };
 
 void finish(Session* s);
@@ -71,7 +78,7 @@ void publishTask(void* arg) {
                                     m->retain ? 1 : 0);
         }
         s->queuedBytes.fetch_sub(m->topic.size() + m->payload.size());
-        delete m;
+        delete m;  // and its reservation
     }
     // Stopped: what is still queued isn't sent.
     Message* m = nullptr;
@@ -121,6 +128,10 @@ void onEvent(void* arg, esp_event_base_t, int32_t id, void* data) {
     auto* ev = static_cast<esp_mqtt_event_handle_t>(data);
     switch (static_cast<esp_mqtt_event_id_t>(id)) {
         case MQTT_EVENT_CONNECTED:
+            // The session's buffers (TLS's too) are allocated: the heap
+            // shows them. Only this task touches the reservation until
+            // finish(), which runs once it has ended.
+            s->memory.settle();
             s->connected.store(true);
             s->error.clear();
             // A clean session forgets subscriptions: again on each connection.
@@ -132,6 +143,7 @@ void onEvent(void* arg, esp_event_base_t, int32_t id, void* data) {
             post(s, Event::Type::MqttDisconnected, s->error.empty() ? "connection lost" : s->error);
             break;
         case MQTT_EVENT_ERROR:
+            s->memory.settle();  // the attempt is over: what it took isn't about to be taken
             s->error = describe(ev->error_handle);
             // A failed connection attempt: say why at once.
             if (!s->connected.load()) post(s, Event::Type::MqttDisconnected, s->error);
@@ -149,8 +161,8 @@ void onEvent(void* arg, esp_event_base_t, int32_t id, void* data) {
     }
 }
 
-// Publishes the will, disconnects and frees the session. Blocking: in its
-// publishing task.
+// Publishes the will, disconnects and frees the session, its reservation
+// last. Blocking: in its publishing task.
 void finish(Session* s) {
     if (s->connected.load()) {
         esp_mqtt_client_publish(s->handle, s->willTopic.c_str(), s->willPayload.data(),
@@ -166,11 +178,12 @@ class EspMqtt : public MqttClient {
 public:
     explicit EspMqtt(esp_err_t (*attach)(void*)) : attach_(attach) {}
 
-    int32_t start(const MqttConfig& c, EventSink sink) override {
+    int32_t start(const MqttConfig& c, EventSink sink, tesser::Reservation memory) override {
         stop();
         Session* s = new Session();
         s->id = ++sessions_;
         s->sink = std::move(sink);
+        s->memory = std::move(memory);
         s->willTopic = c.willTopic;
         s->willPayload = c.willPayload;
         s->subscriptions = c.subscriptions;
@@ -226,12 +239,19 @@ public:
         return true;
     }
 
-    bool publish(const std::string& topic, const std::string& payload, bool retain) override {
+    bool publish(std::string topic, std::string payload, bool retain) override {
         Session* s = session_;
         if (!s || !s->connected.load()) return false;
         size_t bytes = topic.size() + payload.size();
         if (s->queuedBytes.load() + bytes > kQueueBytes) return false;
-        Message* m = new Message{topic, payload, retain};
+        // Up to 16 KB can wait here: counted in the byte budget, and
+        // refused when the heap is near its floor rather than growing the
+        // queue into it. The strings are already allocated (moved in, not
+        // copied): settled at once.
+        tesser::Reservation held = tesser::memoryBudget().reserve(bytes + sizeof(Message), 0, false);
+        if (!held) return false;
+        held.settle();
+        Message* m = new Message{std::move(topic), std::move(payload), retain, std::move(held)};
         s->queuedBytes.fetch_add(bytes);
         if (xQueueSend(s->queue, &m, 0) != pdTRUE) {
             s->queuedBytes.fetch_sub(bytes);

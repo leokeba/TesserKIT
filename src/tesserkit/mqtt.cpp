@@ -324,7 +324,6 @@ void Mqtt::event(const Event& e) {
 }
 
 void Mqtt::onConnected() {
-    tls_.settle();  // the session's buffers are allocated: the heap shows them
     if (connected_) return;
     connected_ = true;
     status_->changed();
@@ -335,8 +334,6 @@ void Mqtt::onConnected() {
 }
 
 void Mqtt::onDisconnected(const std::string& why) {
-    // The attempt is over: what it took isn't about to be taken.
-    tls_.settle();
     if (!why.empty()) setError(why);
     if (!connected_) return;
     connected_ = false;
@@ -366,25 +363,29 @@ void Mqtt::connect() {
         filter += "/+";
         c.subscriptions.push_back(filter + "/set");
     }
-    // A TLS session's memory, from the byte budget: refused, the client
-    // isn't started, and the next try comes after kRetryMs.
-    if (!reserveTls(uri_, tls_)) {
+    // The session's memory, from the byte budget (kTlsBytes for TLS,
+    // kSessionBytes plain): refused, the client isn't started, and the next
+    // try comes after kRetryMs. The client holds it until the session has
+    // ended, after a restart's stop() too, so two sessions never count on
+    // the same heap.
+    tesser::Reservation memory;
+    if (!reserveTls(uri_, memory)) {
         setError("not enough free memory for TLS now (about 52 KB needed)");
         return;
     }
-    Device& dev = dev_;
-    session_ = client_->start(c, [&dev](Event ev) { dev.post(std::move(ev)); });
-    if (!session_) {
-        tls_.release();
-        setError("the MQTT client didn't start");
+    if (!memory && !(memory = tesser::reserveBytes(kSessionBytes))) {
+        setError("not enough free memory for MQTT now (about 20 KB needed)");
+        return;
     }
+    Device& dev = dev_;
+    session_ = client_->start(c, [&dev](Event ev) { dev.post(std::move(ev)); }, std::move(memory));
+    if (!session_) setError("the MQTT client didn't start");
 }
 
 void Mqtt::disconnect() {
     unbridge();
     if (session_) client_->stop();
     session_ = 0;
-    tls_.release();
     if (connected_) {
         connected_ = false;
         status_->changed();
@@ -405,7 +406,7 @@ void Mqtt::bridge() {
             if (strcmp(op, "event") == 0) {
                 std::string payload;
                 serializeJson(env["body"], payload);
-                send(topic(path), payload, false);
+                send(topic(path), std::move(payload), false);
                 return;
             }
             publishTree(path, env["body"], true);
@@ -444,12 +445,12 @@ void Mqtt::publishTree(const std::string& path, JsonVariantConst v, bool retain)
     }
     std::string payload;
     serializeJson(v, payload);
-    send(topic(path), payload, retain);
+    send(topic(path), std::move(payload), retain);
 }
 
-void Mqtt::send(const std::string& t, const std::string& payload, bool retain) {
+void Mqtt::send(std::string t, std::string payload, bool retain) {
     if (!client_ || !session_) return;
-    if (client_->publish(t, payload, retain)) {
+    if (client_->publish(std::move(t), std::move(payload), retain)) {
         published_++;
     } else {
         dropped_++;
@@ -482,7 +483,7 @@ void Mqtt::command(const std::string& t, const std::string& payload) {
         r["body"] = b;
         std::string out;
         serializeJson(r, out);
-        send(result, out, false);
+        send(result, std::move(out), false);
     });
 }
 
@@ -671,7 +672,7 @@ void Mqtt::announce() {
     // never pushes the states out.
     for (int i = 0; i < kAnnouncePerTick && client_ && session_; i++) {
         if (!clearing_.empty()) {
-            if (!client_->publish(clearing_.front(), "", true)) return;
+            if (!client_->publish(clearing_.front(), std::string(), true)) return;
             published_++;
             clearing_.erase(clearing_.begin());
             continue;

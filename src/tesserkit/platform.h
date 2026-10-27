@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+#include "tesser/budget.h"
 #include "tesser/value_types.h"
 
 namespace tesser {
@@ -424,13 +425,17 @@ public:
     // Connects, and reconnects whenever the connection is lost, until
     // stop(). Events carry the session's number in `value`: MqttConnected,
     // MqttDisconnected, MqttMessage. Returns the session (> 0), or 0.
-    virtual int32_t start(const MqttConfig& config, EventSink sink) = 0;
+    // `memory`: the session's bytes, from TesserAPI's byte budget, held
+    // until the session has ended and freed what it took (after stop()
+    // returned), and settled once its buffers are allocated.
+    virtual int32_t start(const MqttConfig& config, EventSink sink, tesser::Reservation memory) = 0;
     // Publishes the will (a clean disconnection doesn't), then ends the
     // session, without blocking. Its events may still be in the device's
     // queue: they carry its number.
     virtual void stop() = 0;
-    // Queues a message (QoS 0) without blocking; false if it can't.
-    virtual bool publish(const std::string& topic, const std::string& payload, bool retain) = 0;
+    // Queues a message (QoS 0) without blocking, its strings moved in;
+    // false if it can't (the queue full, or the byte budget short).
+    virtual bool publish(std::string topic, std::string payload, bool retain) = 0;
     // Whether the running session is connected now, for when the device's
     // queue lost its events; false if the client can't tell.
     virtual bool connectedNow(bool& connected) {

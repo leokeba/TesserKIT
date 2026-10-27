@@ -47,6 +47,11 @@ public:
     std::string topic(const std::string& path) const;
     // The most entities announced to Home Assistant.
     static constexpr size_t kMaxEntities = 64;
+    // What a plain session (mqtt://, ws://) takes from the heap, reserved
+    // from TesserAPI's byte budget before it starts: esp-mqtt's task (6 KB
+    // of stack), the publishing task (4 KB) and the client's two 1 KB
+    // buffers. A TLS session reserves kTlsBytes instead.
+    static constexpr size_t kSessionBytes = 12 * 1024;
 
 protected:
     void start() override;
@@ -67,7 +72,7 @@ private:
     void bridge();
     void unbridge();
     void publishTree(const std::string& path, JsonVariantConst v, bool retain);
-    void send(const std::string& topic, const std::string& payload, bool retain);
+    void send(std::string topic, std::string payload, bool retain);
     void command(const std::string& topic, const std::string& payload);
     void setError(const std::string& e);
     // Home Assistant discovery.
@@ -107,7 +112,6 @@ private:
     uint32_t checkedAtMs_ = 0;  // the session's state, read back
     MqttClient* client_ = nullptr;
     int32_t session_ = 0;
-    tesser::Reservation tls_;  // a TLS session's heap, while one is up (kTlsBytes)
     std::vector<Bridge> bridges_;
     std::unique_ptr<tesser::LocalClient> commander_;
     // Discovery: the paths still to announce, the config topics still to
