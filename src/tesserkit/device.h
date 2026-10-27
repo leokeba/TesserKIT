@@ -245,13 +245,25 @@ public:
 #endif
 
     State state() const { return state_; }
-    // Called in the device's task when the state changes.
+
+    // Callbacks (docs/DESIGN.md section 4.2). Register them before begin():
+    // the device's task reads their lists without a lock. Each says where it
+    // runs: "the device's task" is TesserKIT's task, or the caller of loop()
+    // with task(false). Under the API lock (TesserAPI's recursive
+    // tesser::Lock) a callback may read and write the tree as it is, but
+    // every client and the other tasks wait for it: keep it short, and never
+    // wait there for a task that takes the lock. Without it, take it
+    // (tesser::Lock lock(dev.api())) before touching the tree.
+    //
+    // When the state changes: in the device's task, without the API lock,
+    // at the end of the period that changed it.
     void onState(std::function<void(State)> fn) { onState_.push_back(std::move(fn)); }
-    // Called every period of the device's task.
+    // Every period: in the device's task, without the API lock, after the
+    // services' ticks and the pollers.
     void onTick(std::function<void(uint32_t nowMs)> fn) { onTick_.push_back(std::move(fn)); }
     // A transport without a task of its own (NowTp::ownTask(false)): `fn`
     // runs in the device's task, without the API lock, every period and at
-    // once after wake(). Before begin().
+    // once after wake().
     void poller(std::function<void()> fn) { pollers_.push_back(std::move(fn)); }
     // Wakes the device's task to run the pollers now, from any task (a
     // transport's message arrived). Without the device's own task, the next
@@ -259,12 +271,16 @@ public:
     void wake();
     // Runs the pollers: the device's task, when woken.
     void poll();
-    // Called once, on the first valid time after boot (Time).
+    // Once, on the first valid time after boot (Time), under the API lock:
+    // in the device's task when SNTP set the clock, or in the task that
+    // called Time::external().
     void onTimeSynced(std::function<void()> fn) { onTimeSynced_.push_back(std::move(fn)); }
-    // Called when the station's Wi-Fi channel changes (Network).
+    // When the station joins on another Wi-Fi channel (Network): in the
+    // device's task, under the API lock.
     void onChannel(std::function<void(uint8_t)> fn) { onChannel_.push_back(std::move(fn)); }
-    // Called in the device's task just before it goes to deep sleep (Sleep):
-    // park the hardware, hold its pins.
+    // Just before deep sleep (Sleep): in the device's task, under the API
+    // lock (Sleep's tick). Park the hardware, hold its pins; the settings
+    // are saved after.
     void onSleep(std::function<void()> fn) { onSleep_.push_back(std::move(fn)); }
     // The application's own error state (State::Error while set).
     void fail(bool failed);

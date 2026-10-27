@@ -147,6 +147,23 @@ One FreeRTOS task (`tesserkit`, 6 KB stack, priority 3; 8 KB and priority 5 with
 
 Platform callbacks (Wi-Fi events, SNTP sync) only post to a small queue that the task drains, so services never run in the Wi-Fi task and always hold the API lock while they touch the tree. **One time per round:** the task reads the clock once, handles the queued events, then calls every `tick(nowMs)` with that time, and a service's `event()` takes its time from the same reading (`dev.loopMs()`), never from the clock. An event is handled some milliseconds after the round began (a busy gateway's events, a slow one before it), so a time read from the clock then would be ahead of the tick that follows, and `nowMs - then` would wrap: until 2026-10-21 every Wi-Fi attempt of a Gledopto acting as a peer timed out "no address (DHCP)" as it associated, and the access point's fallback could come up at once. With `dev.task(false)` the application calls `dev.loop()` from its own loop instead.
 
+**Where the application's callbacks run.** Under the API lock (TesserAPI's recursive `tesser::Lock`) a callback reads and writes the tree as it is, but every client and every other task that needs the tree waits for it: it stays short, and never waits there for a task that takes the lock. Without the lock, a callback takes it (`tesser::Lock lock(dev.api())`) before touching the tree. They are registered before `begin()`: the task reads their lists without a lock.
+
+| Callback | Task | API lock |
+|---|---|---|
+| `dev.onState(fn)` | the device's, at the end of the period that changed the state | no |
+| `dev.onTick(fn)` | the device's, every period, after the services' ticks and the pollers | no |
+| `dev.poller(fn)` | the device's, every period and at once after `dev.wake()` | no |
+| `dev.onTimeSynced(fn)` | the device's (SNTP), or the one calling `time.external()` | yes |
+| `dev.onChannel(fn)` | the device's, as the station joins on another channel | yes |
+| `dev.onSleep(fn)` | the device's (Sleep's tick), just before deep sleep | yes |
+| `peers.onDeviceLost(fn)` | the device's (§5.19) | yes |
+| `board.onPress(fn)` | the device's for the button; the request's for `/sys/board/button/press` (§5.24) | yes |
+| `net.ethernet(choose)` | the one calling `dev.begin()`, once, as Network starts | no |
+| Action and validator handlers, custom nodes | the request's: the HTTP server's, a transport's worker, or the device's for the pollers' transports | yes (TesserAPI §9; a file transfer's chunks without it, TesserAPI §4.6) |
+
+"The device's" is TesserKIT's task, or the one calling `dev.loop()` with `dev.task(false)`.
+
 **The event queue is bounded** (32 events), and fills when a burst of events meets a long stall of the task: an OTA chunk whose `esp_ota_end` takes 1.3–1.5 s, a sign-in's PBKDF2 (about 280 ms), while a broker sends its retained commands or peers flap. So no event is precious: MQTT's messages have at most 8 places, the oldest giving way to a newer one and to any other event when the queue is full (counted in Mqtt's `status/missed`, §5.8); `PeersChanged` and `NowTpPeers` say only "look again", so one of each waits at most; and a service that keeps state reads it back from the platform rather than trusting edges alone (Network's link and addresses, §5.2). Drops are logged by the task, with their count. The queue's room grows in the posting task (esp_event's, lwIP's, MQTT's), where an allocation on an exhausted heap aborts, so it grows from TesserAPI's byte budget, or the event is dropped like one that found the queue full. The task swaps the queue with a vector of its own each period and clears it, rather than taking it, so both keep their room (1.8 KB each at most on ESP32): until 2026-10-27 each period threw the room away and every burst grew the queue again.
 
 ### 4.3 State
@@ -290,7 +307,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - `set` takes the browser's clock (TesserUI's `$now` hint value): a device without internet gets the time from whoever opens its page. helionext's "Sync Time" button.
 - `clock.external(epochMs)` lets the application feed another source (GPS, RTC); `source` says which one set the clock last. SNTP, when enabled and reachable, wins over `set` but not over `external`.
 - `external()` takes the API lock (recursive): call it from `dev.onTick()`, a handler or any task that may wait as long as the longest API operation, never from a time-critical one such as a control loop. Such a task hands the time over (a copy under its own lock) and the application calls `external()` from `onTick`.
-- `dev.onTimeSynced(fn)` fires on the first valid time after boot (timers and sun trackers wait for it).
+- `dev.onTimeSynced(fn)` fires on the first valid time after boot (timers and sun trackers wait for it), under the API lock (§4.2).
 - SNTP's first request usually goes out before Wi-Fi is up; when the device comes online unsynced, Time asks again at once rather than at SNTP's next retry.
 - The `timezone` widget (TesserUI follow-up, §14) offers IANA names and writes the POSIX string the browser derives from them; until it exists, `tz` is a text field with an example placeholder.
 

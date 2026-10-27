@@ -59,7 +59,9 @@ public:
     // The presses' actions; by default the access point, restart, factory
     // reset.
     Board& actions(Action shortPress, Action longPress, Action veryLongPress);
-    // Presses whose action is Application, in the device's task.
+    // Presses whose action is Application, under the API lock: in the
+    // device's task for the button, in the request's task for
+    // /sys/board/button/press.
     Board& onPress(std::function<void(Press)> fn);
 
     void describe(tesser::Object& o) override;

@@ -83,7 +83,8 @@ public:
     // are loaded: for an application that keeps its board in its own
     // settings. `choose` fills the board, or returns false for none: then
     // /sys/network/ethernet, which exists from the start, says "no board"
-    // and Network runs as without Ethernet.
+    // and Network runs as without Ethernet. Called once, as Network starts
+    // in Device::begin(): in the task that calls it, without the API lock.
     Network& ethernet(std::function<bool(EthernetBoard&)> choose);
 
     void describe(tesser::Object& o) override;
