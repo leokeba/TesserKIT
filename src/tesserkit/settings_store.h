@@ -51,7 +51,8 @@ public:
     // Why the last refused record was refused ("" once every record fits).
     const std::string& refused() const { return refused_; }
     // A save that couldn't be made yet (no memory, or the write failed),
-    // which TesserAPI tries again; "" once it is.
+    // which TesserAPI tries again; "" once every record waiting is saved.
+    // Kept per record: another record's save doesn't clear it.
     const std::string& waiting() const { return waiting_; }
 
     // Whether NVS can keep rewriting a record of `record` bytes beside
@@ -81,8 +82,10 @@ private:
     std::map<std::string, size_t, std::less<>> sizes_;  // what each stored record takes
     std::map<std::string, std::string, std::less<>> refusals_;
     std::string refused_;
-    std::string waiting_;
+    std::map<std::string, std::string, std::less<>> waits_;  // per record
+    std::string waiting_;  // one of waits_, "" when none
     void wait(std::string_view key, const char* why);
+    void saved(std::string_view key);  // `key`'s record no longer waits
 };
 
 // What moveSettings() found and did.

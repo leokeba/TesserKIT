@@ -523,6 +523,38 @@ TEST(settings_backup_and_restore_on_files) {
     CHECK(r.onDisk("backups/one.json"));
 }
 
+// A record waiting to be saved stays told until it is saved, whatever other
+// records save meanwhile.
+TEST(settings_waiting_is_per_record) {
+    struct Failing : tesser::MemoryStorage {
+        std::string failing;
+        bool save(std::string_view key, const std::string& data) override {
+            return key != failing && tesser::MemoryStorage::save(key, data);
+        }
+    } inner;
+    tesserkit::SettingsStore store;
+    store.wrap(&inner, 0);
+    inner.failing = "sys";
+    CHECK(!store.save("sys", "{}"));
+    std::string sys = "\"sys\" waiting to be saved: the write failed";
+    CHECK_EQ(store.waiting(), sys);
+    CHECK(store.save("app", "{}"));
+    CHECK_EQ(store.waiting(), sys);  // still waiting
+    inner.failing = "app";
+    CHECK(!store.save("app", "{}"));
+    CHECK(store.waiting() != "");
+    inner.failing = "";
+    CHECK(store.save("app", "{}"));
+    CHECK_EQ(store.waiting(), sys);
+    CHECK(store.save("sys", "{}"));
+    CHECK_EQ(store.waiting(), "");
+    // A record removed waits no more.
+    inner.failing = "sys";
+    CHECK(!store.save("sys", "{}"));
+    CHECK(store.remove("sys"));
+    CHECK_EQ(store.waiting(), "");
+}
+
 // An update that changes the settings version migrates and rewrites every
 // record at its first boot, before its image is confirmed. The records as
 // they were are kept first as a stored backup, which the older firmware

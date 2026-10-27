@@ -88,7 +88,7 @@ bool SettingsStore::save(std::string_view key, const std::string& data) {
         wait(key, "the write failed");
         return false;
     }
-    waiting_.clear();
+    saved(key);
     sizes_[std::string(key)] = data.size();
     auto it = refusals_.find(key);
     if (it != refusals_.end()) {
@@ -101,15 +101,26 @@ bool SettingsStore::save(std::string_view key, const std::string& data) {
 // Told once per reason: TesserAPI tries the save again every 50 ms.
 void SettingsStore::wait(std::string_view key, const char* why) {
     std::string w = "\"" + std::string(key) + "\" waiting to be saved: " + why;
-    if (w == waiting_) return;
+    auto it = waits_.find(key);
+    if (it != waits_.end() && it->second == w) return;
+    tesser::logError("tesserkit: settings %s", w.c_str());
+    waits_[std::string(key)] = w;
     waiting_ = std::move(w);
-    tesser::logError("tesserkit: settings %s", waiting_.c_str());
+}
+
+void SettingsStore::saved(std::string_view key) {
+    auto it = waits_.find(key);
+    if (it == waits_.end()) return;
+    bool shown = it->second == waiting_;
+    waits_.erase(it);
+    if (shown) waiting_ = waits_.empty() ? std::string() : waits_.begin()->second;
 }
 
 bool SettingsStore::remove(std::string_view key) {
     if (!inner_) return false;
     tesser::Reservation held;
     if (!reserve(held) || !inner_->remove(key)) return false;
+    saved(key);  // nothing left to save
     auto s = sizes_.find(key);
     if (s != sizes_.end()) sizes_.erase(s);
     auto it = refusals_.find(key);
@@ -124,6 +135,8 @@ bool SettingsStore::erase() {
     sizes_.clear();
     refusals_.clear();
     refused_.clear();
+    waits_.clear();
+    waiting_.clear();
     return inner_ ? inner_->erase() : false;
 }
 
