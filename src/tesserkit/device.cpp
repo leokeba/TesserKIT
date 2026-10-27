@@ -390,11 +390,6 @@ void Device::loop() {
     if (!started_) return;
     uint32_t now = static_cast<uint32_t>(core().uptimeMs());
     lastNowMs_ = now;
-    if (secureGen_ != strictSecureGen_ || hostnameGeneration_ != strictHostGen_) {
-        strictSecureGen_ = secureGen_;
-        strictHostGen_ = hostnameGeneration_;
-        if (httpPort_) applyStrict();
-    }
     std::vector<Event> events;
     uint32_t dropped, mqttDropped;
     {
@@ -424,6 +419,14 @@ void Device::loop() {
         }
         for (Service* s = services_; s; s = s->next_) s->tick(now);
         updateState(now);
+        // Under the lock: the hostname and secure mode change in setters and
+        // ticks that hold it, and applyStrict() copies the hostname for the
+        // HTTP task (HttpServer::strict() takes only a leaf lock of its own).
+        if (secureGen_ != strictSecureGen_ || hostnameGeneration_ != strictHostGen_) {
+            strictSecureGen_ = secureGen_;
+            strictHostGen_ = hostnameGeneration_;
+            if (httpPort_) applyStrict();
+        }
     }
     api_.poll(now);
     poll();
