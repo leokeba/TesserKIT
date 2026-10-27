@@ -388,6 +388,11 @@ void describe(tesser::Object& o, FileMove& m) {
 }
 
 void Files::touched(std::string_view rel, bool unknown) {
+    // The stored backups are listed again only for a change there.
+    size_t n = strlen(kBackupDir);
+    if (unknown || (rel.compare(0, n, kBackupDir) == 0 && (rel.size() == n || rel[n] == '/'))) {
+        backupsChanged_.store(true);
+    }
     std::string dir;
     if (!unknown) {
         size_t slash = rel.rfind('/');
@@ -408,8 +413,9 @@ void Files::touched(std::string_view rel, bool unknown) {
     generation_.fetch_add(1);
 }
 
-void Files::refresh() {
+void Files::refresh(uint32_t nowMs) {
     listed_ = generation();
+    refreshedAtMs_ = nowMs;
     if (mounted_) {
         uint64_t total = 0, used = 0;
         if (fs_->usage(total, used)) {
@@ -508,7 +514,7 @@ void Files::describe(tesser::Object& o) {
          // or a short heap then would lose them all, Wi-Fi's included.
          bool ok = settings_ ? eraseFiles() : fs_->format();
          changed();
-         refresh();
+         refresh(dev_.loopMs());
          return ok ? Check::ok() : Check::fail(Status::Internal, "the filesystem couldn't be formatted");
      })
         .label("Erase every file")
@@ -592,17 +598,22 @@ bool Files::eraseFiles() {
 void Files::start() {
     mount();  // done already if the settings are here
     generation_.fetch_add(1);  // read at the first tick; no client listed anything yet
-    refresh();
+    refresh(dev_.loopMs());
     // A file larger than the partition is refused before it is sent.
     if (mounted_) fileNode_->maxSize(total_);
+    backupsChanged_.store(false);
     refreshBackups();
 }
 
 void Files::tick(uint32_t nowMs) {
-    (void)nowMs;
-    if (generation() != listed_) {
-        refresh();
-        refreshBackups();
+    // The usage and the stored backups follow changes at most every
+    // kRefreshMs; `changed` below goes out at once.
+    if (nowMs - refreshedAtMs_ >= kRefreshMs) {
+        if (generation() != listed_) refresh(nowMs);
+        if (backupsChanged_.exchange(false)) {
+            refreshedAtMs_ = nowMs;
+            refreshBackups();
+        }
     }
     std::vector<std::string> dirs;
     {

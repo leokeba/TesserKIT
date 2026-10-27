@@ -690,6 +690,7 @@ struct Filesystem : tesserkit::Filesystem {
     bool unmountable = false; // a LittleFS that doesn't mount: left as it is
     std::string label, root;  // what mount() got
     int formats = 0;
+    int usages = 0;  // usage() calls: a walk of the whole filesystem on LittleFS
     bool mount(const char* label, const char* root, std::string& why) override;
     bool usage(uint64_t& total, uint64_t& used) override;
     bool format() override;

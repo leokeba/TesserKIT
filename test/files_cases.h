@@ -96,7 +96,7 @@ TEST(files_upload_and_list_by_path) {
     CHECK_EQ(at(l.body, "entries/0/size"), "5000");
     CHECK_EQ(at(l.body, "entries/0/dir"), "false");
     CHECK_EQ(at(l.body, "truncated"), "false");
-    r.step();
+    r.run(2000);  // the usage is read again at most every 2 s
     CHECK_EQ(r.value("/sys/files/used"), "5000");
     std::string served;
     rig::Reply d = r.fetch("/notes.txt", &served);
@@ -231,6 +231,51 @@ TEST(files_changed_events) {
     CHECK_EQ(took(), "");
 }
 
+// The usage is a walk of the whole filesystem on LittleFS: read again at
+// most every 2 s, however many changes come; the stored backups are listed
+// again only for a change in their folder. `changed` isn't held back.
+TEST(files_refresh_is_rate_limited) {
+    FilesRig r;
+    CHECK(r.dev.begin());
+    r.set("/sys/backup/save", "\"kept\"");
+    r.run(3000);
+    rig::Events ev(r, "/sys/files/changed");
+    tesser::LocalClient watch(r.dev.api());
+    int storedChanges = 0;
+    watch.onNotification([&storedChanges](JsonObjectConst) { storedChanges++; });
+    watch.subscribe("/sys/backup/stored", [](Status, JsonVariantConst) {});
+    watch.process();
+    storedChanges = 0;
+
+    int before = r.fake.fs.usages;
+    for (int i = 0; i < 20; i++) {
+        CHECK(r.files.write("log/" + std::to_string(i) + ".txt", "line").isOk());
+        r.step();
+        CHECK(!ev.take().empty());  // each change told at the next tick
+    }
+    CHECK(r.fake.fs.usages - before <= 1);  // 400 ms of writes: one walk at most
+    r.run(2000);
+    CHECK(r.fake.fs.usages - before <= 2);
+    std::string used = r.value("/sys/files/used");
+    CHECK(used != "0");
+    CHECK(r.set("/sys/files/delete", "\"/log\"").status == Status::Ok);
+    r.run(2000);
+    CHECK(r.value("/sys/files/used") != used);  // the last change is counted
+    watch.process();
+    CHECK_EQ(storedChanges, 0);  // nothing changed in backups/
+
+    // A file the application puts in backups/ is listed, within 2 s.
+    CHECK(r.files.write("backups/mine.json", "{}").isOk());
+    r.run(2000);
+    CHECK(r.names("/sys/backup/stored").find("mine") != std::string::npos);
+    watch.process();
+    CHECK(storedChanges > 0);
+    // As after an erase, which changes everything.
+    CHECK_EQ(r.set("/sys/files/format").status, Status::Ok);
+    r.run(2000);
+    CHECK_EQ(r.names("/sys/backup/stored"), "");
+}
+
 TEST(files_application_writes) {
     FilesRig r;
     CHECK(r.dev.begin());
@@ -282,7 +327,7 @@ TEST(backup_store_and_restore) {
     std::string before;
     CHECK(r.files.read("backups/before-restore.json", before, 16384).isOk());
     CHECK_EQ(at(before, "app/level"), "8");
-    r.step();
+    r.run(2000);
     CHECK(r.names("/sys/backup/stored").find("before-restore") != std::string::npos);
     CHECK_EQ(r.set("/sys/backup/stored/first/delete").status, Status::Ok);
     CHECK(!r.onDisk("backups/first.json"));

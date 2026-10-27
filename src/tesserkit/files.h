@@ -157,8 +157,8 @@ protected:
     Files* asFiles() override { return this; }
 
 private:
-    // The usage, read again.
-    void refresh();
+    // The usage, read again (LittleFS walks the whole filesystem for it).
+    void refresh(uint32_t nowMs);
     void refreshBackups();  // stored_backups.cpp
     void listCall(const std::string& dir, tesser::Call& call) const;
 
@@ -176,7 +176,14 @@ private:
     std::unique_ptr<tesser::FileStorage> settingsFiles_;
     uint64_t total_ = 0, used_ = 0;
     std::atomic<uint32_t> generation_{0};
-    uint32_t listed_ = 0;  // the generation the usage and backups show
+    uint32_t listed_ = 0;  // the generation the usage shows
+    // The usage is read again at most this often: a burst of writes (an
+    // application logging, an upload's neighbours) costs one walk.
+    static constexpr uint32_t kRefreshMs = 2000;
+    uint32_t refreshedAtMs_ = 0;
+    // Something in kBackupDir, or the directory itself, changed since the
+    // stored backups were listed (or something unknown did).
+    std::atomic<bool> backupsChanged_{false};
     // The directories changed since the last tick, as `changed` sends them
     // ("/", "/www"; "" for unknown), under pendingLock_.
     tesser::Mutex pendingLock_{tesser::kRankLeaf, "files"};

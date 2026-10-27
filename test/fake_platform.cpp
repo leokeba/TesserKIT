@@ -541,6 +541,7 @@ bool Filesystem::mount(const char* l, const char* r, std::string& why) {
 }
 
 bool Filesystem::usage(uint64_t& t, uint64_t& used) {
+    usages++;
     t = total;
     used = walk(dir, false, false);
     return true;
