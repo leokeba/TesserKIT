@@ -23,6 +23,16 @@ namespace {
 
 constexpr uint16_t kMaxScanResults = 20;
 
+// `s` into a fixed field of ESP-IDF's Wi-Fi config, which needn't end with a
+// NUL when full (an SSID of 32 characters, a 64-digit PSK): what strncpy()
+// did, into a config that starts zeroed. GCC 15 warns at -O2 that strncpy()
+// with the field's size may leave it unterminated (-Wstringop-truncation),
+// which is the point here; memcpy() says so without silencing anything.
+template <size_t N>
+void copyField(uint8_t (&field)[N], const std::string& s) {
+    memcpy(field, s.data(), s.size() < N ? s.size() : N);
+}
+
 class EspWifi : public Wifi {
 public:
     void begin(const char* hostname, EventSink sink) override {
@@ -106,8 +116,8 @@ public:
     bool connect(const StaConfig& c) override {
         if (linked_) esp_wifi_disconnect();
         wifi_config_t config = {};
-        strncpy(reinterpret_cast<char*>(config.sta.ssid), c.ssid.c_str(), sizeof(config.sta.ssid));
-        strncpy(reinterpret_cast<char*>(config.sta.password), c.password.c_str(), sizeof(config.sta.password));
+        copyField(config.sta.ssid, c.ssid);
+        copyField(config.sta.password, c.password);
         config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
         config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
         config.sta.threshold.authmode = WIFI_AUTH_OPEN;  // accept whatever the network uses
@@ -140,7 +150,7 @@ public:
         size_t len = c.ssid.size() < sizeof(config.ap.ssid) ? c.ssid.size() : sizeof(config.ap.ssid);
         memcpy(config.ap.ssid, c.ssid.data(), len);
         config.ap.ssid_len = static_cast<uint8_t>(len);
-        strncpy(reinterpret_cast<char*>(config.ap.password), c.password.c_str(), sizeof(config.ap.password));
+        copyField(config.ap.password, c.password);
         config.ap.channel = c.channel;
         config.ap.authmode = c.password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
         config.ap.ssid_hidden = c.hidden ? 1 : 0;
