@@ -22,5 +22,8 @@ CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
 # What the classic ESP32 gives up for room, back.
 CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE=y
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+# ESP-IDF's full CA bundle (about 42 KB more than the full set's common one):
+# any broker's root.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 # sACN beside Art-Net (2026-10-23).
 CONFIG_FULL_SACN=y

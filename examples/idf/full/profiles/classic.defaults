@@ -12,5 +12,8 @@ CONFIG_FULL_PROFILE="classic"
 # buffers rather than six (about 6.4 KB of heap): more throughput under load.
 CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE=y
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+# ESP-IDF's full CA bundle (about 42 KB more than the full set's common one):
+# any broker's root.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 # sACN beside Art-Net (2026-10-23): the full set leaves it out for room.
 CONFIG_FULL_SACN=y
