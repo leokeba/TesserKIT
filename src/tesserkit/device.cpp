@@ -271,7 +271,7 @@ std::string Device::defaultHostname() const {
 }
 
 bool Device::begin() {
-    if (started_) return true;
+    if (started_) return startRest();
     // Take this device's services from the registered ones, in order.
     Service** tail = &services_;
     while (*tail) tail = &(*tail)->next_;
@@ -345,8 +345,20 @@ bool Device::begin() {
         tesser::Lock lock(api_);
         updateState(lastNowMs_);
     }
-    if (httpPort_ && !startServer()) return false;
-    if (ownTask_ && !startTask()) return false;
+    return startRest();
+}
+
+bool Device::startRest() {
+    // Each once: a begin() called again after one failed (no memory for
+    // the server) tries what is left, without starting the services again.
+    if (httpPort_ && !serverStarted_) {
+        if (!startServer()) return false;
+        serverStarted_ = true;
+    }
+    if (ownTask_ && !taskStarted_) {
+        if (!startTask()) return false;
+        taskStarted_ = true;
+    }
     return true;
 }
 

@@ -181,7 +181,9 @@ public:
     static constexpr uint16_t kSettingsVersion = 3;
 
     // Mounts the services, loads the persisted state, starts the services,
-    // the HTTP server and the task. False if the platform is missing.
+    // the HTTP server and the task. False if the platform is missing, or
+    // the server or the task didn't start; called again then, it tries
+    // those again (the services start once).
     bool begin();
     // One period of the device's task: platform events, persistence,
     // notifications, the services' ticks. Only with task(false).
@@ -332,6 +334,9 @@ private:
     // again when the hostname changes. Platform side; nothing on the host.
     void applyStrict();
     bool startTask();
+    // The HTTP server and the task, each until it started (begin()).
+    bool startRest();
+    bool serverStarted_ = false, taskStarted_ = false;
     // NVS (Platform::nvs, which the ESP side fills), or null.
     tesser::Storage* nvsStorage();
     // The default storage: the filesystem's, or NVS (docs/DESIGN.md section
