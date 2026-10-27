@@ -163,12 +163,15 @@ private:
     bool routeVia(NetIf& out) const;
     void updateRoute();
     void refillDns(uint32_t nowMs);
-    StaConfig config(const WifiNetwork& n) const;
+    // `warn`: where the setup is applied, so a static address without its
+    // fields is logged once per use, not at every read (refillDns(), each
+    // scan).
+    StaConfig config(const WifiNetwork& n, bool warn = false) const;
     const WifiNetwork* find(const std::string& ssid) const;
     uint32_t apFingerprint() const;
     uint32_t settingsFingerprint() const;
     uint32_t ethFingerprint() const;
-    IpConfig ethConfig() const;
+    IpConfig ethConfig(bool warn = false) const;
     std::string apSsid() const { return apSsid_.empty() ? dev_.hostname() : apSsid_; }
 
     Wifi* wifi_ = nullptr;

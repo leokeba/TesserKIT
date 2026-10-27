@@ -71,7 +71,9 @@ tesser::Object& describeStatic(tesser::Object& parent, StaticIp& ip, std::vector
 
 // The setup a static address's settings make: DHCP unless they are enabled
 // and have an address. The fields' validators refuse a malformed address or
-// mask; an empty gateway is a network without a router (gateway 0).
+// mask; an empty gateway is a network without a router (gateway 0). `what`
+// names the interface in the warning when they are enabled without an
+// address; null: no warning (the setup read, not applied).
 IpConfig ipConfig(const StaticIp& s, const char* what) {
     IpConfig c;
     if (!s.enabled) return c;
@@ -79,7 +81,7 @@ IpConfig ipConfig(const StaticIp& s, const char* what) {
     if (!c.staticIp) {
         // Validators see one field at a time, so "enabled" with no address
         // yet can't be refused (DESIGN.md section 5.2).
-        tesser::logWarning("tesserkit: no static address for %s, using DHCP", what);
+        if (what) tesser::logWarning("tesserkit: no static address for %s, using DHCP", what);
         return IpConfig();
     }
     if (!parseIpv4(s.gateway, c.gateway)) c.gateway = 0;
@@ -504,7 +506,7 @@ void Network::start() {
         ethStatus_->changed();
     }
     if (eth_) {
-        if (eth_->begin(ethBoard_, dev.hostname().c_str(), ethConfig(), [&dev](Event e) { dev.post(std::move(e)); })) {
+        if (eth_->begin(ethBoard_, dev.hostname().c_str(), ethConfig(true), [&dev](Event e) { dev.post(std::move(e)); })) {
             EthInfo i;
             if (eth_->info(i)) {
                 memcpy(ethMacBytes_, i.mac, sizeof(ethMacBytes_));
@@ -562,7 +564,7 @@ uint32_t Network::ethFingerprint() const {
     return sum;
 }
 
-IpConfig Network::ethConfig() const { return ipConfig(ethStatic_, "Ethernet"); }
+IpConfig Network::ethConfig(bool warn) const { return ipConfig(ethStatic_, warn ? "Ethernet" : nullptr); }
 
 const WifiNetwork* Network::find(const std::string& ssid) const {
     for (const WifiNetwork& n : networks_) {
@@ -571,9 +573,10 @@ const WifiNetwork* Network::find(const std::string& ssid) const {
     return nullptr;
 }
 
-StaConfig Network::config(const WifiNetwork& n) const {
+StaConfig Network::config(const WifiNetwork& n, bool warn) const {
     StaConfig c;
-    static_cast<IpConfig&>(c) = ipConfig(n.ip, (std::string("\"") + n.ssid + "\"").c_str());
+    std::string what = warn ? "\"" + std::string(n.ssid) + "\"" : std::string();
+    static_cast<IpConfig&>(c) = ipConfig(n.ip, warn ? what.c_str() : nullptr);
     c.ssid = n.ssid;
     c.password = n.password;
     // Its access point only, when the last scan heard it (or heard nothing:
@@ -730,7 +733,7 @@ void Network::connectNext(uint32_t nowMs) {
     while (candidate_ < candidates_.size()) {
         const WifiNetwork* n = find(candidates_[candidate_++]);
         if (!n) continue;
-        current_ = config(*n);
+        current_ = config(*n, true);  // applied
         if (wifi_->connect(current_)) {
             sta_ = Sta::Connecting;
             sinceMs_ = nowMs;
@@ -1125,7 +1128,7 @@ void Network::checkSettings(uint32_t nowMs) {
 }
 
 void Network::ethReaddress(uint32_t nowMs) {
-    IpConfig c = ethConfig();
+    IpConfig c = ethConfig(true);
     ethStaticOn_ = c.staticIp;
     eth_->address(c);
     // The old address goes with the old settings: a static one is there at
