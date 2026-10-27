@@ -42,11 +42,7 @@ namespace {
 // The LED: CONFIG_FULL_LED_GPIO, by default GPIO 2, the blue LED of most
 // ESP32 devkits, dimmed with PWM. Each write applies at once, whoever makes it
 // (the interface, a timer, Art-Net, MQTT, a node nearby, the settings
-// restored at boot). Only the brightness is persisted: `on` and `dimmer` are
-// what the blink, Art-Net and the other automatic writers drive, and a write
-// to a persisted node saves the settings (2 s later), which a blink or a
-// console at 44 frames a second would do every 2 s for as long as it runs
-// (docs/DESIGN.md section 5.9).
+// restored at boot).
 constexpr int kLedGpio = CONFIG_FULL_LED_GPIO;
 
 // The release asset this build updates from: tesserkit-<profile>-<target>.bin,
@@ -60,7 +56,6 @@ constexpr int kLedGpio = CONFIG_FULL_LED_GPIO;
 
 struct Led {
     bool on = false;
-    int dimmer = 255;  // scales the brightness: Art-Net's channel 1
     int brightness = 128;
 
     void begin() {
@@ -80,21 +75,17 @@ struct Led {
         apply();
     }
     void apply() const {
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, on ? static_cast<uint32_t>(brightness * dimmer / 255) : 0);
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, on ? static_cast<uint32_t>(brightness) : 0);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
     }
 };
 
 void describe(tesser::Object& o, Led& led) {
-    o.value("on", [&led] { return led.on; }, [&led](bool on) { led.on = on; led.apply(); });
+    o.value("on", [&led] { return led.on; }, [&led](bool on) { led.on = on; led.apply(); }).persist();
     o.value("brightness", [&led] { return led.brightness; }, [&led](int b) { led.brightness = b; led.apply(); })
         .range(0, 255)
         .step(5)
         .persist();
-    o.value("dimmer", [&led] { return led.dimmer; }, [&led](int d) { led.dimmer = d; led.apply(); })
-        .range(0, 255)
-        .doc("Scales the brightness, for a show (Art-Net's channel 1); not kept across restarts")
-        .ui("advanced");
 }
 
 Led led;
@@ -261,10 +252,8 @@ extern "C" void app_main() {
 #endif
 #if CONFIG_FULL_ARTNET
     // Universe 0: channel 1 dims the LED, channel 2 above half switches it on.
-    // Neither node is persisted: a console's frames would save the settings
-    // every 2 s.
     tesserkit::ArtNetMapping brightness;
-    brightness.path = "/led/dimmer";
+    brightness.path = "/led/brightness";
     brightness.coarse = 1;
     brightness.max = 255;
     tesserkit::ArtNetMapping on;

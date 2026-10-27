@@ -309,6 +309,10 @@ void DmxService::apply(const uint8_t* dmx, size_t len) {
         if (v.empty() || v == sent_[i]) continue;
         sent_[i] = v;
         std::string path = m.path;
+        // Not saved: a fader rewrote a persisted node's record every 2 s
+        // for as long as it moved (docs/DESIGN.md section 5.9).
+        tesser::Query unsaved;
+        unsaved.persist = false;
         client_->set(path, v, [this, path](Status s, JsonVariantConst body) {
             if (s == Status::Ok) {
                 // A path that works again clears its error.
@@ -318,7 +322,7 @@ void DmxService::apply(const uint8_t* dmx, size_t len) {
             std::string e = path + ": " + tesser::toString(s);
             if (const char* msg = body["message"]) e = e + ": " + msg;
             failed(e);
-        });
+        }, unsaved);
     }
 }
 

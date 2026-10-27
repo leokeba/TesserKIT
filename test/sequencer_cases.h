@@ -63,6 +63,27 @@ TEST(sequencer_plays_steps_in_turn) {
     CHECK_EQ(r.value("/sequencer/status/step"), "-1");
 }
 
+// A step's write and finally's aren't saved (DESIGN 5.13): a looping
+// sequence on a persisted node rewrote its record every 2 s.
+TEST(sequencer_writes_arent_saved) {
+    SeqRig r;
+    int level = 0;
+    r.dev.api().object("dim").value("level", level).range(0, 255).persist();
+    r.seq.add(r.mk("up", "/dim/level", "200", Wait::Time, 100, "")).finally("/dim/level", "201");
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.play(""), Status::Ok);
+    r.run(200);
+    CHECK_EQ(level, 201);
+    r.run(3000);  // past TesserAPI's 2 s debounce
+    std::string stored;
+    bool kept = !r.storage.load("dim", stored);
+    CHECK(kept || (stored.find("200") == std::string::npos && stored.find("201") == std::string::npos));
+    CHECK_EQ(r.set("/dim/level", "7").status, Status::Ok);
+    r.run(3000);
+    CHECK(r.storage.load("dim", stored));
+    CHECK(stored.find("7") != std::string::npos);
+}
+
 TEST(sequencer_waits_for_replies) {
     SeqRig r;
     r.seq.add(r.mk("move", "/led/move", "null", Wait::Reply, 0, "+1"))

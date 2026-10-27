@@ -29,6 +29,14 @@ constexpr size_t kStepRef = 24;
 // stalled task) isn't caught up.
 constexpr uint32_t kPeriodMs = 20;
 
+// A step's write isn't saved: a looping sequence on a persisted node
+// rewrote its record every 2 s (docs/DESIGN.md section 5.13).
+tesser::Query unsaved() {
+    tesser::Query q;
+    q.persist = false;
+    return q;
+}
+
 bool nameOk(std::string_view s) { return s.empty() || !(s[0] == '+' || s[0] == '-' || (s[0] >= '0' && s[0] <= '9')); }
 
 int toIndex(std::string_view s) {
@@ -290,7 +298,7 @@ void Sequencer::begin(int index, uint32_t nowMs) {
             failed(what, r);
         }
         if (token == token_) replied_ = true;
-    });
+    }, unsaved());
     if (!sent) {
         failed(what, "not sent");
         replied_ = true;
@@ -327,7 +335,7 @@ void Sequencer::end(bool runFinally) {
         std::string r = tesser::toString(st);
         if (const char* m = body["message"]) r = r + ": " + m;
         failed("finally", r);
-    });
+    }, unsaved());
     if (!sent) failed("finally", "not sent");
 }
 

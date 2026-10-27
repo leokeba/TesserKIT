@@ -142,6 +142,25 @@ TEST(artnet_writes_only_changes) {
     CHECK_EQ(r.writes, 3);
 }
 
+// A mapping's writes aren't saved (DESIGN 5.9): a fader on a persisted node
+// rewrote its record every 2 s. An ordinary write still is.
+TEST(artnet_writes_arent_saved) {
+    ArtNetRig r;
+    int level = 0;
+    r.dev.api().object("dim").value("level", level).range(0, 255).persist();
+    r.artnet.map(mapping("/dim/level", 1, 0, 0, 255));
+    CHECK(r.dev.begin());
+    r.send(dmx(0, {200}));
+    CHECK_EQ(level, 200);
+    r.run(3000);  // past TesserAPI's 2 s debounce
+    std::string stored;
+    CHECK(!r.storage.load("dim", stored) || stored.find("200") == std::string::npos);
+    CHECK_EQ(r.set("/dim/level", "7").status, Status::Ok);
+    r.run(3000);
+    CHECK(r.storage.load("dim", stored));
+    CHECK(stored.find("7") != std::string::npos);
+}
+
 TEST(artnet_listens_to_its_universe) {
     ArtNetRig r;
     r.artnet.universe(0x123).map(mapping("/led/brightness", 1, 0, 0, 255));
