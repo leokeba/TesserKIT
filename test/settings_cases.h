@@ -600,7 +600,7 @@ TEST(settings_kept_before_an_update) {
         CHECK(kept.find("\"boots\":7") != std::string::npos);  // as stored, for the firmware that stored it
         CHECK(kept.find("\"gone\":1") != std::string::npos);
         CHECK(kept.find("\"app\":{\"level\":4}") != std::string::npos);
-        CHECK(kept.find(key) == std::string::npos);  // the token key stays out of backups
+        CHECK(kept.find(key) != std::string::npos);  // copied as stored; a restore skips it
         CHECK(r.value("/sys/backup/stored").find("before-update") != std::string::npos);
         // Migrated meanwhile.
         CHECK(r.file(".settings/sys.json").find("boots") == std::string::npos);

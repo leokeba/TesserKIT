@@ -144,8 +144,9 @@ public:
     virtual tesser::Check storeBackup(Backup& backup, const std::string& name, std::string* saved);
     // Stores `settings`' records as a backup named kBeforeUpdate, under
     // `version`, the settings version they were stored under: at boot,
-    // before TesserAPI migrates and rewrites them. Without the nodes kept
-    // out of backups (the token key). Nothing stored: nothing to keep.
+    // before TesserAPI migrates and rewrites them. Each record as stored,
+    // what backups leave out (the token key) included, which a restore
+    // skips. Nothing stored: nothing to keep.
     virtual tesser::Check storeBeforeUpdate(tesser::Storage& settings, uint32_t version);
 
 protected:
