@@ -92,3 +92,9 @@ CONFIG_ESP_WIFI_ENABLE_WPA3_OWE_SOFTAP=n
 # Ethernet without a DHCP server (a cable straight to a computer): a
 # link-local address (169.254/16) while DHCP keeps asking (DESIGN.md 5.2).
 CONFIG_LWIP_AUTOIP=y
+
+# IPv4 only: every address in TesserKIT, TesserAPI and NowTP is IPv4, and
+# the stack's IPv6 (ND, MLD, the link-local address and mDNS's AAAA
+# answers) costs about 25 KB of flash and 1.8 KB of static RAM, plus its
+# heap at run time. Needs TesserAPI b92a555 or later.
+CONFIG_LWIP_IPV6=n

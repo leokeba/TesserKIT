@@ -17,3 +17,6 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 # The console's UART also carries the API (the launcher's USB way): the
 # launcher skips log lines, but one written in the middle of a reply breaks it.
 CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+# IPv4 only, as examples/idf/full (DESIGN.md 11): about 25 KB of flash and
+# 1.8 KB of static RAM. Needs TesserAPI b92a555 or later.
+CONFIG_LWIP_IPV6=n
