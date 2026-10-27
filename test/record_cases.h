@@ -299,7 +299,7 @@ TEST(record_worst_case_on_the_filesystem) {
     CHECK(sys.size() > tesserkit::SettingsStore::largest(20480, 0));
     CHECK(sys.size() <= kWorstSys);
     CHECK(sequencer.size() > 8000);
-    CHECK(r.fake.nvs.records.empty());
+    CHECK_EQ(r.fake.nvs.records.size(), 1u);  // the move's marker only
     // Read back whole.
     tesser::MemoryStorage copy;
     copy.records["sys"] = sys;

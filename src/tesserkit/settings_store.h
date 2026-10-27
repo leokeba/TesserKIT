@@ -66,7 +66,9 @@ public:
 
     // The record a filesystem holds once the settings were moved to it
     // (docs/DESIGN.md section 6.1): written after every record, so its
-    // absence means a move to do, or to do again.
+    // absence means a move to do, or to do again. NVS gets one too, so a
+    // filesystem that lost its settings later is told from one never moved
+    // to.
     static constexpr const char* kMoved = "@moved";
 
 private:
@@ -83,13 +85,25 @@ private:
     void wait(std::string_view key, const char* why);
 };
 
+// What moveSettings() found and did.
+enum class Moved : uint8_t {
+    Before,    // `to` holds the settings since an earlier boot
+    Now,       // moved by this call: the first boot with the filesystem
+    Restored,  // `to` had lost them (no marker, but `from` has one): `from`'s older copy moved again
+    Failed,    // a step of the move failed: they stay in `from` for this boot, `to` emptied
+    Unreadable,  // `to`'s marker couldn't be read: they stay in `from` for this boot, `to` untouched
+};
+
 // Moves the settings records named `keys` from `from` (NVS; null if there
-// is none) to `to` (a FileStorage), at boot (docs/DESIGN.md section 6.1).
-// True if `to` holds the settings now: moved before (what `from` still
-// holds of them is removed), or moved by this call (each record read back,
-// SettingsStore::kMoved written, then the records removed from `from`).
-// False if a step failed (`why` says which): `from` is untouched, and `to`
-// emptied again, so the next boot tries again.
-bool moveSettings(tesser::Storage* from, tesser::Storage& to, const std::vector<std::string>& keys, std::string& why);
+// is none) to `to` (TesserAPI's FileStorage), at boot (docs/DESIGN.md
+// section 6.1). Moving copies each record and reads it back, then writes
+// SettingsStore::kMoved to `to` and to `from`. `from` keeps its records, no
+// longer written: the device's fallback when the filesystem doesn't mount.
+// Only a marker `to` lacks (ENOENT, as FileStorage::load() leaves errno)
+// means a move to do; one it couldn't read is Unreadable. After a failed
+// step, `to` is emptied again, so the next boot tries again. `why` says why
+// for Failed and Unreadable, and what was lost for Restored.
+Moved moveSettings(tesser::Storage* from, tesser::Storage& to, const std::vector<std::string>& keys,
+                   std::string& why);
 
 }  // namespace tesserkit

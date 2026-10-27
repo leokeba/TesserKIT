@@ -87,8 +87,10 @@ TEST(settings_on_the_filesystem) {
     CHECK(r.file(".settings/sys.json").find("EST5EDT") != std::string::npos);
     CHECK_EQ(r.file(".settings/app.json"), "{\"level\":7}");
     CHECK_EQ(r.records(), "@moved,@version,app,sys");
-    CHECK(r.fake.nvs.records.empty());
-    CHECK_EQ(r.fake.nvs.saves, 0);
+    // NVS gets the move's marker only.
+    CHECK_EQ(r.fake.nvs.records.size(), 1u);
+    CHECK_EQ(r.fake.nvs.records["@moved"], "1");
+    CHECK_EQ(r.fake.nvs.saves, 1);
     std::string dir = r.keepDir();
 
     // The next boot loads them from there.
@@ -119,6 +121,7 @@ TEST(settings_moved_from_nvs) {
         CHECK_EQ(r.records(), "@moved,@version,app,sys");
         CHECK_EQ(r.file(".settings/sys.json"), nvs["sys"]);
         CHECK_EQ(r.file(".settings/app.json"), nvs["app"]);
+        nvs["@moved"] = "1";  // the move's marker
         CHECK(r.fake.nvs.records == nvs);  // kept, as they were
         CHECK_EQ(r.value("/sys/status/settings"), "\"\"");
         // Saved to the filesystem from now on, not to NVS.
@@ -159,7 +162,119 @@ TEST(settings_fall_back_to_nvs_copy) {
     CHECK(next.dev.begin());
     CHECK(!next.dev.settingsOnFiles());
     CHECK_EQ(next.value("/sys/time/tz"), "\"EST5EDT\"");
-    CHECK_EQ(next.value("/sys/status/settings"), "\"in NVS: the filesystem didn't mount\"");
+    CHECK_EQ(next.value("/sys/status/settings"),
+             "\"in NVS: the filesystem didn't mount; NVS's copy is older than the filesystem's\"");
+}
+
+// A LittleFS that doesn't mount (a power cut, no memory at boot) isn't
+// formatted: this boot runs on NVS's older copy and says so, and the next
+// boot that mounts it finds the newer settings there.
+TEST(settings_unmountable_filesystem_kept) {
+    std::string dir;
+    std::map<std::string, std::string> nvs = {
+        {"@version", std::to_string(tesserkit::Device::kSettingsVersion)},
+        {"sys", "{\"time\":{\"tz\":\"EST5EDT\"}}"},
+    };
+    {
+        SettingsRig r;
+        r.fake.nvs.records = nvs;
+        CHECK(r.dev.begin());
+        CHECK(r.dev.settingsOnFiles());
+        CHECK_EQ(r.set("/sys/time/tz", "\"PST8PDT\"").status, Status::Ok);
+        r.run(2500);
+        nvs = r.fake.nvs.records;
+        dir = r.keepDir();
+    }
+    {
+        SettingsRig r(dir);
+        r.fake.nvs.records = nvs;
+        r.fake.fs.unmountable = true;
+        CHECK(r.dev.begin());
+        CHECK(!r.dev.settingsOnFiles());
+        CHECK_EQ(r.fake.fs.formats, 0);
+        CHECK(r.file(".settings/sys.json").find("PST8PDT") != std::string::npos);
+        CHECK_EQ(r.value("/sys/time/tz"), "\"EST5EDT\"");  // NVS's
+        CHECK_EQ(r.value("/sys/status/settings"),
+                 "\"in NVS: the filesystem didn't mount (its LittleFS didn't mount, left as it is); NVS's copy is "
+                 "older than the filesystem's\"");
+        nvs = r.fake.nvs.records;
+        dir = r.keepDir();
+    }
+    SettingsRig next(dir);
+    next.fake.nvs.records = nvs;
+    CHECK(next.dev.begin());
+    CHECK(next.dev.settingsOnFiles());
+    CHECK_EQ(next.value("/sys/time/tz"), "\"PST8PDT\"");
+    CHECK_EQ(next.value("/sys/status/settings"), "\"\"");
+}
+
+// A filesystem that lost the settings after the move (formatted, its
+// superblock gone) has no marker, but NVS has one: NVS's older copy is moved
+// again, and the boot says what was lost rather than looking like a first
+// move.
+TEST(settings_lost_by_the_filesystem_reported) {
+    std::string dir;
+    std::map<std::string, std::string> nvs = {
+        {"@version", std::to_string(tesserkit::Device::kSettingsVersion)},
+        {"sys", "{\"time\":{\"tz\":\"EST5EDT\"}}"},
+    };
+    {
+        SettingsRig r;
+        r.fake.nvs.records = nvs;
+        CHECK(r.dev.begin());
+        CHECK_EQ(r.set("/sys/time/tz", "\"PST8PDT\"").status, Status::Ok);
+        r.run(2500);
+        nvs = r.fake.nvs.records;
+        CHECK_EQ(nvs["@moved"], "1");
+        // Lost.
+        for (const char* f : {"@moved", "@version", "sys"}) unlink(r.path(std::string(".settings/") + f + ".json").c_str());
+        dir = r.keepDir();
+    }
+    SettingsRig next(dir);
+    next.fake.nvs.records = nvs;
+    CHECK(next.dev.begin());
+    CHECK(next.dev.settingsOnFiles());
+    CHECK_EQ(next.value("/sys/time/tz"), "\"EST5EDT\"");
+    CHECK_EQ(next.value("/sys/status/settings"),
+             "\"the filesystem had lost the settings: NVS's older copy restored\"");
+    CHECK_EQ(next.records(), "@moved,@version,sys");
+}
+
+// A device moved before NVS got markers gets one at its next boot.
+TEST(settings_nvs_marker_added_later) {
+    std::string dir;
+    {
+        SettingsRig r;
+        CHECK(r.dev.begin());
+        r.run(2500);
+        r.fake.nvs.records.clear();
+        dir = r.keepDir();
+    }
+    SettingsRig next(dir);
+    CHECK(next.dev.begin());
+    CHECK(next.dev.settingsOnFiles());
+    CHECK_EQ(next.fake.nvs.records["@moved"], "1");
+    CHECK_EQ(next.value("/sys/status/settings"), "\"\"");
+}
+
+// A marker that can't be read isn't "not moved": the filesystem's settings
+// are left as they are, and this boot runs on NVS's copy.
+TEST(settings_unreadable_marker_kept) {
+    SettingsRig r;
+    r.fake.nvs.records = {{"sys", "{\"time\":{\"tz\":\"EST5EDT\"}}"}, {"@moved", "1"}};
+    FILE* f = fopen(r.path(".settings").c_str(), "wb");  // not a directory: ENOTDIR
+    CHECK(f != nullptr);
+    if (f) {
+        fputs("x", f);
+        fclose(f);
+    }
+    CHECK(r.dev.begin());
+    CHECK(!r.dev.settingsOnFiles());
+    CHECK_EQ(r.file(".settings"), "x");
+    CHECK_EQ(r.value("/sys/time/tz"), "\"EST5EDT\"");
+    CHECK_EQ(r.value("/sys/status/settings"),
+             "\"in NVS: the settings on the filesystem couldn't be read; NVS's copy is older than the "
+             "filesystem's\"");
 }
 
 // A move that fails midway leaves NVS as it was and the filesystem empty:
@@ -200,7 +315,8 @@ TEST(settings_move_failing_midway_keeps_nvs) {
     CHECK(next.dev.settingsOnFiles());
     CHECK_EQ(next.records(), "@moved,@version,app,sys");
     CHECK_EQ(next.value("/app/level"), "5");
-    CHECK(next.fake.nvs.records == nvs);  // NVS keeps its copy
+    nvs["@moved"] = "1";
+    CHECK(next.fake.nvs.records == nvs);  // NVS keeps its copy, and gets the marker
 }
 
 TEST(settings_in_nvs_without_a_filesystem) {

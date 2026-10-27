@@ -1,5 +1,6 @@
 #include "tesserkit/settings_store.h"
 
+#include <errno.h>
 #include <stdio.h>
 
 #include "tesser/platform.h"
@@ -126,20 +127,47 @@ bool SettingsStore::erase() {
     return inner_ ? inner_->erase() : false;
 }
 
-bool moveSettings(tesser::Storage* from, tesser::Storage& to, const std::vector<std::string>& keys, std::string& why) {
+Moved moveSettings(tesser::Storage* from, tesser::Storage& to, const std::vector<std::string>& keys,
+                   std::string& why) {
     std::string data, back;
+    why.clear();
+    // Whether NVS says a move was made: if the filesystem lacks its marker
+    // then, it lost the settings (formatted, or corrupted past its
+    // superblock), and NVS's copy is older than what it held.
+    auto nvsMoved = [from, &back] { return from && from->load(SettingsStore::kMoved, back); };
+    auto markNvs = [from] {
+        if (from && !from->save(SettingsStore::kMoved, "1")) {
+            tesser::logWarning("tesserkit: NVS couldn't keep the settings' move marker");
+        }
+    };
     // Moved before: the filesystem's copy is the one in use. NVS keeps the
     // copy it had, no longer written: if the filesystem doesn't mount one
     // day (or a firmware without Files is installed), the device starts from
     // those settings, its network among them, rather than from defaults.
-    if (to.load(SettingsStore::kMoved, data)) return true;
+    // TesserAPI's Storage can't tell a record that isn't there from one it
+    // couldn't read: FileStorage::load() returns as fopen() fails, errno set.
+    errno = 0;
+    if (to.load(SettingsStore::kMoved, data)) {
+        if (!nvsMoved()) markNvs();  // moved before NVS got markers
+        return Moved::Before;
+    }
+    // Only a marker that isn't there means a move to do. One that couldn't
+    // be read (no memory, an I/O error) leaves the filesystem as it is: its
+    // settings may be the newest, and the next boot may read them.
+    int err = errno;
+    if (err != ENOENT) {
+        why = "the settings on the filesystem couldn't be read";
+        tesser::logError("tesserkit: settings stay in NVS: %s (errno %d)", why.c_str(), err);
+        return Moved::Unreadable;
+    }
+    bool restored = nvsMoved();
     // Not moved yet, or a move cut short before its marker: from an empty
     // directory, so nothing of a cut move comes back.
     auto fail = [&to, &why](std::string reason) {
         why = std::move(reason);
         to.erase();
         tesser::logError("tesserkit: settings stay in NVS: %s", why.c_str());
-        return false;
+        return Moved::Failed;
     };
     if (!to.erase()) return fail("the directory couldn't be emptied");
     std::vector<const std::string*> moved;
@@ -158,11 +186,17 @@ bool moveSettings(tesser::Storage* from, tesser::Storage& to, const std::vector<
     if (!to.save(SettingsStore::kMoved, "1") || !to.load(SettingsStore::kMoved, back) || back != "1") {
         return fail("the filesystem couldn't be written");
     }
+    if (restored) {
+        why = "the filesystem had lost the settings: NVS's older copy restored";
+        tesser::logError("tesserkit: %s (%u records)", why.c_str(), static_cast<unsigned>(moved.size()));
+        return Moved::Restored;
+    }
+    markNvs();
     if (!moved.empty()) {
         tesser::logWarning("tesserkit: settings moved from NVS to the filesystem (%u records; NVS keeps its copy)",
                            static_cast<unsigned>(moved.size()));
     }
-    return true;
+    return Moved::Now;
 }
 
 }  // namespace tesserkit

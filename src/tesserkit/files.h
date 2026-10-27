@@ -70,7 +70,9 @@ public:
     // there is none) at the first boot, and keeps them in kSettingsDir from
     // then on, with room kept for them and `format` sparing them. Null if
     // they can't live here, `why` saying why ("the filesystem didn't
-    // mount"). Virtual, so a firmware without Files doesn't link it.
+    // mount"); with a storage, `why` is "" or says what was lost (the
+    // filesystem's settings, NVS's older copy restored). Virtual, so a
+    // firmware without Files doesn't link it.
     virtual tesser::Storage* settingsStorage(tesser::Storage* nvs, const std::vector<std::string>& keys,
                                              std::string& why);
     bool holdsSettings() const { return settings_; }
@@ -159,6 +161,7 @@ private:
     Filesystem* fs_ = nullptr;
     bool mountTried_ = false;
     bool mounted_ = false;
+    std::string mountError_;  // why the partition didn't mount, if it is there
     bool settings_ = false;  // the settings live here
     size_t reserve_ = kSettingsReserve;
     std::unique_ptr<tesser::FileStorage> settingsFiles_;

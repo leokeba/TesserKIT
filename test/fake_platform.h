@@ -673,9 +673,10 @@ struct Filesystem : tesserkit::Filesystem {
     std::string dir;
     uint64_t total = 262144;  // the partition's size; used is what the files hold
     bool present = true;      // false: no partition
+    bool unmountable = false; // a LittleFS that doesn't mount: left as it is
     std::string label, root;  // what mount() got
     int formats = 0;
-    bool mount(const char* label, const char* root) override;
+    bool mount(const char* label, const char* root, std::string& why) override;
     bool usage(uint64_t& total, uint64_t& used) override;
     bool format() override;
 };

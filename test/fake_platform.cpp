@@ -522,9 +522,14 @@ Filesystem::~Filesystem() {
     if (!dir.empty()) walk(dir, true, false);
 }
 
-bool Filesystem::mount(const char* l, const char* r) {
+bool Filesystem::mount(const char* l, const char* r, std::string& why) {
     label = l ? l : "";
     root = r ? r : "";
+    why.clear();
+    if (present && unmountable) {
+        why = "its LittleFS didn't mount, left as it is";
+        return false;
+    }
     return present && !dir.empty() && root == dir;
 }
 

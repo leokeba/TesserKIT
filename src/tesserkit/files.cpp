@@ -522,22 +522,48 @@ bool Files::mount() {
     Platform& p = dev_.platform();
     if (!p.fs) p.fs = espFilesystem();
     fs_ = p.fs;
-    mounted_ = fs_ && fs_->mount(label_, root_.c_str());
-    if (!mounted_) tesser::logError("tesserkit: no filesystem (a \"files\" or \"spiffs\" partition, and LittleFS)");
+    mounted_ = fs_ && fs_->mount(label_, root_.c_str(), mountError_);
+    if (!mounted_ && mountError_.empty()) {
+        tesser::logError("tesserkit: no filesystem (a \"files\" or \"spiffs\" partition, and LittleFS)");
+    }
     return mounted_;
 }
 
 tesser::Storage* Files::settingsStorage(tesser::Storage* nvs, const std::vector<std::string>& keys, std::string& why) {
+    why.clear();
+    // The filesystem's settings can't be used this boot, but they are there:
+    // if they were moved before, NVS's copy dates from the move.
+    auto older = [nvs, &why] {
+        std::string marker;
+        if (nvs && nvs->load(SettingsStore::kMoved, marker)) {
+            why += "; NVS's copy is older than the filesystem's";
+            tesser::logError("tesserkit: settings: %s", why.c_str());
+        }
+    };
     if (!mount()) {
         why = "the filesystem didn't mount";
+        if (!mountError_.empty()) why += " (" + mountError_ + ")";
+        older();
         return nullptr;
     }
     settingsFiles_.reset(new tesser::FileStorage(root_ + "/" + kSettingsDir));
-    std::string failed;
-    if (!moveSettings(nvs, *settingsFiles_, keys, failed)) {
-        settingsFiles_.reset();
-        why = "moving them to the filesystem failed (" + failed + ")";
-        return nullptr;
+    std::string said;
+    switch (moveSettings(nvs, *settingsFiles_, keys, said)) {
+        case Moved::Unreadable:
+            settingsFiles_.reset();
+            why = said;
+            older();
+            return nullptr;
+        case Moved::Failed:
+            settingsFiles_.reset();
+            why = "moving them to the filesystem failed (" + said + ")";
+            return nullptr;
+        case Moved::Restored:
+            why = said;  // in use, but told: what the filesystem held is gone
+            break;
+        case Moved::Before:
+        case Moved::Now:
+            break;
     }
     settings_ = true;
     return settingsFiles_.get();
@@ -587,7 +613,11 @@ void Files::tick(uint32_t nowMs) {
 }
 
 void Files::factoryReset() {
-    if (mounted_) remove(kBackupDir);
+    if (!mounted_) return;
+    remove(kBackupDir);
+    // Settings left there while this boot kept them in NVS (a marker that
+    // couldn't be read): erased too, or the next boot would bring them back.
+    if (!settings_) tesser::FileStorage(root_ + "/" + kSettingsDir).erase();
 }
 
 }  // namespace tesserkit

@@ -353,9 +353,13 @@ class Filesystem {
 public:
     virtual ~Filesystem() = default;
     // Mounts the partition labelled `label` (null: "files", else "spiffs")
-    // at `root`, formatting one that holds no filesystem. True if it is
-    // mounted, by this call or before it (an application's LittleFS.begin()).
-    virtual bool mount(const char* label, const char* root) = 0;
+    // at `root`. True if it is mounted, by this call or before it (an
+    // application's LittleFS.begin()). A partition that holds no LittleFS
+    // (blank, or another filesystem) is formatted first. One that holds a
+    // LittleFS that doesn't mount (a power cut, no memory, a newer on-disk
+    // version) is never formatted: it may hold the settings. False then,
+    // with `why` saying what happened ("" when there is no partition).
+    virtual bool mount(const char* label, const char* root, std::string& why) = 0;
     // Bytes of the partition, and in use.
     virtual bool usage(uint64_t& total, uint64_t& used) = 0;
     // Erases every file; mounted again after.

@@ -346,6 +346,7 @@ tesser::Storage* Device::defaultStorage() {
         std::string why;
         if (tesser::Storage* fs = files_->settingsStorage(nvs, keys, why)) {
             settingsOnFiles_ = true;
+            settingsWhere_ = why;  // "" unless the filesystem had lost them
             settings_.wrap(fs, 0, kFileWriteBytes);  // its capacity: Files' reserve
             return fs;
         }

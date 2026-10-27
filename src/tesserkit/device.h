@@ -139,8 +139,10 @@ public:
     // NVS. The stored one stays, so the change is lost at the next boot.
     const std::string& settingsRefused() const { return settings_.refused(); }
     // What /sys/status/settings shows ("" when all is well): the settings
-    // kept in NVS although the application has Files, and why; a record
-    // refused (settingsRefused()).
+    // kept in NVS although the application has Files, and why (with NVS's
+    // copy older than the filesystem's, said so); the filesystem's settings
+    // lost and NVS's older copy restored; a record refused
+    // (settingsRefused()); a save waiting (settingsWaiting()).
     std::string settingsStatus() const;
     // A settings save that couldn't be made yet (no memory), which TesserAPI
     // tries again: "" when every change is saved.
@@ -329,7 +331,7 @@ private:
     tesser::Storage* storage_ = nullptr;
     SettingsStore settings_;  // in front of storage_
     bool settingsOnFiles_ = false;
-    std::string settingsWhere_;  // why they aren't, when the application has Files
+    std::string settingsWhere_;  // why they aren't on Files, or what was lost there
     uint32_t settingsCapacity_ = 0;
     bool capacitySet_ = false;
     uint16_t appVersion_ = 0;
