@@ -46,6 +46,16 @@ std::string tempPath(const std::string& root, const std::pair<std::string, std::
     return root + "/" + (parts.first.empty() ? "" : parts.first + "/") + "." + parts.second + ".part";
 }
 
+// Puts the complete temporary file `temp` in place of `target`. Some VFS
+// drivers don't rename over an existing file: the target is removed first
+// then, so a power cut between the two leaves the temporary file and no
+// target, never a part. Uploads and Files::write() end with it; the
+// settings, written by TesserAPI's FileStorage, do the same there.
+bool replaceWithTemp(const std::string& temp, const std::string& target) {
+    return ::rename(temp.c_str(), target.c_str()) == 0 ||
+           (::remove(target.c_str()) == 0 && ::rename(temp.c_str(), target.c_str()) == 0);
+}
+
 Check noRoom() { return Check::fail(Status::TooLarge, "not enough space: the rest is kept for the settings"); }
 
 // A file being uploaded, written to a hidden temporary file beside it and
@@ -75,11 +85,7 @@ public:
         bool flushed = fclose(f_) == 0;
         f_ = nullptr;
         if (!flushed) return fileWriteError(errno);
-        // Some VFS drivers don't rename over an existing file.
-        if (::rename(temp_.c_str(), target_.c_str()) != 0 &&
-            (::remove(target_.c_str()) != 0 || ::rename(temp_.c_str(), target_.c_str()) != 0)) {
-            return Check::fail(Status::Internal, "the file couldn't be written");
-        }
+        if (!replaceWithTemp(temp_, target_)) return Check::fail(Status::Internal, "the file couldn't be written");
         done_ = true;
         files_.touched(rel_);
         return Check::ok();
@@ -240,9 +246,7 @@ Check Files::write(std::string_view rel, std::string_view data) {
         ok = false;
         err = errno;
     }
-    if (ok && ::rename(temp.c_str(), target.c_str()) != 0) {
-        ok = ::remove(target.c_str()) == 0 && ::rename(temp.c_str(), target.c_str()) == 0;
-    }
+    if (ok) ok = replaceWithTemp(temp, target);
     if (!ok) {
         if (!err) err = errno;
         ::remove(temp.c_str());
