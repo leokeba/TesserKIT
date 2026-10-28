@@ -35,23 +35,14 @@ private:
     size_t offset_ = 0;
 };
 
-// What a stored state is estimated at before one was taken.
-constexpr uint32_t kFirstEstimate = 4096;
-
 }  // namespace
 
 Check Backup::state(std::string& out, tesser::Reservation& held) {
-    // persistedState() grows its text by doubling: one block of up to twice
-    // the text at the end. Reserved before from the last state's size, then
-    // set to the block it took.
-    uint32_t last = lastStateBytes_.load();
-    size_t estimate = last ? last : kFirstEstimate;
-    held = tesser::reserveBytes(2 * estimate, true, tesser::mallocPool(2 * estimate));
-    if (!held) return Check::fail(Status::Busy, "not enough free memory for the settings now");
-    out = dev_.api().persistedState();
-    lastStateBytes_ = static_cast<uint32_t>(out.size());
-    (void)held.resize(out.capacity());  // unchanged if the budget can't give more: it is allocated already
-    held.settle();
+    // The text is measured first, then reserved and allocated once at its
+    // size (TesserAPI 5bfd30a).
+    if (!dev_.api().persistedState(out, held)) {
+        return Check::fail(Status::Busy, "not enough free memory for the settings now");
+    }
     return Check::ok();
 }
 

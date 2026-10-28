@@ -5,6 +5,7 @@
 
 #include <algorithm>
 
+#include "tesser/json_writer.h"
 #include "tesserkit/limits.h"
 
 namespace tesserkit {
@@ -29,20 +30,14 @@ Check topicPart(const std::string& v) {
 }
 
 #if !defined(TESSERKIT_NO_HOME_ASSISTANT)
-// Presentation metadata, where the build keeps it (not with TESSER_NO_UI).
-const tesser::UiMeta* uiOf(const tesser::Node& n) { return n.meta() ? n.meta()->ui : nullptr; }
-
+// Presentation metadata, where the build keeps it (none with TESSER_NO_UI).
 const char* labelOf(const tesser::Node& n) {
-    const tesser::UiMeta* ui = uiOf(n);
-    return ui && ui->label ? ui->label : n.name();
+    const char* label = n.meta() ? n.meta()->label() : nullptr;
+    return label ? label : n.name();
 }
 
-const tesser::UiHint* hintOf(const tesser::Node& n, const char* key) {
-    const tesser::UiMeta* ui = uiOf(n);
-    for (const tesser::UiHint* h = ui ? ui->hints : nullptr; h; h = h->next) {
-        if (strcmp(h->key, key) == 0) return h;
-    }
-    return nullptr;
+tesser::UiHint hintOf(const tesser::Node& n, const char* key) {
+    return n.meta() ? n.meta()->hint(key) : tesser::UiHint{};
 }
 
 // Home Assistant's object id for a path: "/led/on" → "led_on".
@@ -454,7 +449,7 @@ void Mqtt::command(const std::string& t, const std::string& payload) {
     JsonDocument doc;
     if (payload.empty()) {
         body = "null";  // an action without argument
-    } else if (deserializeJson(doc, payload)) {
+    } else if (tesser::parseJson(doc, payload)) {
         // Not JSON: plain text is a string ("ON", a name).
         doc.clear();
         doc.set(payload);
@@ -568,10 +563,9 @@ std::string Mqtt::discoveryConfig(const std::string& path, const tesser::Node& n
         return out;
     }
     const auto& v = static_cast<const tesser::ValueNode&>(n);
-    const tesser::UiMeta* ui = uiOf(n);
     const tesser::NodeMeta* meta = n.meta();
     bool numeric = v.kind() == tesser::ValueKind::Integer || v.kind() == tesser::ValueKind::Number;
-    if (ui && ui->unit && numeric) doc["unit_of_measurement"] = ui->unit;
+    if (meta && meta->unit() && numeric) doc["unit_of_measurement"] = meta->unit();
     if (component == "switch" || component == "binary_sensor") {
         // Payloads are JSON: true and false.
         doc["payload_on"] = "true";
@@ -581,10 +575,11 @@ std::string Mqtt::discoveryConfig(const std::string& path, const tesser::Node& n
             doc["state_off"] = "false";
         }
     } else if (component == "number") {
-        bool ranged = meta && meta->hasRange;
-        doc["min"] = ranged ? meta->min : -1e9;
-        doc["max"] = ranged ? meta->max : 1e9;
-        double step = ui && ui->step > 0 ? static_cast<double>(ui->step) : v.kind() == tesser::ValueKind::Integer ? 1 : 0.001;
+        bool ranged = meta && meta->hasRange();
+        doc["min"] = ranged ? meta->min() : -1e9;
+        doc["max"] = ranged ? meta->max() : 1e9;
+        float metaStep = meta ? meta->step() : 0;
+        double step = metaStep > 0 ? static_cast<double>(metaStep) : v.kind() == tesser::ValueKind::Integer ? 1 : 0.001;
         doc["step"] = step;
         doc["mode"] = ranged ? "slider" : "box";
         if (v.kind() == tesser::ValueKind::Integer) doc["command_template"] = "{{ value | int }}";
@@ -609,8 +604,8 @@ std::string Mqtt::discoveryConfig(const std::string& path, const tesser::Node& n
             doc["max"] = static_cast<uint32_t>(v.maxLength());
         }
     }
-    if (const tesser::UiHint* h = hintOf(n, "precision")) {
-        if (h->kind == tesser::UiHint::Kind::Number) doc["suggested_display_precision"] = static_cast<int>(h->num);
+    if (tesser::UiHint h = hintOf(n, "precision")) {
+        if (h.kind == tesser::UiHint::Kind::Number) doc["suggested_display_precision"] = static_cast<int>(h.num);
     }
     std::string out;
     serializeJson(doc, out);

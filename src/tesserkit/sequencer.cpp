@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "tesser/json_writer.h"
 #include "tesserkit/limits.h"
 
 namespace tesserkit {
@@ -49,7 +50,7 @@ int toIndex(std::string_view s) {
 Check jsonOk(const std::string& v) {
     if (v.size() > limits::kValue) return limits::length<limits::kValue>(v);
     JsonDocument doc;
-    return deserializeJson(doc, v) ? Check::fail(Status::InvalidValue, "not JSON (an action without argument: null)")
+    return tesser::parseJson(doc, v) ? Check::fail(Status::InvalidValue, "not JSON (an action without argument: null)")
                                    : Check::ok();
 }
 

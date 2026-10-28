@@ -1,6 +1,7 @@
 #include "tesserkit/udp_api.h"
 
 #include "tesser/call.h"
+#include "tesser/json_writer.h"
 #include "tesser/udp_link.h"
 #include "tesserkit/peers.h"
 
@@ -18,7 +19,7 @@ constexpr uint32_t kSettleMs = 20000;  // at the latest, without an address: sta
 bool jsonOk(const std::string& v) {
     if (v.empty()) return true;
     JsonDocument doc;
-    return !deserializeJson(doc, v);
+    return !tesser::parseJson(doc, v);
 }
 
 }  // namespace

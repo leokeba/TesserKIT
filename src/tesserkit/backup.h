@@ -1,6 +1,5 @@
 #pragma once
 
-#include <atomic>
 #include <string>
 #include <vector>
 
@@ -44,7 +43,6 @@ private:
     bool restartAfter_ = true;
     bool saved_ = true;  // the last restore's settings saved (else waiting for memory)
     uint8_t keep_ = 10;
-    std::atomic<uint32_t> lastStateBytes_{0};  // the last state's size: the next one's estimate
 };
 
 }  // namespace tesserkit

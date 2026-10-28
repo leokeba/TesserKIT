@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "tesser/json_writer.h"
 #include "tesserkit/limits.h"
 #include "tesserkit/time_service.h"
 
@@ -69,7 +70,7 @@ void Timers::describe(tesser::Object& o) {
                             .validate([](const std::string& v) {
                                 if (v.size() > limits::kValue) return limits::length<limits::kValue>(v);
                                 JsonDocument doc;
-                                return deserializeJson(doc, v)
+                                return tesser::parseJson(doc, v)
                                            ? Check::fail(Status::InvalidValue,
                                                          "not JSON (an action without argument: null)")
                                            : Check::ok();

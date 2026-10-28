@@ -87,7 +87,9 @@ TEST(backup_waits_for_memory) {
     r.set("/app/level", "6");
     std::string text = "{\"app\":{\"level\":2," + std::string("\"pad\":\"") + std::string(3000, 'x') + "\"}}";
     {
-        rig::BudgetLimit low(4000);
+        // Less than the settings' text, which is reserved at its exact size.
+        size_t state = r.dev.api().persistedState().size();
+        rig::BudgetLimit low(tesser::memoryBudget().used() + state / 2);
         rig::Reply d = r.download("/sys/backup/settings");
         CHECK_EQ(d.status, Status::Busy);
         CHECK(d.body.find("memory") != std::string::npos);
