@@ -20,3 +20,7 @@ CONFIG_LOG_DEFAULT_LEVEL_WARN=y
 # IPv4 only, as examples/idf/full (DESIGN.md 11): about 25 KB of flash and
 # 1.8 KB of static RAM. Needs TesserAPI b92a555 or later.
 CONFIG_LWIP_IPV6=n
+# No Files service: TesserUI's file browser and editor chunks stay out of
+# flash (about 7 KB; TesserUI 45411fa).
+CONFIG_TESSERUI_NO_FILES_UI=y
+CONFIG_TESSERUI_NO_EDITOR=y
