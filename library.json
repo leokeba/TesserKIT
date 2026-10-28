@@ -14,7 +14,7 @@
   "headers": ["TesserKIT.h"],
   "dependencies": [
     { "name": "TesserAPI", "version": "https://github.com/leokeba/TesserAPI.git#363ce47181b0c8e989cd38730b45c5bb22e31efc" },
-    { "name": "TesserUI", "version": "https://github.com/leokeba/TesserUI.git#45411fa07b27a37988b0c6e09950705248ee5413" }
+    { "name": "TesserUI", "version": "https://github.com/leokeba/TesserUI.git#a08af930d4e612a898ff3d3c0e805d3a3581cf1f" }
   ],
   "build": {
     "srcDir": "src",

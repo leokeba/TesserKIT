@@ -117,7 +117,7 @@ jobs:
     needs: firmware
     permissions:
       contents: write
-    uses: leokeba/TesserUI/.github/workflows/bridge.yml@45411fa07b27a37988b0c6e09950705248ee5413
+    uses: leokeba/TesserUI/.github/workflows/bridge.yml@a08af930d4e612a898ff3d3c0e805d3a3581cf1f
     with:
       page: pages/index.html
       name: tesserkit-bridge
