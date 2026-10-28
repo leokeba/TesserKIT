@@ -98,3 +98,5 @@ CONFIG_LWIP_AUTOIP=y
 # answers) costs about 25 KB of flash and 1.8 KB of static RAM, plus its
 # heap at run time. Needs TesserAPI b92a555 or later.
 CONFIG_LWIP_IPV6=n
+# NowTP's Streams: neither TesserKIT nor TesserAPI opens one (NowTP d0af51b).
+CONFIG_NOWTP_NO_STREAMS=y
