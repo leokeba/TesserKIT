@@ -118,6 +118,7 @@ private:
     // empty, and those announced (kept across sessions, to empty them when
     // they go).
     Fingerprint discoverySettings_;  // a change announces again
+    bool discoverDue_ = false;       // discover() found no memory
     std::vector<std::string> pending_;
     std::vector<std::string> clearing_;
     std::vector<std::string> announced_;

@@ -416,6 +416,34 @@ TEST(mqtt_discovery_waits_for_room) {
     CHECK_EQ(r.value("/sys/mqtt/status/dropped"), std::to_string(dropped));
 }
 
+TEST(mqtt_waits_for_memory) {
+    // On a short heap discovery waits and states are dropped: what they
+    // allocate in the device's task aborts it past the heap (a classic ESP32
+    // on full with Bluetooth: Mqtt::discoveryConfig, operator new, 2026-10-30).
+    static size_t freeHeap = 0;
+    tesser::setHeapFloor(8 * 1024);
+    tesser::setFreeHeapProbe([] { return freeHeap; });
+    freeHeap = 64 * 1024;
+    {
+        HaRig r;
+        r.online();
+        freeHeap = 8 * 1024;  // at the floor: nothing can be reserved
+        CHECK_EQ(r.set("/sys/mqtt/publish", "[{\"path\":\"/led/on\",\"interval\":0}]").status, Status::Ok);
+        r.fake.mqtt.retained.clear();
+        r.settle();
+        CHECK(r.config("switch", "led_on").empty());
+        uint32_t dropped = static_cast<uint32_t>(std::stoul(r.value("/sys/mqtt/status/dropped")));
+        CHECK_EQ(r.set("/led/on", "true").status, Status::Ok);
+        r.settle();
+        CHECK(std::stoul(r.value("/sys/mqtt/status/dropped")) > dropped);  // a state goes, and is counted
+        freeHeap = 64 * 1024;
+        r.settle();
+        CHECK(!r.config("switch", "led_on").empty());  // discovery caught up by itself
+    }
+    tesser::setFreeHeapProbe(nullptr);
+    tesser::setHeapFloor(0);
+}
+
 TEST(mqtt_discovery_removes_what_goes) {
     HaRig r;
     r.online();

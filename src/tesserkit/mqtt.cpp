@@ -20,6 +20,12 @@ constexpr uint32_t kSettleMs = 1000;  // settings edited field by field: one res
 constexpr uint32_t kRetryMs = 10000;  // a client that couldn't start
 constexpr uint32_t kCheckMs = 1000;   // the session's state read back
 constexpr int kAnnouncePerTick = 4;   // discovery shares the queue with the states
+// Reserved before what the device's task builds, in TesserAPI's byte budget:
+// past the heap, operator new aborts it (2026-10-30, a classic ESP32 on full
+// with Bluetooth). Short of them discovery waits and a state is dropped.
+constexpr size_t kStateBytes = 512;      // one state's payload
+constexpr size_t kConfigBytes = 2048;    // one discovery config, in one block
+constexpr size_t kDiscoverBytes = 4096;  // the lists of paths and topics
 
 bool startsWith(const std::string& s, const char* prefix) { return s.compare(0, strlen(prefix), prefix) == 0; }
 
@@ -268,7 +274,7 @@ void Mqtt::tick(uint32_t nowMs) {
             bridge();
         }
     }
-    if (discoverySettings_.changed() && connected_) discover();
+    if ((discoverySettings_.changed() || discoverDue_) && connected_) discover();
     // The session's state, read back once a second: its events pass
     // through the device's bounded queue, which can lose them (a burst of
     // other events while the task stalls). Without this a lost
@@ -384,6 +390,11 @@ void Mqtt::bridge() {
             std::string path = env["path"] | "/";
             const char* op = env["op"] | "";
             if (strcmp(op, "event") == 0) {
+                tesser::Reservation room = tesser::reserveBytes(kStateBytes);
+                if (!room) {
+                    dropped_++;
+                    return;
+                }
                 std::string payload;
                 serializeJson(env["body"], payload);
                 send(topic(path), std::move(payload), false);
@@ -421,6 +432,11 @@ void Mqtt::publishTree(const std::string& path, JsonVariantConst v, bool retain)
             child += kv.key().c_str();
             publishTree(child, kv.value(), retain);
         }
+        return;
+    }
+    tesser::Reservation room = tesser::reserveBytes(kStateBytes);
+    if (!room) {
+        dropped_++;
         return;
     }
     std::string payload;
@@ -613,6 +629,9 @@ std::string Mqtt::discoveryConfig(const std::string& path, const tesser::Node& n
 }
 
 void Mqtt::discover() {
+    tesser::Reservation room = tesser::reserveBytes(kDiscoverBytes);
+    discoverDue_ = !room;  // tick() comes back
+    if (!room) return;
     std::vector<std::string> paths;
     if (homeAssistant_) {
         for (const MqttPublish& p : publish_) {
@@ -658,6 +677,8 @@ void Mqtt::announce() {
             continue;
         }
         if (pending_.empty()) return;
+        tesser::Reservation room = tesser::reserveBytes(kConfigBytes, true);
+        if (!room) return;  // it waits, as for the client's queue
         Access write;
         const tesser::Node* parent;
         const std::string& path = pending_.front();
