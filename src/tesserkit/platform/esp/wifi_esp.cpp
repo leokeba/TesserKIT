@@ -15,7 +15,9 @@
 
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_netif_net_stack.h"
 #include "esp_wifi.h"
+#include "lwip/autoip.h"
 
 namespace tesserkit {
 
@@ -254,6 +256,23 @@ void netifInit() {
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) tesser::logError("tesserkit: event loop: %s", esp_err_to_name(err));
 }
 
+// lwIP's DHCP client starts AutoIP but never stops it. Left bound under a
+// static address, a later autoip_start() is a no-op ("already started"), and
+// going back to DHCP on a network without a server leaves no address at all.
+static void stopAutoIp(esp_netif_t* netif) {
+#if CONFIG_LWIP_AUTOIP
+    esp_netif_tcpip_exec(
+        [](void* ctx) -> esp_err_t {
+            auto* n = static_cast<struct netif*>(esp_netif_get_netif_impl(static_cast<esp_netif_t*>(ctx)));
+            if (n) autoip_stop(n);
+            return ESP_OK;
+        },
+        netif);
+#else
+    (void)netif;
+#endif
+}
+
 void applyIp(esp_netif_t* netif, const IpConfig& c) {
     // Either empties the DNS servers' list, which Network refills (its
     // IpStack, DESIGN.md section 5.2).
@@ -270,6 +289,7 @@ void applyIp(esp_netif_t* netif, const IpConfig& c) {
         return;
     }
     esp_netif_dhcpc_stop(netif);
+    stopAutoIp(netif);
     esp_netif_ip_info_t ip = {};
     ip.ip.addr = toNetwork(c.ip);
     ip.netmask.addr = toNetwork(c.mask);

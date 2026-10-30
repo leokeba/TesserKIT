@@ -155,7 +155,8 @@ def main():
         status = d.set('/sys/network/ethernet/static/enabled', False)
         check('dhcp_again', status == 200, status)
         d.at(eth_ip)
-        got = wait_for(f'back at {eth_ip}', lambda: d.value('/sys/network/ethernet/status/ip'), timeout=30)
+        got = wait_for(f'back at {eth_ip}', lambda: d.value('/sys/network/ethernet/status/ip') == eth_ip and eth_ip,
+                       timeout=30)
         check('dhcp_address', got == eth_ip, got)
 
     if args.unplug:
