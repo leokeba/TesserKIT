@@ -82,6 +82,11 @@ CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
 # broker whose root isn't there fails its TLS handshake (the classic and psram
 # profiles keep the full bundle).
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN=y
+# A server may send its root cross-signed by an older one that the bundles have
+# dropped (DigiCert Global Root G2 under Global Root CA: broker.emqx.io, and
+# anyone on RapidSSL): without this, the handshake fails on a root the bundle
+# holds. About 700 B of heap during a handshake; the image shrinks by 1 KB.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y
 
 # The access point is open or WPA2 (Network's fallback and provisioning):
 # its WPA3 (SAE) and Enhanced Open (OWE) support is never used, and takes
