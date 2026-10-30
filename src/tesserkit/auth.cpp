@@ -250,7 +250,19 @@ void Auth::tick(uint32_t nowMs) {
     // WebSocket doesn't keep a level it lost (TesserAPI's tokensChanged()).
     // `open` isn't a generation (it goes back), so it isn't summed: removing
     // the last admin would raise the accounts' generation as it lowered it.
-    if (tokens_.changed() || opened) dev_.api().tokensChanged();
+    bool accounts = tokens_.changed();
+    if (accounts || opened) dev_.api().tokensChanged();
+    // Saved now, not at the debounce: a power cut in the seconds after it
+    // would bring back an account the owner deleted, or tokens they revoked
+    // (DESIGN.md 5.7). Not while a hash computes: a new account has none to
+    // store yet, and its landing is a change of its own. A boot's first tick
+    // saves nothing. Refused for memory, the debounce still has it.
+    if (accounts && ticked_) saveDue_ = true;
+    ticked_ = true;
+    if (saveDue_ && jobs_.load() == 0) {
+        saveDue_ = false;
+        dev_.api().save();
+    }
 }
 
 void Auth::newKey() {

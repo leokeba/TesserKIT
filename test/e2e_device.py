@@ -51,6 +51,9 @@ class Device:
         data = None
         if body is not None:
             data = body if isinstance(body, (bytes, bytearray)) else json.dumps(body).encode()
+            # A secure device refuses any other type of JSON body (DESIGN.md 7).
+            if not isinstance(body, (bytes, bytearray)):
+                headers.setdefault('Content-Type', 'application/json')
         req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -285,6 +288,10 @@ def test_auth(d):
     check('auth_open', d.value('/sys/auth/open') is True)
     status, _, body = d.request('PUT', '/api/sys/auth/users', [{'name': 'e2e', 'password': 'e2e-pass', 'role': 'admin'}])
     check('auth_add_admin', status == 200, (status, body))
+    # The device closes when the new account's hash lands (DESIGN.md 5.7).
+    deadline = time.time() + 3
+    while time.time() < deadline and d.value('/sys/auth/open') is not False:
+        time.sleep(0.1)
     check('auth_closed', d.value('/sys/auth/open') is False)
     status, _, _ = d.set('/sys/restart')
     check('auth_needs_token', status == 403, status)

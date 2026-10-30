@@ -113,6 +113,8 @@ private:
     // rewrote the whole /sys record at every boot.
     uint32_t bootId_ = 0;
     Fingerprint tokens_;  // the accounts and the key, as tick() last saw them
+    bool ticked_ = false;   // tick() ran once: the next change is a client's
+    bool saveDue_ = false;  // accounts or key to save, once no hash computes
     const char* defaultName_ = nullptr;
     const char* defaultPassword_ = nullptr;
 };

@@ -119,6 +119,38 @@ TEST(auth_passwords_are_hashed) {
     CHECK_EQ(r.set("/sys/auth/users/ann/password", "\"\"").status, Status::InvalidValue);
 }
 
+TEST(auth_revocations_are_saved_at_once) {
+    // Not left to the debounce: a power cut in the seconds after it would
+    // bring back the account or the tokens the owner just revoked.
+    AuthRig r;
+    CHECK(r.dev.begin());
+    r.set("/sys/auth/users", "[{\"name\":\"ann\",\"password\":\"s3cret\",\"role\":\"admin\"}]");
+    r.run(100);
+    CHECK(rig::drainBackground());  // the hash
+    r.run(100);
+    CHECK(r.storage.records["sys"].find("$pbkdf2-sha256$") != std::string::npos);  // saved with it
+    std::string key = r.storage.records["sys"];
+    CHECK_EQ(r.set("/sys/auth/logoutAll").status, Status::Ok);
+    r.run(100);
+    CHECK(r.storage.records["sys"] != key);
+    CHECK_EQ(r.set("/sys/auth/users", "[]").status, Status::Ok);
+    r.run(100);
+    CHECK(r.storage.records["sys"].find("ann") == std::string::npos);
+}
+
+TEST(auth_a_new_account_waits_for_its_hash) {
+    AuthRig r;
+    CHECK(r.dev.begin());
+    r.run(2500);
+    int saves = r.storage.saves;
+    r.set("/sys/auth/users", "[{\"name\":\"ann\",\"password\":\"s3cret\",\"role\":\"admin\"}]");
+    r.run(100);
+    CHECK_EQ(r.storage.saves, saves);  // no account without its hash on flash
+    CHECK(rig::drainBackground());
+    r.run(100);
+    CHECK(r.storage.records["sys"].find("$pbkdf2-sha256$") != std::string::npos);
+}
+
 TEST(auth_login_and_tokens) {
     AuthRig r;
     r.fake.clock.epoch = 1782907200000;  // the clock is set
