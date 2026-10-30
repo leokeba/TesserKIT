@@ -196,7 +196,9 @@ def suite(name, cmd, boards, floors, work):
               '--with', 'paho-mqtt', 'python', '-u'] + cmd, out=logf, timeout=1800)
     with open(logf) as f:
         text = f.read()
-    passed, failed = text.count('\nPASS'), text.count('\nFAIL')
+    lines = text.splitlines()
+    passed = sum(l.startswith('PASS') for l in lines)
+    failed = sum(l.startswith('FAIL') for l in lines)
     log(f'== {name}: exit {rc}, {passed} passed, {failed} failed ({logf})')
     for line in text.splitlines():
         if line.startswith('FAIL') or line.startswith('SKIP'):
