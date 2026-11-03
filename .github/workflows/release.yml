@@ -43,7 +43,8 @@ jobs:
   # Bluetooth on the C3 and the S3 only, since Arduino's Bluedroid doesn't
   # fit a classic ESP32's slot beside the rest.
   arduino:
-    runs-on: ubuntu-latest
+    # compile-sketches v1 pins Python 3.12.4, not available on Ubuntu 26.04.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
