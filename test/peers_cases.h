@@ -248,6 +248,23 @@ TEST(peers_grace_before_a_device_is_lost) {
     if (!r.lost.empty()) CHECK_EQ(r.lost[0], std::string(1, char(0x7c)) + "failed");
 }
 
+// The probe of a route that lost its node: Peers sets it for every node
+// (TesserAPI's RemoteHooks::setProbe()), at once when it changes.
+TEST(peers_probe_for_every_node) {
+    PeersRig r;
+    r.peers.probe(800);
+    r.start();
+    r.discoverOverNowTp();
+    tesser::RemoteNode* n = tesser::RemoteNode::byDevice(r.peers.nodes(), PeersRig::mac(kPeerMac));
+    CHECK(n != nullptr);
+    if (!n) return;
+    r.pumpAll(100);
+    CHECK_EQ(n->probeMs(), 800u);
+    CHECK_EQ(r.set("/sys/peers/probe", "300").status, Status::Ok);
+    r.pumpAll(100);
+    CHECK_EQ(n->probeMs(), 300u);
+}
+
 TEST(peers_grace_does_not_wait_for_a_restart) {
     PeersRig r;
     r.peers.grace(5000);

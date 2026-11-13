@@ -53,6 +53,7 @@ public:
     // soon after it was given.
     static constexpr uint32_t kSignInRetryMs = 30000;
     static constexpr uint32_t kMaxGraceMs = 60000;
+    static constexpr uint32_t kDefaultProbeMs = 5000;  // TesserAPI's
 
     // `device` is the MAC of a device gone from every transport (UDP's and
     // NowTP's), or that restarted (whatever it held is gone, even though it
@@ -80,6 +81,12 @@ public:
     // hears of it; back within it, it was never lost. A goodbye or a restart
     // is told at once. 0 (the default): at once.
     Peers& grace(uint32_t ms);
+    // Factory default of /sys/peers/probe: how soon a route that lost its
+    // node asks whether it answers again (TesserAPI's RemoteNode::probe();
+    // the wait doubles after each probe, up to a minute). 0: never; 5000
+    // by default. A short one brings this device's writes back soon after a
+    // short loss, within its nodes' grace.
+    Peers& probe(uint32_t ms);
 
     void describe(tesser::Object& o) override;
 
@@ -162,6 +169,7 @@ private:
     std::unique_ptr<tesser::LocalClient> client_;  // signs in, Admin
     DeviceLostHandler lost_;
     uint32_t graceMs_ = 0;
+    uint32_t probeMs_ = kDefaultProbeMs;
     // A device lost from every transport, waiting out the grace period.
     struct Losing {
         std::string device;  // its MAC's bytes
@@ -177,13 +185,14 @@ private:
     uint32_t refreshedMs_ = 0;
 
     tesser::Node* groupNode_ = nullptr;
+    tesser::Node* probeNode_ = nullptr;
     tesser::Node* orderNode_ = nullptr;
     tesser::Node* settingsNode_ = nullptr;
     tesser::Node* accountNode_ = nullptr;
     tesser::Node* statusNode_ = nullptr;
     tesser::EventNode* lostEvent_ = nullptr;
     tesser::EventNode* reachedEvent_ = nullptr;
-    uint32_t groupGen_ = 0, orderGen_ = 0, settingsGen_ = 0, accountGen_ = 0;
+    uint32_t groupGen_ = 0, probeGen_ = 0, orderGen_ = 0, settingsGen_ = 0, accountGen_ = 0;
 };
 
 }  // namespace tesserkit

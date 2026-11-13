@@ -13,7 +13,7 @@
   "platforms": ["espressif32"],
   "headers": ["TesserKIT.h"],
   "dependencies": [
-    { "name": "TesserAPI", "version": "https://github.com/leokeba/TesserAPI.git#1334b5fcc5b2123980c623030e6a3a6699e99c40" },
+    { "name": "TesserAPI", "version": "https://github.com/leokeba/TesserAPI.git#9073227f5ad730bc77c53a3a2577a587b428d93b" },
     { "name": "TesserUI", "version": "https://github.com/leokeba/TesserUI.git#a08af930d4e612a898ff3d3c0e805d3a3581cf1f" }
   ],
   "build": {

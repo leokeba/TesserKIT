@@ -192,6 +192,11 @@ Peers& Peers::onDeviceLost(DeviceLostHandler fn) {
     return *this;
 }
 
+Peers& Peers::probe(uint32_t ms) {
+    probeMs_ = ms < kMaxGraceMs ? ms : kMaxGraceMs;
+    return *this;
+}
+
 Peers& Peers::grace(uint32_t ms) {
     graceMs_ = ms < kMaxGraceMs ? ms : kMaxGraceMs;
     return *this;
@@ -223,6 +228,15 @@ void Peers::describe(tesser::Object& o) {
                       .doc("The routes tried for each node, in order, the next one when a node is lost on one: "
                            "udp/ethernet, udp/wifi, udp/ap, udp (any interface), nowtp")
                       .ui("placeholder", "in the order the nodes were found");
+    probeNode_ = &o.value("probe", probeMs_)
+                      .range(0, kMaxGraceMs)
+                      .persist()
+                      .unit("ms")
+                      .label("Probe a lost node after")
+                      .doc("How soon a route that lost its node asks whether it answers again, the wait doubling "
+                           "after each try up to a minute. Shorter than the nodes' grace, a master's writes resume "
+                           "before they undo them. 0: never")
+                      .ui("advanced");
     o.value("grace", graceMs_)
                       .range(0, kMaxGraceMs)
                       .persist()
@@ -271,6 +285,8 @@ void Peers::start() {
     orderGen_ = orderNode_->generation();
     settingsGen_ = settingsNode_->generation();
     applyDefaultOrder();
+    probeGen_ = probeNode_->generation();
+    dev_.api().remoteHooks().setProbe(probeMs_);
     keepDeclared();
     applyGroup(true);
     Device& dev = dev_;
@@ -596,7 +612,12 @@ void Peers::login(const std::string& nodeName, const std::string& id, const std:
 void Peers::tick(uint32_t nowMs) {
     if (client_) client_->process();
     if (!losing_.empty()) releaseLosses(nowMs);
-    uint32_t gen = groupNode_->generation();
+    uint32_t gen = probeNode_->generation();
+    if (gen != probeGen_) {
+        probeGen_ = gen;
+        dev_.api().remoteHooks().setProbe(probeMs_);
+    }
+    gen = groupNode_->generation();
     if (gen != groupGen_) {
         groupGen_ = gen;
         applyGroup(true);
