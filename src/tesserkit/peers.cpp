@@ -77,6 +77,13 @@ bool parseOrder(const std::string& text, std::vector<RouteKind>& out) {
     return true;
 }
 
+Check checkGroup(const std::string& v) {
+    return tesser::detail::validGroups(v) ? Check::ok()
+                                  : Check::fail(Status::InvalidValue,
+                                                "names of 1-15 letters, digits, '-', '_' or '.', separated by commas, "
+                                                "32 characters in all");
+}
+
 Check checkOrder(const std::string& v) {
     std::vector<RouteKind> order;
     return parseOrder(v, order) ? Check::ok()
@@ -142,12 +149,31 @@ void describe(tesser::Object& o, PeerAccount& a) {
     o.value("password", a.password).validate(limits::atMost<limits::kSecret>).secret().backup(false);
 }
 
-Peers::Peers(Device& dev) : Service(dev, "peers") {}
+struct Peers::Kept {
+    std::vector<PeerAddress> devices, addresses;
+    bool has(const PeerAddress& a) const {
+        if (!a.length) return false;
+        for (const PeerAddress& d : devices) {
+            if (d == a) return true;
+        }
+        for (const PeerAddress& d : addresses) {
+            if (d == a) return true;
+        }
+        return false;
+    }
+};
+
+Peers::Peers(Device& dev) : Service(dev, "peers"), kept_(std::make_shared<Kept>()) {}
 
 Peers::~Peers() {
     tesser::RemoteHooks& hooks = dev_.api().remoteHooks();
     if (stateHook_) hooks.remove(stateHook_);
     if (accessHook_) hooks.remove(accessHook_);
+}
+
+Peers& Peers::group(const char* groups) {
+    group_ = groups ? groups : "";
+    return *this;
 }
 
 Peers& Peers::order(const char* order) {
@@ -177,6 +203,14 @@ void Peers::describe(tesser::Object& o) {
         .ui("icon", "target")
         .doc("How this device reaches the nodes under /peers: over UDP, NowTP, or both in order")
         .writeAccess(Access::Admin);
+    groupNode_ = &o.value("group", group_)
+                      .validate(checkGroup)
+                      .persist()
+                      .label("Group")
+                      .doc("Only nodes advertising one of these groups are mounted under /peers (\"ballet\", or "
+                           "\"ballet,fluante\"), besides the devices in Settings per node; this device advertises "
+                           "them. Empty: every node. A filter, not security: any node can claim a group")
+                      .ui("placeholder", "every node");
     orderNode_ = &o.value("order", order_)
                       .validate(checkOrder)
                       .persist()
@@ -220,9 +254,12 @@ void Peers::describe(tesser::Object& o) {
 
 void Peers::start() {
     nodes();
+    groupGen_ = groupNode_->generation();
     orderGen_ = orderNode_->generation();
     settingsGen_ = settingsNode_->generation();
     applyDefaultOrder();
+    keepDeclared();
+    applyGroup(true);
     Device& dev = dev_;
     // One hook for every node: wakes refresh() rather than touching the tree
     // from the endpoint's task.
@@ -258,6 +295,10 @@ void Peers::watch(Device& dev, tesser::DatagramEndpoint& endpoint) {
         e.text.assign(reinterpret_cast<const char*>(device.bytes), device.length);
         dev.post(std::move(e));
     });
+    // A refresh at the next tick gives it the group, before its peers mount.
+    Event e;
+    e.type = Event::Type::PeersChanged;
+    dev.post(std::move(e));
 }
 
 std::vector<tesser::DatagramEndpoint*> Peers::endpoints() const {
@@ -266,6 +307,40 @@ std::vector<tesser::DatagramEndpoint*> Peers::endpoints() const {
     if (p.udpApi && p.udpApi->link()) out.push_back(&p.udpApi->link()->endpoint());
     if (p.nowtp && p.nowtp->endpoint()) out.push_back(p.nowtp->endpoint());
     return out;
+}
+
+void Peers::applyGroup(bool force) {
+    for (tesser::DatagramEndpoint* ep : endpoints()) {
+        if (!force && ep->group() == group_) continue;
+        if (!ep->setGroup(group_)) {
+            tesser::logWarning("tesserkit: discovery group \"%s\" refused", group_.c_str());
+            continue;
+        }
+        if (group_.empty()) {
+            ep->setMountFilter(nullptr);
+        } else {
+            std::shared_ptr<Kept> kept = kept_;
+            ep->setMountFilter([kept](const tesser::DatagramEndpoint::Announced& a) {
+                return a.inGroup || kept->has(a.device) || kept->has(a.peer);
+            });
+        }
+    }
+    Mdns* mdns = dev_.platform().mdns;
+    if (mdns && (force || mdns != mdnsGrouped_)) {
+        mdns->group(group_.c_str());
+        mdnsGrouped_ = mdns;
+    }
+}
+
+// Under the API lock, as the filter reads it.
+void Peers::keepDeclared() {
+    kept_->devices.clear();
+    kept_->addresses.clear();
+    for (const PeerSettings& s : settings_) {
+        PeerAddress a;
+        if (parseId(s.id, a)) kept_->devices.push_back(a);
+        if (!s.address.empty() && tesser::parseUdpAddress(s.address, 8484, a)) kept_->addresses.push_back(a);
+    }
 }
 
 void Peers::applyDefaultOrder() {
@@ -320,6 +395,7 @@ void Peers::refresh(uint32_t nowMs) {
     refreshedMs_ = nowMs;
     dirty_ = false;
     declare();
+    applyGroup(false);  // an endpoint made since: UdpApi restarted
     // The status is updated from the heap (a node new to it, a route's
     // text): reserved first, so a short heap skips it (the previous one
     // stands, tried again at the next period) rather than aborting in the
@@ -506,7 +582,13 @@ void Peers::login(const std::string& nodeName, const std::string& id, const std:
 
 void Peers::tick(uint32_t nowMs) {
     if (client_) client_->process();
-    uint32_t gen = orderNode_->generation();
+    uint32_t gen = groupNode_->generation();
+    if (gen != groupGen_) {
+        groupGen_ = gen;
+        applyGroup(true);
+        dirty_ = true;
+    }
+    gen = orderNode_->generation();
     if (gen != orderGen_) {
         orderGen_ = gen;
         applyDefaultOrder();
@@ -514,6 +596,10 @@ void Peers::tick(uint32_t nowMs) {
     }
     if ((gen = settingsNode_->generation()) != settingsGen_) {
         settingsGen_ = gen;
+        keepDeclared();
+        if (!group_.empty()) {
+            for (tesser::DatagramEndpoint* ep : endpoints()) ep->refilterMounts();
+        }
         dirty_ = true;
     }
     if ((gen = accountNode_->generation()) != accountGen_) {

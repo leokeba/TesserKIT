@@ -349,7 +349,7 @@ struct Ethernet : tesserkit::Ethernet {
 
 struct Mdns : tesserkit::Mdns {
     bool on = false;
-    std::string host, version;
+    std::string host, version, groups;
     uint16_t port = 0;
     void set(bool o, const char* h, const char* v, uint16_t p) override {
         on = o;
@@ -357,6 +357,7 @@ struct Mdns : tesserkit::Mdns {
         version = v;
         port = p;
     }
+    void group(const char* g) override { groups = g; }
 };
 
 struct Clock : tesserkit::Clock {

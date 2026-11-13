@@ -282,6 +282,9 @@ public:
     // <hostname>.local with _http._tcp and _tesser._tcp services on `port`
     // (none if 0); off when `on` is false.
     virtual void set(bool on, const char* hostname, const char* version, uint16_t port) = 0;
+    // The discovery groups in the services' TXT records (`group=`), from
+    // now on; empty: none (Peers, docs/DESIGN.md section 5.19).
+    virtual void group(const char* groups) = 0;
 };
 
 // The clock and SNTP: Time's.

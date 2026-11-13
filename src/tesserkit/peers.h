@@ -62,6 +62,11 @@ public:
     explicit Peers(Device& dev);
     ~Peers() override;
 
+    // Factory default of the discovery group: "ballet", or "ballet,fluante".
+    // Only nodes advertising one of them are mounted under /peers, besides
+    // the devices in /sys/peers/nodes; empty (the default): every node.
+    // Before Device::begin().
+    Peers& group(const char* groups);
     // Factory default of the route order: "udp, nowtp", before Device::begin().
     Peers& order(const char* order);
     // Factory default of the account signed in with on every node.
@@ -123,9 +128,22 @@ private:
     SignIn& signInFor(const std::string& id);
     void declare();
     void applyDefaultOrder();
+    // The group and the mount filter on each endpoint: all of them when
+    // `force`, else those that don't have the group yet (one UdpApi made
+    // since). The group in mDNS.
+    void applyGroup(bool force);
+    void keepDeclared();
     const PeerSettings* settingsFor(const tesser::PeerAddress& device) const;
     std::vector<tesser::DatagramEndpoint*> endpoints() const;
 
+    // The devices in /sys/peers/nodes, mounted whatever their group: the
+    // endpoints' mount filter reads it in process(), under the API lock,
+    // and keeps it alive.
+    struct Kept;
+
+    std::string group_;
+    std::shared_ptr<Kept> kept_;
+    Mdns* mdnsGrouped_ = nullptr;
     std::string order_;
     std::vector<PeerSettings> settings_;
     std::vector<State> states_;
@@ -140,13 +158,14 @@ private:
     uint32_t stateHook_ = 0, accessHook_ = 0;  // ids in the Api's RemoteHooks
     uint32_t refreshedMs_ = 0;
 
+    tesser::Node* groupNode_ = nullptr;
     tesser::Node* orderNode_ = nullptr;
     tesser::Node* settingsNode_ = nullptr;
     tesser::Node* accountNode_ = nullptr;
     tesser::Node* statusNode_ = nullptr;
     tesser::EventNode* lostEvent_ = nullptr;
     tesser::EventNode* reachedEvent_ = nullptr;
-    uint32_t orderGen_ = 0, settingsGen_ = 0, accountGen_ = 0;
+    uint32_t groupGen_ = 0, orderGen_ = 0, settingsGen_ = 0, accountGen_ = 0;
 };
 
 }  // namespace tesserkit

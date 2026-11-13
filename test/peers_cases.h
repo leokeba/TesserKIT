@@ -353,6 +353,50 @@ TEST(peers_declared_by_address) {
     CHECK(tesserkit::findNode(r.dev.api(), "/peers/node-75f37c") == nullptr);
 }
 
+TEST(peers_group_mounts_only_its_nodes) {
+    PeersRig r;
+    r.start();
+    r.discoverOverNowTp();
+    CHECK(tesserkit::findNode(r.dev.api(), "/peers/lamp-f37c") != nullptr);  // no group: every node
+    CHECK_EQ(r.set("/sys/peers/group", "\"bad name!\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/peers/group", "\"ballet\"").status, Status::Ok);
+    r.run(1000);
+    // Both endpoints, mDNS: the node advertises no group, so it goes.
+    CHECK_EQ(r.link()->endpoint().group(), "ballet");
+    CHECK_EQ(r.now()->group(), "ballet");
+    CHECK_EQ(r.fake.mdns.groups, "ballet");
+    CHECK(tesserkit::findNode(r.dev.api(), "/peers/lamp-f37c") == nullptr);
+    // It joins the group: mounted again, without a restart.
+    CHECK(r.peer->endpoint().setGroup("fluante,ballet"));
+    r.run(2000);
+    CHECK(tesserkit::findNode(r.dev.api(), "/peers/lamp-f37c") != nullptr);
+    // Another group, but declared in Settings per node: kept.
+    CHECK(r.peer->endpoint().setGroup("other"));
+    r.run(2000);
+    CHECK(tesserkit::findNode(r.dev.api(), "/peers/lamp-f37c") == nullptr);
+    CHECK_EQ(r.set("/sys/peers/nodes", "[{\"id\": \"10521c75f37c\"}]").status, Status::Ok);
+    r.run(2000);
+    CHECK(tesserkit::findNode(r.dev.api(), "/peers/lamp-f37c") != nullptr);
+    // Every node again.
+    CHECK_EQ(r.set("/sys/peers/nodes", "[]").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/peers/group", "\"\"").status, Status::Ok);
+    r.run(2000);
+    CHECK_EQ(r.link()->endpoint().group(), "");
+    CHECK_EQ(r.fake.mdns.groups, "");
+    CHECK(tesserkit::findNode(r.dev.api(), "/peers/lamp-f37c") != nullptr);
+}
+
+TEST(peers_group_factory_default) {
+    PeersRig r;
+    r.peers.group("ballet");
+    r.start();
+    CHECK_EQ(r.value("/sys/peers/group"), "\"ballet\"");
+    CHECK_EQ(r.link()->endpoint().group(), "ballet");
+    CHECK_EQ(r.now()->group(), "ballet");
+    r.discoverOverNowTp();  // advertises no group
+    CHECK(tesserkit::findNode(r.dev.api(), "/peers/lamp-f37c") == nullptr);
+}
+
 TEST(peers_max_calls_reach_the_endpoints) {
     PeersRig r;
     r.udp.maxCalls(24);

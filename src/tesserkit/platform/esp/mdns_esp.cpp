@@ -35,6 +35,7 @@ public:
         for (const char* type : {"_http", "_tesser"}) {
             if (mdns_service_exists(type, "_tcp", nullptr)) mdns_service_remove(type, "_tcp");
         }
+        port_ = port;
         if (!port) return;
         version_ = version;
         mdns_txt_item_t txt[] = {
@@ -47,10 +48,27 @@ public:
         // What TesserAPI's HttpServer::advertise() announces, and TesserUI's
         // bridge browses for the launcher (TesserUI's DESIGN.md section 9.7).
         mdns_service_add(nullptr, "_tesser", "_tcp", port, txt, 2);  // api and ws
+        applyGroup();
+    }
+
+    void group(const char* groups) override {
+        group_ = groups ? groups : "";
+        if (up_ && port_) applyGroup();
     }
 
 private:
-    std::string version_;
+    void applyGroup() {
+        for (const char* type : {"_http", "_tesser"}) {
+            if (group_.empty()) {
+                mdns_service_txt_item_remove(type, "_tcp", "group");
+            } else {
+                mdns_service_txt_item_set(type, "_tcp", "group", group_.c_str());
+            }
+        }
+    }
+
+    std::string version_, group_;
+    uint16_t port_ = 0;
     bool up_ = false;
 };
 
