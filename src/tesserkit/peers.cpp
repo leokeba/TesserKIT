@@ -192,6 +192,11 @@ Peers& Peers::onDeviceLost(DeviceLostHandler fn) {
     return *this;
 }
 
+Peers& Peers::grace(uint32_t ms) {
+    graceMs_ = ms < kMaxGraceMs ? ms : kMaxGraceMs;
+    return *this;
+}
+
 tesser::Object& Peers::nodes() {
     if (!peers_) peers_ = &dev_.api().object("peers").label("Nodes nearby").ui("icon", "target");
     return *peers_;
@@ -218,6 +223,14 @@ void Peers::describe(tesser::Object& o) {
                       .doc("The routes tried for each node, in order, the next one when a node is lost on one: "
                            "udp/ethernet, udp/wifi, udp/ap, udp (any interface), nowtp")
                       .ui("placeholder", "in the order the nodes were found");
+    o.value("grace", graceMs_)
+                      .range(0, kMaxGraceMs)
+                      .persist()
+                      .unit("ms")
+                      .label("Grace when lost")
+                      .doc("How long a device lost from every route may be away before what it wrote here is "
+                           "undone; back within it, nothing happens. A goodbye or a restart is undone at once")
+                      .ui("advanced");
     accountNode_ = &o.mount("account", account_)
                         .persist()
                         .label("Account on the nodes")
@@ -582,6 +595,7 @@ void Peers::login(const std::string& nodeName, const std::string& id, const std:
 
 void Peers::tick(uint32_t nowMs) {
     if (client_) client_->process();
+    if (!losing_.empty()) releaseLosses(nowMs);
     uint32_t gen = groupNode_->generation();
     if (gen != groupGen_) {
         groupGen_ = gen;
@@ -646,12 +660,49 @@ void Peers::event(const Event& e) {
     // Gone from one transport, perhaps not from the others (a failover). A
     // restart counts even when the device is back at once: what it held is
     // gone.
-    if (reason != tesser::PeerLoss::Restarted) {
-        for (tesser::DatagramEndpoint* ep : endpoints()) {
-            if (ep->deviceOnline(device)) return;
+    if (reason != tesser::PeerLoss::Restarted && deviceOnline(device)) return;
+    // The links' own judgement that it is away may be a drop of a second
+    // or two (radio): wait out the grace period. A goodbye, a restart, or
+    // this side's link stopping is final.
+    bool passing = reason == tesser::PeerLoss::Failed || reason == tesser::PeerLoss::Lost ||
+                   reason == tesser::PeerLoss::Silent;
+    if (passing && graceMs_) {
+        for (const Losing& l : losing_) {
+            if (l.device == e.text) return;  // already waiting: from its first loss
+        }
+        losing_.push_back(Losing{e.text, reason, dev_.loopMs() + graceMs_});
+        return;
+    }
+    for (size_t i = 0; i < losing_.size(); ++i) {
+        if (losing_[i].device == e.text) {
+            losing_.erase(losing_.begin() + static_cast<std::ptrdiff_t>(i));
+            break;
         }
     }
     if (lost_) lost_(device, reason);
+}
+
+bool Peers::deviceOnline(const PeerAddress& device) const {
+    for (tesser::DatagramEndpoint* ep : endpoints()) {
+        if (ep->deviceOnline(device)) return true;
+    }
+    return false;
+}
+
+void Peers::releaseLosses(uint32_t nowMs) {
+    for (size_t i = 0; i < losing_.size();) {
+        Losing& l = losing_[i];
+        PeerAddress device = PeerAddress::fromBytes(reinterpret_cast<const uint8_t*>(l.device.data()),
+                                                    static_cast<uint8_t>(l.device.size()));
+        bool back = deviceOnline(device);
+        if (!back && static_cast<int32_t>(nowMs - l.dueMs) < 0) {
+            ++i;
+            continue;
+        }
+        tesser::PeerLoss reason = l.reason;
+        losing_.erase(losing_.begin() + static_cast<std::ptrdiff_t>(i));
+        if (!back && lost_) lost_(device, reason);
+    }
 }
 
 }  // namespace tesserkit

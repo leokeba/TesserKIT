@@ -686,6 +686,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 /sys/peers              label "Nodes", ui.icon "target", write Admin
   group *(p)            string: the discovery groups, "ballet" or "ballet,fluante"; empty: every node
   order *(p)            string: the routes tried for each node, in order ("udp/ethernet, nowtp"); empty: the order found
+  grace *(p)            0–60000 ms (default 0), advanced: how long a device lost from every route may be away before onDeviceLost() hears of it
   account *(p)          { name, password (secret) } ui.form: signed in with on every node (empty name: none)
   nodes *(p)            keyed list (key "id"), ≤ 16, advanced: settings per device
                           id       the device's station MAC, 12 hex digits (colons allowed), as /peers shows it
@@ -709,6 +710,7 @@ Each service lists its tree, its behaviour and its access levels (§7). "Admin" 
 - **The status on a short heap:** it is updated from the heap (a node new to the list, a route's text) at each change and every second, reserved first through TesserAPI's byte budget. Without room the previous status stands until the next period (routes and sign-ins go on), rather than aborting in the device's task, as DEVKIT-V3 did as a gateway during a file download (2026-10-15).
 - **Signing in:** a node with an admin account gives a node that presents no token its `peerAccess` (§5.18), Public by default in that secure mode (§7). With an account (`account`, or a device's own `user` and `password`), this device signs in to each node's `/sys/auth/login` (§5.7) once the node is online, and presents the token it gets on every route (TesserAPI §13.3, 05190c8): the node then grants it that account's level. The token is presented again whenever the node may have forgotten it (a restart, a failover); when the node refuses it (expired after its `sessionHours`, revoked by `logoutAll`), this device signs in again, at most every 30 s. A wrong name or password isn't tried again until the account changes, since a node locks sign-ins out after five failures; a node without the Auth service ("the node has no accounts") needs none: it is open. Other failures (no answer, locked out) are retried after 30 s. `access` is the level the node granted the token, `public` until it has answered (the token goes before the next request to the node). `signIn` tells how signing in went: "signed in as show", "wrong name or password", "token refused", "couldn't sign in: …". Changing or removing the account drops the token. Tokens and sign-ins travel in clear, as UDP's requests do (§5.18): a LAN you trust. The account's level is this device's, not its clients': a request a client below Admin makes through `/peers` carries that client's level as a ceiling, and the node grants the lower of the two (TesserAPI §13.1, 390dd57), so an anonymous visitor of a gateway that signs in as an admin reaches the nodes as public, and a user as a user. A node on a TesserAPI before 390dd57 can't apply a ceiling and refuses such a request: only this device's admins reach it through the gateway.
 - **A device gone** (`peers.onDeviceLost(fn(mac, reason))`): a node driven by a master undoes what the master did when the master is gone from every transport, not when it fails over from one to the other (TesserAPI §14.4), or when it restarted, even though it is back at once: what it held is gone (TesserAPI 1993c78's `PeerLoss`). `reason` says which: `failed` (also a NowTP message its retries couldn't deliver, TesserAPI 66f0000), `goodbye`, `restarted`, `silent`, `stopped`, `lost` or `auth_failed` (NowTP can't authenticate it: another pairing key; the `lost` toast says so) (`tesser::toString()`). UdpApi and NowTp hand their endpoints' `onPeerLost()` to the service when the endpoint is created; the function runs in the device's task, under the API lock. Who writes is `api.currentClient()->device` during the write.
+- **Grace** (2026-11-13, asked by ballet-photophonique for timelines over radio, §5.27): with `grace` (`peers.grace(ms)` as its factory default), a device lost from every route because the links judged it away (`failed`, `lost`, `silent`) is told to `onDeviceLost()` only once it has stayed away that long; back on any route within it (`deviceOnline()` on an endpoint), it was never lost. Its first loss starts the wait; the reason told is that one. A `goodbye`, `restarted`, `stopped` or `auth_failed` loss is told at once, and ends a wait. Checked each period of the device's task. A device is back once an endpoint knows it again, which its first message after the loss does (TesserAPI f3cc700). The wait is on the master's side: after a failed delivery its route to the node stays offline until its probe (TesserAPI's `RemoteNode::probe()`, 5 s, doubling up to a minute) or the node's next advertisement (5 s over UDP), and only then do its writes go again. So a grace should exceed 5 s, until Peers sets a shorter probe on its nodes (`/sys/peers/probe` *(later)*, A6 in §14). The `lost` toast isn't delayed: it follows the status. Host-tested.
 - **Streaming to nodes:** `RemoteNode::byDevice(peers.nodes(), mac)` finds a device's node (`peers.nodes()` is `api.object("peers")`), and `node->stream(path, json)` writes to it in order without waiting (TesserAPI §14.3). A set in flight takes one of the endpoint's calls: `udp.maxCalls(n)` and `espNow.maxCalls(n)` (default 8, fixed when the transport starts) should be at least the number of nodes streamed to at once.
 - **On hardware** (2026-10-13, DEVKIT-V3 and DEVKIT-R1 on `examples/idf/full`, both on the home Wi-Fi, ESP-NOW on channel 6): each devkit mounts the other once, with routes "nowtp, udp", and the Gledopto on Ethernet over UDP only. Writing `order` switched the route at once; round trips 21–22 ms over NowTP, 70–100 ms over UDP through the access point. R1's UDP turned off: V3 went over NowTP within 2 s, and back to UDP when R1's came back, stable after. Signing in: V3's admin write to R1 (which had an admin account) went from `unauthorized` to done, and `access` read `admin` after it. After both boards were flashed, V3 received almost no UDP until it was restarted, as TesserAPI saw with this pair: routes then flapped to NowTP every 15 s (UDP's silence timeout).
 - **Factory defaults:** `peers.group("ballet").order("udp, nowtp").account("show", "...")`.
@@ -802,6 +804,55 @@ The GPIOs are number entries with -1 labelled "none" (TesserUI's `ui.labels "-1=
 - **Without Network,** the LED follows `Device::state()` alone and `accessPoint` does nothing.
 - **In `examples/idf/full`:** on, with the button on GPIO 17 with the Gledopto's Ethernet and on GPIO 0 otherwise (Kconfig `FULL_BUTTON_GPIO`, `-DBUTTON_GPIO=n`), and no status LED (`FULL_STATUS_LED_GPIO`, `-DSTATUS_LED_GPIO=n`): a devkit's GPIO 2 is the example's own LED (`/led`).
 - Host-tested (`test/board_cases.h`). On hardware (2026-10-25, Gledopto C, classic-gledopto, on Ethernet): a short press opened the access point (`override` open, the device still online on the cable), another closed it, a 5 s hold restarted on release. On DEVKIT-R1 (the full example): `led/gpio` 2 is refused, "in use", since the example's LEDC has reserved it for `/led`, which keeps working; built with `-DLED_GPIO=4 -DSTATUS_LED_GPIO=2`, its blue LED was steady online, blinked for `identify`, went dark with `show` problems, and the BOOT button's short presses opened the access point (a double blink) and closed it. The full profile, Bluetooth with it, leaves that board 20 to 23 KB free, and with two clients polling and a settings save it fell to 672 B and the station dropped for about 90 s, before any press: with classic (77 KB free) it doesn't. Opening the access point beside a joined station took 4 KB there.
+
+### 5.25 Network clock *(later)*
+
+One network time for a fleet that mixes cables and radio (2026-11-13, asked by ballet-photophonique for its ensembles, its DESIGN §5.8; Leo: wired or wireless, clocks synchronized over Ethernet as well as over the radio). NowTP's `TimeSync` (§5.11) made independent of what carries it (NowTP, §14), with two carriers: ESP-NOW (NowTp, §5.11) and UDP (UdpApi, §5.18, through a side channel of TesserAPI's link, §14). `tesserkit::Clock clock(dev)`, declared after UdpApi and NowTp:
+
+```
+/sys/clock              label "Network time", ui.icon "clock", write Admin
+  reference *(p)        "auto" (default), "this", or a device's MAC: as NowTp's time/reference today, ui.perNode
+  carriers *(p)         "udp, nowtp" (default): what may carry it, in order of preference
+  interval *(p)         1–600 s (default 5), advanced
+  late *(p)             0–1000 ms (default 0), advanced: how late a timed write may still be applied (§5.26)
+  synced, isReference, source (the reference's MAC), carrier (udp/ethernet, udp/wifi, nowtp)
+  offset (µs), roundTrip (µs), drift (ppm), rounds, age (ms)   advanced
+  writes/               queued, applied, late (dropped), lateMax (µs: the latest applied write's lateness), advanced
+```
+
+- **One election, one reference:** NowTP's roles and election (§5.11), over both carriers, peers named by their device id (the station MAC, which UDP and NowTP both know a device by). A device reaching the reference both ways follows it over the first carrier in `carriers` that reaches it, and moves to the next when that one loses it; the reference answers each request on the carrier it came by. So the master of an ensemble set to `this` (`clock.reference("this")`) serves its nodes on the cable and on the radio alike.
+- **For applications:** `clock.networkTimeUs()`, `clock.localTimeUs(networkUs)` and `clock.timeSynced()`, from any task, as NowTp's are today; `espNow.networkTimeUs()` and the others forward to the Clock when there is one. Without a Clock, NowTp keeps its own network time and `/sys/nowtp/time` as now: nothing changes for applications that don't declare one; with one, `/sys/nowtp/time` isn't described.
+- **Accuracy:** UDP's times are software stamps, taken when lwIP's datagram is read in UdpApi's receiving task and after `sendto()` returns: expected a few tens to a few hundred µs on a wired LAN (ballet-photophonique needs a few hundred), milliseconds over Wi-Fi (its beacon interval and power save). NowTP's calibration (the reference measuring the follower's error) runs per carrier, since the two carriers' stamping delays differ. To measure on Gledopto B and D.
+- **Build:** the core is NowTP's, so a Clock needs NowTP in the build, even on a device with ESP-NOW off.
+
+### 5.26 Timed writes *(later)*
+
+Writes applied at a network time rather than when they arrive (2026-11-13, ballet-photophonique's DESIGN §5.8 mode 2: replay sent a lookahead ahead, about 10 ms on Ethernet, 20–30 ms over NowTP, 150 ms over Wi-Fi with power save off).
+
+- **On the wire** (TesserAPI, §14): a set or a streamed set carries `"at"`, a network time in µs (`?at=` over HTTP); TesserAPI checks the client's access and the value when it arrives, and hands it to the Api's scheduler, which the Clock service is. The reply goes at once: `ok` (queued), `timeout` with reason `late` (it came after its time plus `late`: dropped, counted in `writes/late`; a stream's next write repairs the state; a reason, not a status, so older clients read a timeout), `busy` (the queue is full). A timed write isn't merged with others to the same path (a note-on and its note-off both happen). Timed stream writes keep their order without a sequence on the wire: `stream()` keeps `at` strictly increasing per node, moving a write at or before the previous one's time to 1 µs after it, so the node's queue sorts by `at`, stably. Without a scheduler (no Clock), a timed write is refused (`not_allowed`), and so it is before the Clock is synchronized, so a master knows. A node on a TesserAPI that predates `at` ignores it and applies on arrival: check a node's version where that matters.
+- **On the node:** a queue ordered by local time, then arrival, bounded (64 writes and 8 KB through TesserAPI's byte budget, `busy` beyond), applied by a task of its own above the device's task, woken from an `esp_timer` at the write's time, under the API lock, as the client that sent it (its device for TesserAPI's writer tracking, its `persist`). A write the lock held up past its time is applied all the same, its lateness in `writes/lateMax`: the state must end as written. Whatever holds the lock for long delays them all: an application's save (ballet-photophonique's recorder) copies under the lock and writes outside it.
+- **The master's own outputs** go through the same queue (a timed set from a `LocalClient`), so they play with the nodes.
+
+### 5.27 Timelines *(later)*
+
+A node's own part, played on network time (2026-11-13, ballet-photophonique's DESIGN §5.8 mode 3, and ballet-motophonique's motor speeds): a file of timed writes, started at a network time, played by each node on its own clock, so a lost datagram can't delay a note and no crystal drifts. `Timeline part(dev, "part")`, one per subject, as `Sequencer` (§5.13), mounted at `/<name>`:
+
+```
+/part
+  file *(p)             path on Files (§5.12), "/timelines/part.tl"
+  loop *(p)             boolean
+  play                  action {at: network µs (0: now), from: ms}
+  stop                  action
+  cue                   action {ms}: the position; playing goes on from there
+  state                 idle, waiting (for its start), playing, ended, error
+  position (ms), length (ms), startedAt (network µs, persisted while playing), missed
+  error                 why it can't play: no such file, line 12: not JSON, clock not synchronized
+```
+
+- **The file:** one write per line, `<ms> <path> <json>` (`120 /outputs/3 {"on":true,"duty":78}`), sorted by time, uploaded through Files (`/sys/files`) by the master, which renders each node's part (the rendering is the application's). Read a block at a time while playing, never whole; seeking reads it from the start, or from a sparse index (a line's offset every 64 lines) built when the file is first played.
+- **Starting together:** the master sends every node a timed `play` (§5.26: `at` in the envelope), or `play {at}` ahead of time; each starts at T on its own clock. A node that hears it after T, or that comes back while playing (`startedAt` is kept across a restart, and it waits for its clock to synchronize), joins at the position network time gives: the lines it skipped are folded into their last value per path, applied at once (`missed` counts them), so its outputs are as the part has them by then.
+- **Its writes** are queued as timed writes at their network time, unsaved (`persist` false, as the Sequencer's), as the client that started it, so TesserAPI's writer tracking releases them when that device is lost (`api.writerLost()`); the timeline stops then too. A lost master is one gone longer than Peers' `grace` (§5.19), which on radio covers its drops of a second or two.
+- **Loop:** at the end, from 0 at T plus the length, on network time, so loops don't drift either.
 
 ### 5.17 Later
 
@@ -1133,6 +1184,20 @@ Done as of 2026-10-11 too, for Bluetooth and NowTp: an `auth` envelope presentin
 | File widgets over serial and Bluetooth (and a serial port through the bridge), with TesserAPI's `upload` and `download` envelopes; HTTP wherever there is one (TesserUI 4e54d75, 2026-10-13) | §5.4, §5.5, §5.12 from the launcher with no network |
 | Files below a remote node in WebSocket envelopes, so a relay never holds the gateway's HTTP task (TesserUI d8934b6, 2026-10-13) | §5.4 fleet updates |
 | `ui.nodeName` (the root's label read again after a rename) and `ui.perNode` (left out of apply to all); a peer's tab label read again with each advertised hash (TesserUI 42f58bd, 2026-10-21) | §4.4 |
+
+**Ensemble timing** (2026-11-13, asked by ballet-photophonique through tesserkit-f3; §5.25–5.27). In order: N1 before A1 and the Clock (§5.25); A2 and A3 before the queue (§5.26) and timelines (§5.27).
+
+| Item | Layer | For |
+|---|---|---|
+| **N1** `TimeSync` over any carrier, several at once: peers named by a 6-byte device id, carriers that send a datagram to one, report when it left, and deliver what they receive with the time it came; the ESP-NOW engine one of them, `EspNowTransport` able to serve a `TimeSync` it doesn't own; one election across carriers (offers from NowTP's discovery, and from carriers without it by the core's own offer beacon, or fed by the owner); a follower reaching the reference two ways uses a preferred carrier and fails over; the reference answers on the carrier a request came by; calibration per carrier; status naming the carrier. Built and host-tested without ESP-NOW (fake carriers). NowTP-only users unchanged | NowTP | §5.25 |
+| **A1** A side channel on UDP's link: datagrams of another protocol on the same socket, outside TesserAPI's messages (`sendSide(to, bytes)`, broadcast too; `onSide(from, device, bytes, rxUs)`), received times taken when the datagram is read, sent times reported after `sendto()` returns; peer address to device id both ways: done, 220c4c5 | TesserAPI | §5.25 |
+| **A2** Timed sets: `Query::at` (network µs), `"at"` in the envelope, `?at=` over HTTP; an Api scheduler hook taking the checked write (path, value, client, query) and answering `ok`, `late` or `busy`; applying it later as that client (writer tracking, `persist`); `late` as a status; refused without a scheduler | TesserAPI | §5.26 |
+| **A3** Timed stream writes: not merged, in order (`at` kept strictly increasing per node), several in flight, `late` replies in `streamStats()`; untimed ones merge as now | TesserAPI | §5.26 |
+| **A4** A peer forgotten after a failed message counted online again on its next message, not only its next advertisement: already so, test added (f3cc700) | TesserAPI | §5.19 |
+| **A6** A default probe interval for every remote node (as `remoteHooks().setRouteOrder()`), and `probe(ms)` keeping the backoff when the value doesn't change, so Peers can set a short one (`/sys/peers/probe`) for its grace | TesserAPI | §5.19 |
+| **A5** Saves render under the API lock and write storage outside it, under a storage lock ranked below it (timed writes wait on the API lock) | TesserAPI | §5.26 |
+
+All five taken by tesserapi-9c (2026-11-13), in the order A4, A1, A2 + A3, A5; it adds no writer grace of its own (Peers' `grace`, §5.19).
 
 ## 15. Roadmap
 

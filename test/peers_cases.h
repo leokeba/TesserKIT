@@ -221,6 +221,47 @@ TEST(peers_device_lost_from_every_transport) {
     if (!r.lost.empty()) CHECK_EQ(r.lost[0], std::string(1, char(0x7c)) + "lost");
 }
 
+// A grace period: a device lost from every transport and back within it was
+// never lost (a radio drop); one that stays away is told when it runs out,
+// and a restart at once.
+TEST(peers_grace_before_a_device_is_lost) {
+    PeersRig r;
+    r.peers.grace(2000);
+    r.start();
+    r.discoverOverNowTp();
+    CHECK_EQ(r.get("/sys/peers/grace").body, "2000");
+    r.peer->stop();  // gone from UDP (a goodbye), still there over NowTP
+    r.pumpAll(500);
+    // Lost over NowTP too, and heard again a second later.
+    r.now()->forgetPeer(PeersRig::mac(kPeerMac));
+    r.pumpAll(1000);
+    CHECK(r.lost.empty());
+    r.discoverOverNowTp();
+    r.pumpAll(2000);
+    CHECK(r.lost.empty());
+    // Lost again, for good: told once the grace has run out, with the reason.
+    r.now()->forgetPeer(PeersRig::mac(kPeerMac), tesser::PeerLoss::Failed);
+    r.pumpAll(1500);
+    CHECK(r.lost.empty());
+    r.pumpAll(1000);
+    CHECK_EQ(r.lost.size(), 1u);
+    if (!r.lost.empty()) CHECK_EQ(r.lost[0], std::string(1, char(0x7c)) + "failed");
+}
+
+TEST(peers_grace_does_not_wait_for_a_restart) {
+    PeersRig r;
+    r.peers.grace(5000);
+    r.start();
+    r.discoverOverNowTp();
+    CHECK_EQ(r.fromPeer(Op::Set, "/lamp/on", "true").status, Status::Ok);
+    r.peer->start(0x9100);
+    r.peer->advertise();
+    r.pumpAll(500);
+    CHECK_EQ(r.lost.size(), 1u);
+    if (!r.lost.empty()) CHECK_EQ(r.lost[0], std::string(1, char(0x7c)) + "restarted");
+    CHECK(r.set("/sys/peers/grace", "60001").status != Status::Ok);
+}
+
 // NowTP can't authenticate the node (another pairing key): a toast that says
 // so, though UDP still reaches it, and the device isn't counted as gone.
 TEST(peers_wrong_pairing_key_is_told) {

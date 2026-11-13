@@ -52,6 +52,7 @@ public:
     // attempts) is tried again after this; so is one whose token is refused
     // soon after it was given.
     static constexpr uint32_t kSignInRetryMs = 30000;
+    static constexpr uint32_t kMaxGraceMs = 60000;
 
     // `device` is the MAC of a device gone from every transport (UDP's and
     // NowTP's), or that restarted (whatever it held is gone, even though it
@@ -74,6 +75,11 @@ public:
     // A device that wrote here (a master) is gone: the application undoes
     // what it did. It owns UdpApi's and NowTp's DatagramEndpoint::onPeerLost().
     Peers& onDeviceLost(DeviceLostHandler fn);
+    // Factory default of /sys/peers/grace: how long a device lost from every
+    // transport (failed, lost, silent) may be away before onDeviceLost()
+    // hears of it; back within it, it was never lost. A goodbye or a restart
+    // is told at once. 0 (the default): at once.
+    Peers& grace(uint32_t ms);
 
     void describe(tesser::Object& o) override;
 
@@ -135,6 +141,10 @@ private:
     void keepDeclared();
     const PeerSettings* settingsFor(const tesser::PeerAddress& device) const;
     std::vector<tesser::DatagramEndpoint*> endpoints() const;
+    bool deviceOnline(const tesser::PeerAddress& device) const;
+    // Tells onDeviceLost() of the losses whose grace ran out, and forgets the
+    // devices back since.
+    void releaseLosses(uint32_t nowMs);
 
     // The devices in /sys/peers/nodes, mounted whatever their group: the
     // endpoints' mount filter reads it in process(), under the API lock,
@@ -151,6 +161,14 @@ private:
     std::vector<SignIn> signIns_;
     std::unique_ptr<tesser::LocalClient> client_;  // signs in, Admin
     DeviceLostHandler lost_;
+    uint32_t graceMs_ = 0;
+    // A device lost from every transport, waiting out the grace period.
+    struct Losing {
+        std::string device;  // its MAC's bytes
+        tesser::PeerLoss reason;
+        uint32_t dueMs;
+    };
+    std::vector<Losing> losing_;
 
     std::vector<std::string> declared_; // "id address" pairs done (nodes are never removed)
     tesser::Object* peers_ = nullptr;
