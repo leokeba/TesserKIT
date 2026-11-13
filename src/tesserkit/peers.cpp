@@ -78,7 +78,7 @@ bool parseOrder(const std::string& text, std::vector<RouteKind>& out) {
 }
 
 Check checkGroup(const std::string& v) {
-    return tesser::detail::validGroups(v) ? Check::ok()
+    return tesser::validGroups(v) ? Check::ok()
                                   : Check::fail(Status::InvalidValue,
                                                 "names of 1-15 letters, digits, '-', '_' or '.', separated by commas, "
                                                 "32 characters in all");
