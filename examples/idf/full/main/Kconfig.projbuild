@@ -76,6 +76,11 @@ config FULL_PEERS
     depends on FULL_NOWTP || FULL_UDP
     default y
 
+config FULL_CLOCK
+    bool "NetworkClock: one network time over UDP and NowTP, timed writes"
+    depends on FULL_NOWTP || FULL_UDP
+    default y
+
 config FULL_SEQUENCER
     bool "Sequencer: steps played in turn"
     default y

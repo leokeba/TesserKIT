@@ -24,6 +24,7 @@ namespace tesserkit {
 
 class Device;
 class Files;
+class NetworkClock;
 
 // The device's overall state (docs/DESIGN.md section 4.3).
 enum class State : uint8_t { Booting, Provisioning, Connecting, Online, Updating, Error };
@@ -87,6 +88,8 @@ protected:
     virtual void factoryReset() {}
     // The Files service, which Device::files() returns.
     virtual Files* asFiles() { return nullptr; }
+    // The NetworkClock service, which Device::networkClock() returns.
+    virtual NetworkClock* asNetworkClock() { return nullptr; }
     // Work in flight that a restart now would lose (Auth: a password's hash
     // still computing, so the account isn't stored yet). Read from the
     // device's task without the API lock. A restart waits for it, at most
@@ -226,6 +229,9 @@ public:
     // The Files service, if the application has one (docs/DESIGN.md
     // section 5.12): other services keep their files there.
     Files* files() const { return files_; }
+    // The NetworkClock service, if the application has one (known from the
+    // start of begin(), before the services describe their trees).
+    NetworkClock* networkClock() const { return networkClock_; }
     // A service needs the Wi-Fi station awake (Service::needsStationAwake()).
     bool stationAwake() const { return stationAwake_; }
     // Secure mode (docs/DESIGN.md section 7): on while an admin account
@@ -380,6 +386,7 @@ private:
     Migration appMigrate_;
     Service* services_ = nullptr;
     Files* files_ = nullptr;
+    NetworkClock* networkClock_ = nullptr;
     bool stationAwake_ = false;
     bool secure_ = false;
     uint32_t secureGen_ = 0;

@@ -835,6 +835,8 @@ struct UdpApi : tesserkit::UdpApiTransport {
         if (l) l->stop();
     }
     tesser::UdpLink* link() override { return l.get(); }
+    SideFn side;
+    void onSide(SideFn fn) override { side = std::move(fn); }
 };
 
 struct Platform {

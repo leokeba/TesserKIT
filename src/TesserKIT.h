@@ -26,6 +26,7 @@
 #include "tesserkit/network.h"
 #include "tesserkit/nowtp.h"
 #include "tesserkit/peers.h"
+#include "tesserkit/network_clock.h"
 #include "tesserkit/pulses.h"
 #include "tesserkit/pwm.h"
 #include "tesserkit/sacn.h"

@@ -54,7 +54,7 @@ public:
     int64_t localTimeUs(uint64_t networkUs) const;
     // Synchronized with the reference, or the reference: as of the last
     // second (the service polls the radio), under the API lock.
-    bool timeSynced() const { return status_.timeSynced; }
+    bool timeSynced() const;
 
 protected:
     void start() override;
@@ -87,6 +87,7 @@ private:
     void refresh();
     void setPairing(const std::string& s);
     void applyTimeReference();
+    void describeTime(tesser::Object& o);
     tesser::Check pairing(bool accept);
     // A pairing runs: stopping and forgetting the key wait for it.
     bool pairingRuns() const;

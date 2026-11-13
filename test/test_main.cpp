@@ -24,5 +24,6 @@
 #include "pulses_cases.h"
 #include "button_cases.h"
 #include "board_cases.h"
+#include "clock_cases.h"
 
 int main(int argc, char** argv) { return check::run(argc > 1 ? argv[1] : nullptr) ? 1 : 0; }

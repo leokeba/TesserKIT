@@ -151,11 +151,14 @@ void UdpApi::start() {
     startMs_ = static_cast<uint32_t>(dev_.core().uptimeMs());
 }
 
+tesser::UdpLink* UdpApi::link() const { return transport_ ? transport_->link() : nullptr; }
+
 void UdpApi::begin() {
     if (!transport_ || running_) return;
     bool had = transport_->link() != nullptr;
     Device& dev = dev_;
     address_ = dev_.address();
+    if (side_) transport_->onSide(side_);
     running_ = transport_->begin(dev_.api(), port_, dev_.hostname(), maxCalls_, ownTask_, [&dev] { dev.wake(); },
                                  interfaces_);
     if (!had && transport_->link()) Peers::watch(dev_, transport_->link()->endpoint());

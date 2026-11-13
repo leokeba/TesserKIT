@@ -24,6 +24,7 @@ set(TESSERKIT_CORE_SRCS
     src/tesserkit/sleep.cpp
     src/tesserkit/udp_api.cpp
     src/tesserkit/peers.cpp
+    src/tesserkit/network_clock.cpp
     src/tesserkit/pwm.cpp
     src/tesserkit/pulses.cpp
     src/tesserkit/board.cpp
@@ -86,6 +87,7 @@ if(ESP_PLATFORM)
              src/tesserkit/platform/esp/pwm_esp.cpp
              src/tesserkit/platform/esp/pulses_esp.cpp
              src/tesserkit/platform/esp/udp_api_esp.cpp
+             src/tesserkit/platform/esp/alarm_esp.cpp
         INCLUDE_DIRS "src"
         REQUIRES esp_http_server esp_wifi esp_netif nvs_flash
         PRIV_REQUIRES esp_event esp_timer app_update esp_http_client mbedtls lwip mdns mqtt espcoredump joltwallet__littlefs
@@ -111,6 +113,7 @@ project(tesserkit CXX)
 option(TESSERKIT_BUILD_TESTS "Build host-side tests" ON)
 option(TESSERKIT_SANITIZE "Build tests with ASan/UBSan" ON)
 set(TESSERAPI_DIR "" CACHE PATH "TesserAPI source tree (default: ../TesserAPI if present, else fetched from GitHub)")
+set(NOWTP_DIR "" CACHE PATH "NowTP source tree, for NetworkClock (default: ../NowTP if present, else fetched from GitHub)")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -142,9 +145,35 @@ endif()
 
 set(TESSERKIT_WARNINGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -fno-exceptions -fno-rtti)
 
+# NowTP's portable core (nowtp_core), for NetworkClock's TimeSync.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/deps.cmake")
+if(NOT TARGET nowtp_core)
+    if(NOT NOWTP_DIR AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../NowTP/CMakeLists.txt")
+        get_filename_component(NOWTP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../NowTP" ABSOLUTE)
+        set(NOWTP_DIR "${NOWTP_DIR}" CACHE PATH "" FORCE)
+    endif()
+    set(NOWTP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    if(NOWTP_DIR)
+        message(STATUS "NowTP: ${NOWTP_DIR}")
+        tesserkit_check_sibling(NowTP "${NOWTP_DIR}")
+        add_subdirectory("${NOWTP_DIR}" "${CMAKE_BINARY_DIR}/nowtp")
+    else()
+        tesserkit_pinned(NowTP NOWTP_SHA)
+        message(STATUS "NowTP: fetching https://github.com/leokeba/NowTP.git at ${NOWTP_SHA}")
+        include(FetchContent)
+        FetchContent_Declare(nowtp
+            GIT_REPOSITORY https://github.com/leokeba/NowTP.git
+            GIT_TAG ${NOWTP_SHA})
+        FetchContent_MakeAvailable(nowtp)
+    endif()
+endif()
+
 add_library(tesserkit_core ${TESSERKIT_CORE_SRCS})
 target_include_directories(tesserkit_core PUBLIC src)
-target_link_libraries(tesserkit_core PUBLIC tesser_core)
+target_link_libraries(tesserkit_core PUBLIC tesser_core nowtp_core)
+target_compile_definitions(tesserkit_core PUBLIC TESSERKIT_HAVE_NOWTP=1)
+# As TesserKIT: no RTTI or exceptions (UBSan's vptr checks need one rule).
+target_compile_options(nowtp_core PRIVATE -fno-exceptions -fno-rtti)
 set_target_properties(tesserkit_core PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 target_compile_options(tesserkit_core PRIVATE ${TESSERKIT_WARNINGS})
 
@@ -169,7 +198,7 @@ if(TESSERKIT_BUILD_TESTS)
     endforeach()
     if(TESSERKIT_SANITIZE)
         # tesser_core too, so the whole binary is instrumented alike.
-        foreach(t tesser_core tesserkit_core tesserkit_fake tesserkit_tests tesserkit_fixtures tesserkit_demo)
+        foreach(t tesser_core nowtp_core tesserkit_core tesserkit_fake tesserkit_tests tesserkit_fixtures tesserkit_demo)
             target_compile_options(${t} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer -g)
             target_link_options(${t} PRIVATE -fsanitize=address,undefined)
         endforeach()

@@ -95,6 +95,17 @@ public:
             if (e != nowtp::PeerEvent::Updated) post(Event::Type::NowTpPeers);
         });
         radio_.onChannelChange([this](uint8_t ch) { post(Event::Type::NowTpChannel, ch); });
+        // A network clock's core (NetworkClock): ESP-NOW becomes one of its
+        // carriers, once, before NowTP first starts; NowTP's own TimeSync
+        // and the time settings are left out then.
+        if (config.timeCore && !served_) {
+            nowtp::Status served = radio_.serveTimeSync(config.timeCore, config.timeWake);
+            if (served == nowtp::Status::Ok) {
+                served_ = true;
+            } else {
+                tesser::logError("tesserkit: NowTP can't serve the network clock: %s", nowtp::toString(served));
+            }
+        }
         nowtp::Status st = radio_.begin(c);
         if (st != nowtp::Status::Ok) {
             tesser::logError("tesserkit: NowTP: %s", nowtp::toString(st));
@@ -108,7 +119,7 @@ public:
         }
         transport_->advertise();
         nowtp::Mac mac;
-        if (parseMac(config.timeReference, mac)) radio_.setTimeReference(mac);
+        if (!served_ && parseMac(config.timeReference, mac)) radio_.setTimeReference(mac);
         return true;
     }
 
@@ -248,6 +259,7 @@ private:
     bool polled_ = false;  // no worker tasks, NowTP's included: poll() does their work
     std::function<void()> queued_;  // wakes the polling task (NowTP's wake hook)
     bool mounted_ = false;
+    bool served_ = false;  // serves a NetworkClock's TimeSync
     EventSink sink_;
     std::atomic<bool> pairing_{false};  // a pairing task runs
 };

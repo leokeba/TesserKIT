@@ -170,6 +170,11 @@ tesserkit::UdpApi udp(dev);           // the nodes on the LAN over UDP, and writ
 #if CONFIG_FULL_PEERS
 tesserkit::Peers peers(dev);          // how the nodes are reached: UDP, NowTP, in which order
 #endif
+#if CONFIG_FULL_CLOCK && CONFIG_FULL_UDP
+tesserkit::NetworkClock netClock(dev, &udp);  // /sys/clock: one time over UDP and NowTP, timed writes
+#elif CONFIG_FULL_CLOCK
+tesserkit::NetworkClock netClock(dev, nullptr);
+#endif
 #if CONFIG_FULL_SEQUENCER
 tesserkit::Sequencer sequencer(dev);  // /sequencer: steps played in turn
 #endif

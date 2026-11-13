@@ -25,7 +25,12 @@ class DatagramEndpoint;
 class Object;
 class Storage;
 class UdpLink;
+struct PeerAddress;
 }  // namespace tesser
+
+namespace nowtp {
+class TimeSync;
+}  // namespace nowtp
 
 namespace tesserkit {
 
@@ -492,6 +497,13 @@ struct NowTpConfig {
     // network time), or the MAC of the node to follow.
     std::string timeReference = "auto";
     uint32_t timeIntervalMs = 5000;  // between synchronization rounds once synchronized
+    // A network clock's TimeSync (NetworkClock, docs/DESIGN.md section 5.25):
+    // ESP-NOW becomes one of its carriers instead of running its own, and
+    // the time settings above are ignored. `timeWake` runs (in NowTP's task,
+    // holding its lock: it must not wait) when there is something for the
+    // core's tick().
+    nowtp::TimeSync* timeCore = nullptr;
+    std::function<void()> timeWake;
 };
 
 struct NowTpPeer {
@@ -586,6 +598,27 @@ public:
     virtual void end() = 0;
     // The link: null before the first begin().
     virtual tesser::UdpLink* link() = 0;
+    // TesserAPI's side channel (UdpLink::onSide()): given to the link before
+    // each begin() starts it. In the transport's receive task, quick.
+    using SideFn = std::function<void(const tesser::PeerAddress& from, const tesser::PeerAddress& device,
+                                      const uint8_t* data, size_t len, uint64_t rxUs)>;
+    virtual void onSide(SideFn fn) = 0;
+};
+
+// A task of its own, above the device's, that runs a function at given
+// times of the local µs clock (esp_timer's): NetworkClock's timed writes
+// (docs/DESIGN.md section 5.26). Without one (the host), they are applied
+// in the device's task, every period.
+class Alarm {
+public:
+    virtual ~Alarm() = default;
+    // Creates the task, once; `fire` runs in it. False if it couldn't.
+    virtual bool begin(std::function<void()> fire) = 0;
+    // `fire` runs at `localUs`, or at once if that is past; replaces the
+    // time set before. From any task.
+    virtual void at(uint64_t localUs) = 0;
+    // The local µs clock.
+    virtual uint64_t nowUs() = 0;
 };
 
 // The log's output (ESP-IDF's esp_log, which TesserAPI's warnings use too):
@@ -681,6 +714,7 @@ struct Platform {
     Power* power = nullptr;
     Pins* pins = nullptr;
     UdpApiTransport* udpApi = nullptr;
+    Alarm* alarm = nullptr;
     // NVS, where the settings are kept without a filesystem (docs/DESIGN.md
     // section 6.1): on ESP, TesserAPI's NvsStorage in the "tesserkit"
     // namespace; on the host, none unless a test gives one.
@@ -711,5 +745,6 @@ Power* espPower();
 Pins* espPins();
 Pins* espDigitalPins();
 UdpApiTransport* espUdpApi();
+Alarm* espAlarm();
 
 }  // namespace tesserkit

@@ -434,6 +434,7 @@ bool UdpApi::begin(tesser::Api& api, uint16_t p, const std::string& n, size_t ca
     l->setName(n);
     const uint8_t mac[6] = {0xc8, 0xf0, 0x9e, 0xf4, 0xa6, 0x7c};
     l->setDeviceId(mac);
+    if (side) l->onSide(side);
     l->start(nonce++);
     return true;
 }

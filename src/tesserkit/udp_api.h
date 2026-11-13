@@ -59,6 +59,11 @@ public:
     tesser::Check send(const std::string& path, const std::string& valueJson, const std::string& to,
                        tesser::Pending* reply = nullptr);
     bool running() const { return running_; }
+    // The link: null before UDP first started.
+    tesser::UdpLink* link() const;
+    // TesserAPI's side channel (UdpLink::onSide()): NetworkClock's carrier.
+    // Set before UDP starts (a service's loaded()); kept across restarts.
+    void onSide(UdpApiTransport::SideFn fn) { side_ = std::move(fn); }
 
 protected:
     void start() override;
@@ -70,6 +75,7 @@ private:
     enum class Level : uint8_t { Public, User, Admin, Auto };
 
     tesser::Access effectiveAccess() const;
+    UdpApiTransport::SideFn side_;
 
     void begin();
     void end();

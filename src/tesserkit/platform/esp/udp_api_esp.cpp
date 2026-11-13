@@ -19,6 +19,7 @@ public:
             o.maxCalls = maxCalls;
             transport_.reset(new tesser::UdpTransport(&api, tesser::UdpLink::Options(), o));
         }
+        if (side_) transport_->link().onSide(side_);
         transport_->setName(name);
         transport_->setInterfaces(interfaces);
         polled_ = !ownTask;
@@ -32,8 +33,10 @@ public:
         if (transport_) transport_->end();
     }
     tesser::UdpLink* link() override { return transport_ ? &transport_->link() : nullptr; }
+    void onSide(SideFn fn) override { side_ = std::move(fn); }
 
 private:
+    SideFn side_;
     std::unique_ptr<tesser::UdpTransport> transport_;
     bool polled_ = false;  // no worker task: poll() does its work
 };

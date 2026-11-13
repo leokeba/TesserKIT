@@ -286,6 +286,7 @@ bool Device::begin() {
         *tail = s;
         tail = &s->next_;
         if (Files* f = s->asFiles()) files_ = f;
+        if (NetworkClock* c = s->asNetworkClock()) networkClock_ = c;
         if (s->needsStationAwake()) stationAwake_ = true;
     }
     if (!platform_.core) platform_.core = espCore();
@@ -643,6 +644,7 @@ Power* espPower() { return nullptr; }
 Pins* espPins() { return nullptr; }
 Pins* espDigitalPins() { return nullptr; }
 UdpApiTransport* espUdpApi() { return nullptr; }
+Alarm* espAlarm() { return nullptr; }
 #endif
 
 }  // namespace tesserkit
