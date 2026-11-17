@@ -351,4 +351,151 @@ TEST(nowtp_network_time_for_the_application) {
     CHECK_EQ(r.nowtp.localTimeUs(net + 10000), static_cast<int64_t>(r.fake.core.now * 1000 + 10000));
 }
 
+// --- The radio's settings: transmit power and the PHY rates -------------------
+// NowTP applies them to the driver at once (its runtime controls); the status
+// tree reads the driver back.
+
+TEST(nowtp_radio_settings_reach_the_driver_at_boot) {
+    NowTpRig r;
+    r.nowtp.txPower(15.25f).broadcastRate(tesserkit::Rate::G6M).unicastRate(tesserkit::Rate::B2M);
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.fake.nowtp.config.txPower, 15.25f);
+    CHECK_EQ(r.fake.nowtp.config.broadcastRate, tesserkit::Rate::G6M);
+    CHECK_EQ(r.fake.nowtp.config.unicastRate, tesserkit::Rate::B2M);
+    // The settings as the radio runs them: the status tree.
+    CHECK_EQ(r.value("/sys/nowtp/status/txPower"), "15.25");
+    CHECK_EQ(r.value("/sys/nowtp/status/txPowerLimit"), "21");
+    CHECK_EQ(r.value("/sys/nowtp/status/broadcastRate"), "\"6 Mbps\"");
+}
+
+TEST(nowtp_radio_settings_default_and_schema) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    // The defaults are the driver's: 0 its own power, Default its rates.
+    CHECK_EQ(r.value("/sys/nowtp/txPower"), "0");
+    CHECK_EQ(r.value("/sys/nowtp/broadcastRate"), "\"default (1 Mbps)\"");
+    CHECK_EQ(r.value("/sys/nowtp/unicastRate"), "\"default (1 Mbps)\"");
+    // The driver's units: 2–21 dBm in 0.25 steps, the chip's limit on top.
+    rig::Reply s = r.schema("/sys/nowtp/txPower");
+    CHECK_EQ(at(s.body, "min"), "0");
+    CHECK_EQ(at(s.body, "max"), "21");
+    CHECK_EQ(at(s.body, "step"), "0.25");
+    CHECK_EQ(at(s.body, "unit"), "\"dBm\"");
+    // The rates offer NowTP's table; the Long Range ones are last.
+    rig::Reply e = r.schema("/sys/nowtp/broadcastRate");
+    CHECK_EQ(at(e.body, "enum/0"), "\"default (1 Mbps)\"");
+    CHECK_EQ(at(e.body, "enum/21"), "\"LR 250 kbps\"");
+    CHECK_EQ(at(e.body, "enum/22"), "\"LR 500 kbps\"");
+}
+
+TEST(nowtp_radio_settings_reject_what_the_driver_cant_take) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    // The power is 0 (the driver's own) or 2–21 in 0.25 steps.
+    CHECK_EQ(r.set("/sys/nowtp/txPower", "1.75").status, Status::InvalidValue);   // below 2, not its own
+    CHECK_EQ(r.set("/sys/nowtp/txPower", "2.1").status, Status::InvalidValue);    // not a quarter step
+    CHECK_EQ(r.set("/sys/nowtp/txPower", "-0.5").status, Status::InvalidValue);   // below the range
+    CHECK_EQ(r.set("/sys/nowtp/txPower", "21.25").status, Status::InvalidValue);  // above it
+    CHECK_EQ(r.set("/sys/nowtp/txPower", "15.25").status, Status::Ok);
+    CHECK_EQ(r.value("/sys/nowtp/txPower"), "15.25");
+    // A Long Range rate needs long range on; a rate the driver doesn't have is no option.
+    CHECK_EQ(r.set("/sys/nowtp/broadcastRate", "\"LR 500 kbps\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/nowtp/unicastRate", "\"LR 250 kbps\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/nowtp/broadcastRate", "\"3 Mbps\"").status, Status::InvalidValue);
+    // The refusals changed nothing.
+    CHECK_EQ(r.value("/sys/nowtp/broadcastRate"), "\"default (1 Mbps)\"");
+    CHECK_EQ(r.value("/sys/nowtp/unicastRate"), "\"default (1 Mbps)\"");
+}
+
+TEST(nowtp_long_range_and_the_rates_guard_each_other) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    // A Long Range rate needs long range on...
+    CHECK_EQ(r.set("/sys/nowtp/broadcastRate", "\"LR 500 kbps\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/nowtp/longRange", "true").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/nowtp/broadcastRate", "\"LR 500 kbps\"").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/nowtp/unicastRate", "\"LR 250 kbps\"").status, Status::Ok);
+    // ...and long range can't go off while one is set: it would persist a
+    // state NowTP refuses at boot.
+    CHECK_EQ(r.set("/sys/nowtp/longRange", "false").status, Status::InvalidValue);
+    CHECK_EQ(r.value("/sys/nowtp/longRange"), "true");
+    // Off once the rates leave Long Range.
+    CHECK_EQ(r.set("/sys/nowtp/broadcastRate", "\"11 Mbps\"").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/nowtp/unicastRate", "\"54 Mbps\"").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/nowtp/longRange", "false").status, Status::Ok);
+}
+
+TEST(nowtp_radio_settings_apply_at_once) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.set("/sys/nowtp/txPower", "15.25").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/nowtp/broadcastRate", "\"6 Mbps\"").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/nowtp/unicastRate", "\"2 Mbps\"").status, Status::Ok);
+    r.run(1100);  // the tick applies them to the driver
+    CHECK_EQ(r.fake.nowtp.config.txPower, 15.25f);
+    CHECK_EQ(r.fake.nowtp.config.broadcastRate, tesserkit::Rate::G6M);
+    CHECK_EQ(r.fake.nowtp.config.unicastRate, tesserkit::Rate::B2M);
+    // The status reads the driver back: the power and the broadcast rate run.
+    CHECK_EQ(r.value("/sys/nowtp/status/txPower"), "15.25");
+    CHECK_EQ(r.value("/sys/nowtp/status/broadcastRate"), "\"6 Mbps\"");
+    CHECK_EQ(r.value("/sys/nowtp/restartNeeded"), "false");  // all at once
+    CHECK_EQ(r.fake.nowtp.begins, 1);
+}
+
+TEST(nowtp_radio_settings_persist) {
+    std::map<std::string, std::string> saved;
+    {
+        NowTpRig r;
+        CHECK(r.dev.begin());
+        r.settle();
+        CHECK_EQ(r.set("/sys/nowtp/longRange", "true").status, Status::Ok);
+        CHECK_EQ(r.set("/sys/nowtp/txPower", "15.25").status, Status::Ok);
+        CHECK_EQ(r.set("/sys/nowtp/broadcastRate", "\"LR 500 kbps\"").status, Status::Ok);
+        CHECK_EQ(r.set("/sys/nowtp/unicastRate", "\"2 Mbps\"").status, Status::Ok);
+        r.run(2500);  // the save is debounced
+        saved = r.storage.records;
+    }
+    NowTpRig r;
+    r.storage.records = saved;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK(r.fake.nowtp.config.longRange);
+    CHECK_EQ(r.fake.nowtp.config.txPower, 15.25f);
+    CHECK_EQ(r.fake.nowtp.config.broadcastRate, tesserkit::Rate::LR500K);
+    CHECK_EQ(r.fake.nowtp.config.unicastRate, tesserkit::Rate::B2M);
+    CHECK_EQ(r.value("/sys/nowtp/longRange"), "true");
+    CHECK_EQ(r.value("/sys/nowtp/txPower"), "15.25");
+    CHECK_EQ(r.value("/sys/nowtp/broadcastRate"), "\"LR 500 kbps\"");
+}
+
+TEST(nowtp_restore_skips_a_rate_long_range_would_refuse) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    // A backup with a Long Range rate and long range off would not start: the
+    // consistent half applies, the rate is left as it was.
+    std::vector<std::string> skipped;
+    CHECK_EQ(r.dev.api().restore(
+                 "{\"sys\":{\"nowtp\":{\"longRange\":false,\"broadcastRate\":\"LR 500 kbps\"}}}", &skipped),
+             Status::Ok);
+    r.settle();
+    CHECK_EQ(skipped.size(), 1u);
+    if (!skipped.empty()) CHECK_EQ(skipped[0], "/sys/nowtp/broadcastRate");
+    CHECK_EQ(r.value("/sys/nowtp/longRange"), "false");
+    CHECK_EQ(r.value("/sys/nowtp/broadcastRate"), "\"default (1 Mbps)\"");
+    // And the consistent pair comes back whole.
+    std::vector<std::string> kept;
+    CHECK_EQ(
+        r.dev.api().restore("{\"sys\":{\"nowtp\":{\"longRange\":true,\"broadcastRate\":\"LR 500 kbps\"}}}", &kept),
+        Status::Ok);
+    r.settle();
+    CHECK_EQ(kept.size(), 0u);
+    CHECK_EQ(r.value("/sys/nowtp/broadcastRate"), "\"LR 500 kbps\"");
+}
+
 }  // namespace nowtp_cases

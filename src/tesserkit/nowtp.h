@@ -25,7 +25,12 @@ public:
     NowTp& mountPeers(bool on);
     NowTp& channel(uint8_t ch);
     NowTp& longRange(bool on);
-    NowTp& txPower(int8_t dBm);
+    // The transmit power in dBm: 0 the driver's, else 2–21 in 0.25 steps.
+    NowTp& txPower(float dBm);
+    // The PHY rates (platform.h's Rate): Default the driver's (1 Mbps); the
+    // Long Range rates need longRange on.
+    NowTp& broadcastRate(Rate r);
+    NowTp& unicastRate(Rate r);
     NowTp& pairingCode(const char* code);
     // Calls in flight to other nodes (default 8): at least the number of
     // nodes a master streams to at once (RemoteNode::stream()).
@@ -96,7 +101,9 @@ private:
     bool mountPeers_ = true;
     uint8_t channel_ = 1;
     bool longRange_ = false;
-    int8_t txPower_ = 0;
+    float txPower_ = 0;  // dBm, 0: the driver's
+    Rate broadcastRate_ = Rate::Default;
+    Rate unicastRate_ = Rate::Default;
     size_t maxCalls_ = 8;
     bool ownTask_ = false;
     std::string pairingCode_;
@@ -115,6 +122,9 @@ private:
     tesser::Node* enabledNode_ = nullptr;
     tesser::Node* channelNode_ = nullptr;
     tesser::Node* longRangeNode_ = nullptr;
+    tesser::Node* txPowerNode_ = nullptr;
+    tesser::Node* broadcastRateNode_ = nullptr;
+    tesser::Node* unicastRateNode_ = nullptr;
     tesser::Node* nodesNode_ = nullptr;
     tesser::Node* statusNode_ = nullptr;
     tesser::Node* timeNode_ = nullptr;
@@ -123,7 +133,8 @@ private:
     tesser::Node* pairingNode_ = nullptr;
     tesser::Node* restartNode_ = nullptr;
     std::vector<tesser::Node*> restartSettings_;  // what applies at the next boot
-    uint32_t enabledGen_ = 0, channelGen_ = 0, longRangeGen_ = 0, timeReferenceGen_ = 0, timeIntervalGen_ = 0;
+    uint32_t enabledGen_ = 0, channelGen_ = 0, longRangeGen_ = 0, txPowerGen_ = 0, broadcastRateGen_ = 0, unicastRateGen_ = 0,
+             timeReferenceGen_ = 0, timeIntervalGen_ = 0;
     uint32_t restartGen_ = 0;
     uint32_t polledAtMs_ = 0;
     uint32_t startMs_ = 0;

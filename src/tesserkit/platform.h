@@ -481,11 +481,22 @@ public:
     virtual std::string client() = 0;
 };
 
+// The PHY rate ESP-NOW uses for its frames, in NowTP's PhyRate order so the
+// two line up one to one (its kRateNames names them): Default is the
+// driver's (1 Mbps), and the Long Range rates need longRange on both ends.
+enum class Rate : uint8_t {
+    Default, B1M, B2M, B5_5M, B11M, G6M, G9M, G12M, G18M, G24M, G36M, G48M, G54M,
+    MCS0, MCS1, MCS2, MCS3, MCS4, MCS5, MCS6, MCS7, LR250K, LR500K,
+};
+inline bool isLongRange(Rate r) { return r == Rate::LR250K || r == Rate::LR500K; }
+
 struct NowTpConfig {
     std::string name;      // announced to nodes nearby (the hostname)
     uint8_t channel = 1;   // when neither the station nor the access point fixes it
     bool longRange = false;
-    int8_t txPower = 0;    // dBm, 0: the driver's
+    float txPower = 0;     // dBm, 0: the driver's (else 2–21 in 0.25 steps)
+    Rate broadcastRate = Rate::Default;  // for broadcast frames
+    Rate unicastRate = Rate::Default;    // for unicast frames to each node
     std::string pairingCode;
     size_t maxCalls = 8;   // calls in flight to other nodes (one per node streamed to)
     // false: no worker task; the transport's messages are handled in poll(),
@@ -519,6 +530,9 @@ struct NowTpPeer {
 struct NowTpStatus {
     bool started = false;
     uint8_t channel = 0;
+    float txPowerDbm = 0;         // set in the driver now (0: the driver's)
+    float txPowerLimitDbm = 0;    // highest power the driver accepts on this chip
+    Rate broadcastRate = Rate::Default;  // what it runs for broadcasts now
     bool secured = false;
     bool timeSynced = false, timeReference = false;  // synchronized; this node acts as the reference
     std::string timeReferenceMac;                    // the node whose clock is the network time
@@ -547,6 +561,12 @@ public:
     // nodes nearby; false if an access point fixes it.
     virtual bool channel(uint8_t ch) = 0;
     virtual bool longRange(bool on) = 0;
+    // The radio's settings, at once while started (the status' live values
+    // follow them): the transmit power in dBm (0: the driver's), and the PHY
+    // rates for broadcast and unicast frames.
+    virtual bool txPower(float dbm) = 0;
+    virtual bool broadcastRate(Rate r) = 0;
+    virtual bool unicastRate(Rate r) = 0;
     // Asynchronous: Event::NowTpPairing. Joins the installation of a node
     // whose pairing window is open, or opens ours for `timeoutMs`.
     virtual bool pair(uint32_t timeoutMs) = 0;

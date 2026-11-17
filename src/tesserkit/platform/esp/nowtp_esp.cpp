@@ -52,6 +52,9 @@ public:
         c.radio.channel = config.channel;
         c.radio.longRange = config.longRange;
         c.radio.txPowerDbm = config.txPower;
+        // The same table, in the same order: Rate indexes NowTP's kRateNames.
+        c.radio.broadcastRate = static_cast<nowtp::PhyRate>(config.broadcastRate);
+        c.radio.unicastRate = static_cast<nowtp::PhyRate>(config.unicastRate);
         // Network applies /sys/network/wifi/powerSave, whose default is none
         // with NowTp (NowTp::needsStationAwake()): NowTP leaves it.
         c.radio.powerSave = nowtp::PowerSave::Leave;
@@ -178,6 +181,10 @@ public:
         s.started = radio_.started();
         if (!s.started) return s;
         s.channel = radio_.channel();
+        nowtp::RadioInfo ri = radio_.radioInfo();
+        s.txPowerDbm = ri.txPowerDbm;
+        s.txPowerLimitDbm = ri.txPowerLimitDbm;
+        s.broadcastRate = static_cast<Rate>(radio_.broadcastRate());
         s.secured = radio_.secured();
         nowtp::TimeSyncStatus t = radio_.timeSyncStatus();
         s.timeSynced = t.synced;
@@ -198,6 +205,13 @@ public:
 
     bool channel(uint8_t ch) override { return radio_.moveToChannel(ch) == nowtp::Status::Ok; }
     bool longRange(bool on) override { return radio_.setLongRange(on) == nowtp::Status::Ok; }
+    bool txPower(float dbm) override { return radio_.setTxPower(dbm) == nowtp::Status::Ok; }
+    bool broadcastRate(Rate r) override {
+        return radio_.setBroadcastRate(static_cast<nowtp::PhyRate>(r)) == nowtp::Status::Ok;
+    }
+    bool unicastRate(Rate r) override {
+        return radio_.setUnicastRate(static_cast<nowtp::PhyRate>(r)) == nowtp::Status::Ok;
+    }
     bool pair(uint32_t timeoutMs) override { return spawnPairing(false, timeoutMs); }
     bool acceptPairing(uint32_t timeoutMs) override { return spawnPairing(true, timeoutMs); }
     bool pairing() override { return pairing_.load(); }

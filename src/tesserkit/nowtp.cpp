@@ -38,6 +38,16 @@ std::string macText(const uint8_t* m) {
     return b;
 }
 
+// The rates' names, in Rate's order: a mirror of NowTP's kRateNames
+// (radio.cpp), whose PhyRate indexes the same table. The nodes offer them
+// as their options.
+const char* const kRateNames[] = {
+    "default (1 Mbps)", "1 Mbps", "2 Mbps", "5.5 Mbps", "11 Mbps", "6 Mbps", "9 Mbps", "12 Mbps",
+    "18 Mbps", "24 Mbps", "36 Mbps", "48 Mbps", "54 Mbps", "MCS0 (6.5 Mbps)", "MCS1 (13 Mbps)",
+    "MCS2 (19.5 Mbps)", "MCS3 (26 Mbps)", "MCS4 (39 Mbps)", "MCS5 (52 Mbps)", "MCS6 (58.5 Mbps)",
+    "MCS7 (65 Mbps)", "LR 250 kbps", "LR 500 kbps",
+};
+
 }  // namespace
 
 NowTp& NowTp::enable(bool on) {
@@ -70,8 +80,18 @@ NowTp& NowTp::longRange(bool on) {
     return *this;
 }
 
-NowTp& NowTp::txPower(int8_t dBm) {
+NowTp& NowTp::txPower(float dBm) {
     txPower_ = dBm;
+    return *this;
+}
+
+NowTp& NowTp::broadcastRate(Rate r) {
+    broadcastRate_ = r;
+    return *this;
+}
+
+NowTp& NowTp::unicastRate(Rate r) {
+    unicastRate_ = r;
     return *this;
 }
 
@@ -182,11 +202,63 @@ void NowTp::describe(tesser::Object& o) {
                         .persist()
                         .doc("When neither a Wi-Fi network nor the access point fixes it; nodes nearby follow")
                         .ui("advanced");
-    longRangeNode_ = &o.value("longRange", longRange_)
+    longRangeNode_ = &o.value("longRange", [this] { return longRange_; },
+                             [this](bool on) -> Check {
+                                 // Off with a Long Range rate set would persist a state
+                                 // NowTP refuses at boot.
+                                 if (!on && (isLongRange(broadcastRate_) || isLongRange(unicastRate_))) {
+                                     return Check::fail(Status::InvalidValue, "change the rates away from Long Range first");
+                                 }
+                                 longRange_ = on;
+                                 return Check::ok();
+                             })
                           .persist()
                           .label("Long range")
                           .doc("Espressif's Long Range mode, besides 802.11b/g/n: farther, slower")
                           .ui("advanced");
+    txPowerNode_ = &o.value("txPower", [this] { return txPower_; },
+                            [this](float dbm) -> Check {
+                                // The driver's units are 0.25 dBm (NowTP's quarterDbm): a value it
+                                // would round is not the one that gets set.
+                                if (dbm > 0 && (dbm < 2 || dbm * 4 != static_cast<float>(static_cast<int>(dbm * 4)))) {
+                                    return Check::fail(Status::InvalidValue, "the driver's (0), or 2–21 dBm in 0.25 steps");
+                                }
+                                txPower_ = dbm;
+                                return Check::ok();
+                            })
+                     .range(0, 21)
+                     .step(0.25)
+                     .unit("dBm")
+                     .persist()
+                     .label("Transmit power")
+                     .doc("How hard the radio sends; lower reaches less far")
+                     .ui("advanced");
+    broadcastRateNode_ = &o.value("broadcastRate", [this] { return broadcastRate_; },
+                                 [this](Rate r) -> Check {
+                                     if (isLongRange(r) && !longRange_) {
+                                         return Check::fail(Status::InvalidValue, "Long Range rates need long range on");
+                                     }
+                                     broadcastRate_ = r;
+                                     return Check::ok();
+                                 },
+                                 kRateNames)
+                            .persist()
+                            .label("Broadcast rate")
+                            .doc("The PHY rate of frames sent to all the nodes nearby; Default: the driver's (1 Mbps)")
+                            .ui("advanced");
+    unicastRateNode_ = &o.value("unicastRate", [this] { return unicastRate_; },
+                                [this](Rate r) -> Check {
+                                    if (isLongRange(r) && !longRange_) {
+                                        return Check::fail(Status::InvalidValue, "Long Range rates need long range on");
+                                    }
+                                    unicastRate_ = r;
+                                    return Check::ok();
+                                },
+                                kRateNames)
+                           .persist()
+                           .label("Unicast rate")
+                           .doc("The PHY rate of frames sent to each node individually; Default: the driver's (1 Mbps)")
+                           .ui("advanced");
     restartSettings_.push_back(&o.value("pairingCode", pairingCode_)
                                     .validate(limits::atMost<limits::kSecret>)
                                     .secret()
@@ -252,6 +324,16 @@ void NowTp::describe(tesser::Object& o) {
     statusNode_ = &s;
     s.value("started", [this] { return status_.started; }).label("Running");
     s.value("channel", [this] { return status_.channel; });
+    // The radio's settings as they run: the driver's power (0: its own), the
+    // highest it accepts, and the broadcast rate.
+    s.value("txPower", [this] { return status_.txPowerDbm; }).unit("dBm").label("Transmit power");
+    s.value("txPowerLimit", [this] { return status_.txPowerLimitDbm; })
+        .unit("dBm")
+        .label("Maximum transmit power")
+        .ui("advanced");
+    s.value("broadcastRate", [this] { return status_.broadcastRate; }, kRateNames)
+        .label("Broadcast rate")
+        .ui("advanced");
     s.value("sent", [this] { return status_.sent; }).label("Messages sent").ui("advanced");
     s.value("received", [this] { return status_.received; }).label("Messages received").ui("advanced");
     s.value("failed", [this] { return status_.failed; }).label("Messages failed").ui("advanced");
@@ -276,6 +358,9 @@ void NowTp::start() {
     enabledGen_ = enabledNode_->generation();
     channelGen_ = channelNode_->generation();
     longRangeGen_ = longRangeNode_->generation();
+    txPowerGen_ = txPowerNode_->generation();
+    broadcastRateGen_ = broadcastRateNode_->generation();
+    unicastRateGen_ = unicastRateNode_->generation();
     if (timeReferenceNode_) {
         timeReferenceGen_ = timeReferenceNode_->generation();
         timeIntervalGen_ = timeIntervalNode_->generation();
@@ -305,6 +390,8 @@ void NowTp::begin() {
     c.channel = channel_;
     c.longRange = longRange_;
     c.txPower = txPower_;
+    c.broadcastRate = broadcastRate_;
+    c.unicastRate = unicastRate_;
     c.pairingCode = pairingCode_;
     c.maxCalls = maxCalls_;
     c.runTask = ownTask_;
@@ -327,7 +414,9 @@ void NowTp::refresh() {
     if (!radio_) return;
     NowTpStatus st = started_ ? radio_->status() : NowTpStatus();
     bool changed = st.started != status_.started || st.channel != status_.channel || st.secured != status_.secured ||
-                   st.sent != status_.sent || st.received != status_.received || st.failed != status_.failed;
+                   st.txPowerDbm != status_.txPowerDbm || st.txPowerLimitDbm != status_.txPowerLimitDbm ||
+                   st.broadcastRate != status_.broadcastRate || st.sent != status_.sent ||
+                   st.received != status_.received || st.failed != status_.failed;
     // The offset, drift and age move all the time: read when asked, announced
     // with a round.
     bool timeChanged = st.timeSynced != status_.timeSynced || st.timeReference != status_.timeReference ||
@@ -429,6 +518,19 @@ void NowTp::tick(uint32_t nowMs) {
     if ((gen = longRangeNode_->generation()) != longRangeGen_) {
         longRangeGen_ = gen;
         if (started_) radio_->longRange(longRange_);
+    }
+    // The power and the rates run live: NowTP applies them to the driver.
+    if ((gen = txPowerNode_->generation()) != txPowerGen_) {
+        txPowerGen_ = gen;
+        if (started_) radio_->txPower(txPower_);
+    }
+    if ((gen = broadcastRateNode_->generation()) != broadcastRateGen_) {
+        broadcastRateGen_ = gen;
+        if (started_) radio_->broadcastRate(broadcastRate_);
+    }
+    if ((gen = unicastRateNode_->generation()) != unicastRateGen_) {
+        unicastRateGen_ = gen;
+        if (started_) radio_->unicastRate(unicastRate_);
     }
     if (timeReferenceNode_ && (gen = timeReferenceNode_->generation()) != timeReferenceGen_) {
         timeReferenceGen_ = gen;

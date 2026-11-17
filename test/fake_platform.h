@@ -617,6 +617,9 @@ struct NowTp : tesserkit::NowTpRadio {
         mountedUnder = peers;
         state.started = true;
         state.channel = c.channel;
+        state.txPowerDbm = c.txPower;
+        state.txPowerLimitDbm = 21;  // the chip's, as NowTP's radioInfo() reports it
+        state.broadcastRate = c.broadcastRate;
         state.secured = keyStored;
         return true;
     }
@@ -650,6 +653,24 @@ struct NowTp : tesserkit::NowTpRadio {
     }
     bool longRange(bool on) override {
         config.longRange = on;
+        return true;
+    }
+    // Live, like NowTP's: refused while stopped (its InvalidState).
+    bool txPower(float dbm) override {
+        if (!state.started) return false;
+        config.txPower = dbm;
+        state.txPowerDbm = dbm;
+        return true;
+    }
+    bool broadcastRate(tesserkit::Rate r) override {
+        if (!state.started) return false;
+        config.broadcastRate = r;
+        state.broadcastRate = r;
+        return true;
+    }
+    bool unicastRate(tesserkit::Rate r) override {
+        if (!state.started) return false;
+        config.unicastRate = r;
         return true;
     }
     bool pairingNow = false;  // until paired()
