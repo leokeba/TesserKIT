@@ -389,6 +389,12 @@ void Network::describe(tesser::Object& o) {
         .ui("visibleWhen", "connected=true");
     st.value("channel", static_cast<const uint8_t&>(linkChannel_)).ui("visibleWhen", "connected=true");
     st.value("bssid", static_cast<const std::string&>(linkBssid_)).label("BSSID").ui("advanced");
+    // The driver's current maximum transmit power, whatever set it (the
+    // factory default, or NowTP's live value: they are the same register).
+    st.value("txPower", [this] { return wifi_ ? wifi_->txPower() : int8_t(0); })
+        .unit("dBm")
+        .label("Transmit power")
+        .ui("advanced");
     // For clients on the access point, which must follow the new address.
     joined_ = &w.event("joined").label("Joined").ui("toast", "ok").ui("hidden");
     failed_ = &w.event("failed").label("Couldn't join").ui("toast", "warn").ui("hidden");
@@ -408,6 +414,7 @@ void Network::describe(tesser::Object& o) {
                           .persist()
                           .label("Power save")
                           .ui("labels", "Off: lowest latency,Modem sleep,Maximum")
+                          .doc("With NowTp, the modem sleeps only while the station is connected, and frames arriving while it sleeps are lost: discovery announcements go missing and unicast frames fail after retries. The default is none for that reason")
                           .ui("advanced");
 
     networksNode_ = &w.list("networks", networks_)
@@ -461,6 +468,7 @@ void Network::describe(tesser::Object& o) {
                          .ui("advanced");
     apSettings_.add(&ap.value("channel", apChannel_).range(1, 13).persist().ui("widget", "number"));
     apSettings_.add(&ap.value("hidden", apHidden_).persist().ui("advanced"));
+    apSettings_.add(&ap.value("maxConnections", apMaxConnections_).range(1, 10).persist().ui("advanced"));
     auto& as = ap.object("status").label("Status");
     apStatus_ = &as;
     as.value("active", static_cast<const bool&>(apUp_));
@@ -1165,6 +1173,7 @@ void Network::updateAp(uint32_t nowMs) {
         c.password = apPasswordInUse();
         c.channel = apChannel_;
         c.hidden = apHidden_;
+        c.maxConnections = apMaxConnections_;
         if (wifi_->startAp(c)) {
             apUp_ = true;
             apAddr_ = wifi_->apIp();

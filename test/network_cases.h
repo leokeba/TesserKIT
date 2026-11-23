@@ -1613,4 +1613,32 @@ TEST(network_boards_by_name) {
     CHECK_EQ(b.mdio, 99);  // left alone
 }
 
+
+// --- The access point's max connections --------------------------------------
+
+TEST(network_access_point_max_connections) {
+    NetRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.fake.wifi.ap.maxConnections, 4);  // the default
+    CHECK_EQ(r.set("/sys/network/ap/maxConnections", "8").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.wifi.apStarts, 2);  // restarted with the new settings
+    CHECK_EQ(r.fake.wifi.ap.maxConnections, 8);
+    // The range: 1 to 10.
+    CHECK_EQ(r.set("/sys/network/ap/maxConnections", "0").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/network/ap/maxConnections", "11").status, Status::InvalidValue);
+    CHECK_EQ(r.value("/sys/network/ap/maxConnections"), "8");
+}
+
+// --- The Wi-Fi status: the driver's transmit power ----------------------------
+
+TEST(network_wifi_status_shows_the_driver_tx_power) {
+    NetRig r;
+    r.net.txPower(12);  // the factory default, applied at boot
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.value("/sys/network/wifi/status/txPower"), "12");
+}
+
 }  // namespace network_cases

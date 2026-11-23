@@ -67,6 +67,11 @@ public:
 
     void txPower(int8_t dBm) override { esp_wifi_set_max_tx_power(static_cast<int8_t>(dBm * 4)); }
 
+    int8_t txPower() const override {
+        int8_t power = 0;
+        return esp_wifi_get_max_tx_power(&power) == ESP_OK ? static_cast<int8_t>(power / 4) : 0;
+    }
+
     void powerSave(PowerSave mode) override {
         esp_err_t err = esp_wifi_set_ps(mode == PowerSave::None  ? WIFI_PS_NONE
                                         : mode == PowerSave::Max ? WIFI_PS_MAX_MODEM
@@ -156,7 +161,7 @@ public:
         config.ap.channel = c.channel;
         config.ap.authmode = c.password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
         config.ap.ssid_hidden = c.hidden ? 1 : 0;
-        config.ap.max_connection = 4;
+        config.ap.max_connection = c.maxConnections;
         if (esp_wifi_set_mode(WIFI_MODE_APSTA) != ESP_OK) return false;
         return esp_wifi_set_config(WIFI_IF_AP, &config) == ESP_OK;
     }

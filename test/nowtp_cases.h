@@ -498,4 +498,85 @@ TEST(nowtp_restore_skips_a_rate_long_range_would_refuse) {
     CHECK_EQ(r.value("/sys/nowtp/broadcastRate"), "\"LR 500 kbps\"");
 }
 
+
+// --- The country code and the automatic power fallback ----------------------
+// Both are NowTP's boot-time settings: no runtime setter, so they apply at
+// the next boot (the restart-needed banner).
+
+TEST(nowtp_country_code_and_auto_power_fallback_reach_the_driver) {
+    NowTpRig r;
+    r.nowtp.countryCode("US").autoPowerFallback(false);
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.fake.nowtp.config.countryCode, "US");
+    CHECK_EQ(r.fake.nowtp.config.autoPowerFallback, false);
+}
+
+TEST(nowtp_country_code_defaults_and_schema) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    // Empty: the driver's own; the fallback on.
+    CHECK_EQ(r.value("/sys/nowtp/countryCode"), "\"\"");
+    CHECK_EQ(r.value("/sys/nowtp/autoPowerFallback"), "true");
+    rig::Reply s = r.schema("/sys/nowtp/countryCode");
+    CHECK_EQ(at(s.body, "persist"), "true");
+}
+
+TEST(nowtp_country_code_rejects_what_the_driver_cant_take) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    // Empty is the driver's; two letters or digits are the driver's code.
+    CHECK_EQ(r.set("/sys/nowtp/countryCode", "\"US\"").status, Status::Ok);
+    CHECK_EQ(r.value("/sys/nowtp/countryCode"), "\"US\"");
+    CHECK_EQ(r.set("/sys/nowtp/countryCode", "\"01\"").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/nowtp/countryCode", "\"USA\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/nowtp/countryCode", "\"u\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/nowtp/countryCode", "\"U\"").status, Status::InvalidValue);
+    // The refusals changed nothing.
+    CHECK_EQ(r.value("/sys/nowtp/countryCode"), "\"01\"");
+}
+
+TEST(nowtp_country_code_and_auto_power_fallback_restart_the_radio) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.value("/sys/nowtp/restartNeeded"), "false");
+    CHECK_EQ(r.set("/sys/nowtp/countryCode", "\"FR\"").status, Status::Ok);
+    r.settle();  // the tick sees the restart-needed settings changed
+    CHECK_EQ(r.value("/sys/nowtp/restartNeeded"), "true");
+    CHECK_EQ(r.set("/sys/nowtp/autoPowerFallback", "false").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.value("/sys/nowtp/restartNeeded"), "true");
+    CHECK_EQ(r.fake.nowtp.begins, 1);  // not applied at once
+}
+
+// --- The status: the radio as it runs ----------------------------------------
+
+TEST(nowtp_status_shows_the_radio_as_it_runs) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    // The fake's defaults: no ceiling learned, no AP, no soft-AP, the station's
+    // interface, Wi-Fi started by Network.
+    CHECK_EQ(r.value("/sys/nowtp/status/learnedTxCeilingDbm"), "0");
+    CHECK_EQ(r.value("/sys/nowtp/status/stationConnected"), "false");
+    CHECK_EQ(r.value("/sys/nowtp/status/softApActive"), "false");
+    CHECK_EQ(r.value("/sys/nowtp/status/wifiStartedByNowTP"), "false");
+    CHECK_EQ(r.value("/sys/nowtp/status/interface"), "\"\"");
+    // What the driver reports, read back.
+    r.fake.nowtp.state.learnedTxCeilingDbm = 17.5f;
+    r.fake.nowtp.state.stationConnected = true;
+    r.fake.nowtp.state.softApActive = false;
+    r.fake.nowtp.state.wifiStartedByNowTP = true;
+    r.fake.nowtp.state.interface = "station";
+    r.run(1100);  // the radio's status is polled every second
+    CHECK_EQ(r.value("/sys/nowtp/status/learnedTxCeilingDbm"), "17.5");
+    CHECK_EQ(r.value("/sys/nowtp/status/stationConnected"), "true");
+    CHECK_EQ(r.value("/sys/nowtp/status/softApActive"), "false");
+    CHECK_EQ(r.value("/sys/nowtp/status/wifiStartedByNowTP"), "true");
+    CHECK_EQ(r.value("/sys/nowtp/status/interface"), "\"station\"");
+}
+
 }  // namespace nowtp_cases

@@ -191,6 +191,7 @@ private:
     std::string apPasswordInUse();
     uint8_t apChannel_ = 1;
     bool apHidden_ = false;
+    uint8_t apMaxConnections_ = 4;
     bool mdns_ = true;
     int8_t txPower_ = 0;
     PowerSave powerSave_ = PowerSave::Min;  // none by default beside a service that needs the station awake

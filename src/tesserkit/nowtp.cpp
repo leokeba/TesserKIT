@@ -95,6 +95,16 @@ NowTp& NowTp::unicastRate(Rate r) {
     return *this;
 }
 
+NowTp& NowTp::countryCode(const char* code) {
+    countryCode_ = code ? code : "";
+    return *this;
+}
+
+NowTp& NowTp::autoPowerFallback(bool on) {
+    autoPowerFallback_ = on;
+    return *this;
+}
+
 NowTp& NowTp::timeReference(const char* ref) {
     timeReference_ = ref ? ref : "auto";
     return *this;
@@ -259,6 +269,28 @@ void NowTp::describe(tesser::Object& o) {
                            .label("Unicast rate")
                            .doc("The PHY rate of frames sent to each node individually; Default: the driver's (1 Mbps)")
                            .ui("advanced");
+    countryCodeNode_ = &o.value("countryCode", countryCode_)
+                            .validate([](const std::string& v) {
+                                if (v.empty()) return Check::ok();
+                                if (v.size() != 2) return Check::fail(Status::InvalidValue, "two letters, or empty");
+                                for (char c : v) {
+                                    if (!(c >= 'A' && c <= 'Z') && !(c >= '0' && c <= '9')) {
+                                        return Check::fail(Status::InvalidValue, "two letters, or empty");
+                                    }
+                                }
+                                return Check::ok();
+                            })
+                            .persist()
+                            .label("Country code")
+                            .doc("The two-letter code ('US', 'FR', 'JP', '01' for world-safe) selecting the allowed channels and power limits; empty: the driver's own")
+                            .ui("advanced");
+    restartSettings_.push_back(countryCodeNode_);
+    autoPowerFallbackNode_ = &o.value("autoPowerFallback", autoPowerFallback_)
+                                  .persist()
+                                  .label("Automatic power fallback")
+                                  .doc("Lower the transmit power when a peer doesn't acknowledge, so a weak link works")
+                                  .ui("advanced");
+    restartSettings_.push_back(autoPowerFallbackNode_);
     restartSettings_.push_back(&o.value("pairingCode", pairingCode_)
                                     .validate(limits::atMost<limits::kSecret>)
                                     .secret()
@@ -334,6 +366,27 @@ void NowTp::describe(tesser::Object& o) {
     s.value("broadcastRate", [this] { return status_.broadcastRate; }, kRateNames)
         .label("Broadcast rate")
         .ui("advanced");
+    // The radio as it runs: what the link supports, and the Wi-Fi state
+    // ESP-NOW is bound to.
+    s.value("learnedTxCeilingDbm", [this] { return status_.learnedTxCeilingDbm; })
+        .unit("dBm")
+        .label("Power found to work")
+        .doc("The power found to work by the fallback or optimize() (0: none)")
+        .ui("advanced");
+    s.value("interface", [this] { return status_.interface; })
+        .label("Interface")
+        .doc("The Wi-Fi interface ESP-NOW is bound to: the station's while it runs, else the access point's")
+        .ui("advanced");
+    s.value("stationConnected", [this] { return status_.stationConnected; })
+        .label("Connected to an access point")
+        .ui("advanced");
+    s.value("softApActive", [this] { return status_.softApActive; })
+        .label("Running a soft-AP")
+        .ui("advanced");
+    s.value("wifiStartedByNowTP", [this] { return status_.wifiStartedByNowTP; })
+        .label("Wi-Fi started by NowTP")
+        .doc("NowTP initialized and started Wi-Fi and will stop it")
+        .ui("advanced");
     s.value("sent", [this] { return status_.sent; }).label("Messages sent").ui("advanced");
     s.value("received", [this] { return status_.received; }).label("Messages received").ui("advanced");
     s.value("failed", [this] { return status_.failed; }).label("Messages failed").ui("advanced");
@@ -392,6 +445,8 @@ void NowTp::begin() {
     c.txPower = txPower_;
     c.broadcastRate = broadcastRate_;
     c.unicastRate = unicastRate_;
+    c.countryCode = countryCode_;
+    c.autoPowerFallback = autoPowerFallback_;
     c.pairingCode = pairingCode_;
     c.maxCalls = maxCalls_;
     c.runTask = ownTask_;
@@ -416,7 +471,10 @@ void NowTp::refresh() {
     bool changed = st.started != status_.started || st.channel != status_.channel || st.secured != status_.secured ||
                    st.txPowerDbm != status_.txPowerDbm || st.txPowerLimitDbm != status_.txPowerLimitDbm ||
                    st.broadcastRate != status_.broadcastRate || st.sent != status_.sent ||
-                   st.received != status_.received || st.failed != status_.failed;
+                   st.received != status_.received || st.failed != status_.failed ||
+                   st.learnedTxCeilingDbm != status_.learnedTxCeilingDbm || st.stationConnected != status_.stationConnected ||
+                   st.softApActive != status_.softApActive || st.wifiStartedByNowTP != status_.wifiStartedByNowTP ||
+                   st.interface != status_.interface;
     // The offset, drift and age move all the time: read when asked, announced
     // with a round.
     bool timeChanged = st.timeSynced != status_.timeSynced || st.timeReference != status_.timeReference ||

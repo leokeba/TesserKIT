@@ -31,6 +31,11 @@ public:
     // Long Range rates need longRange on.
     NowTp& broadcastRate(Rate r);
     NowTp& unicastRate(Rate r);
+    // The country code ("US", "FR", "JP", "01" for world-safe), or empty
+    // for the driver's own: the allowed channels and power limits.
+    NowTp& countryCode(const char* code);
+    // Lower the power when a peer doesn't acknowledge (default true).
+    NowTp& autoPowerFallback(bool on);
     NowTp& pairingCode(const char* code);
     // Calls in flight to other nodes (default 8): at least the number of
     // nodes a master streams to at once (RemoteNode::stream()).
@@ -104,6 +109,8 @@ private:
     float txPower_ = 0;  // dBm, 0: the driver's
     Rate broadcastRate_ = Rate::Default;
     Rate unicastRate_ = Rate::Default;
+    std::string countryCode_;  // "US", "FR", "JP", "01" for world-safe; empty: the driver's
+    bool autoPowerFallback_ = true;
     size_t maxCalls_ = 8;
     bool ownTask_ = false;
     std::string pairingCode_;
@@ -125,6 +132,8 @@ private:
     tesser::Node* txPowerNode_ = nullptr;
     tesser::Node* broadcastRateNode_ = nullptr;
     tesser::Node* unicastRateNode_ = nullptr;
+    tesser::Node* countryCodeNode_ = nullptr;
+    tesser::Node* autoPowerFallbackNode_ = nullptr;
     tesser::Node* nodesNode_ = nullptr;
     tesser::Node* statusNode_ = nullptr;
     tesser::Node* timeNode_ = nullptr;

@@ -244,6 +244,7 @@ struct Wifi : tesserkit::Wifi {
     }
     void hostname(const char* name) override { hostnameSet = name; }
     void txPower(int8_t dBm) override { tx = dBm; }
+    int8_t txPower() const override { return tx; }
     void powerSave(tesserkit::PowerSave mode) override {
         ps = mode;
         psSets++;

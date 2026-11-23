@@ -163,6 +163,7 @@ struct ApConfig {
     std::string ssid, password;  // an empty password makes an open network
     uint8_t channel = 1;
     bool hidden = false;
+    uint8_t maxConnections = 4;  // stations the access point accepts (1-10)
 };
 
 // Wi-Fi and IP: Network's.
@@ -173,6 +174,9 @@ public:
     virtual void begin(const char* hostname, EventSink sink) = 0;
     virtual void hostname(const char* name) = 0;
     virtual void txPower(int8_t dBm) = 0;
+    // The current maximum transmit power in dBm (0: unknown): what the
+    // driver runs now, whatever set it.
+    virtual int8_t txPower() const = 0;
     virtual void powerSave(PowerSave mode) = 0;
     // Asynchronous: Event::ScanDone, then scanResults(): one per access
     // point heard, hidden networks left out. Called once per ScanDone,
@@ -497,6 +501,12 @@ struct NowTpConfig {
     float txPower = 0;     // dBm, 0: the driver's (else 2–21 in 0.25 steps)
     Rate broadcastRate = Rate::Default;  // for broadcast frames
     Rate unicastRate = Rate::Default;    // for unicast frames to each node
+    // Two letters ("US", "FR", "JP", "01" for world-safe), or empty for the
+    // driver's own: the allowed channels and power limits.
+    std::string countryCode;
+    // Lower the power when a peer doesn't acknowledge (NowTP's fallback):
+    // what lets a weak link work.
+    bool autoPowerFallback = true;
     std::string pairingCode;
     size_t maxCalls = 8;   // calls in flight to other nodes (one per node streamed to)
     // false: no worker task; the transport's messages are handled in poll(),
@@ -542,6 +552,11 @@ struct NowTpStatus {
     uint32_t timeRounds = 0;                         // with the current reference
     uint32_t timeAgeMs = 0;                          // since the last successful round
     uint32_t sent = 0, received = 0, failed = 0;
+    float learnedTxCeilingDbm = 0;  // power found to work by the fallback or optimize() (0: none)
+    bool stationConnected = false;     // connected to an AP (channel follows it)
+    bool softApActive = false;         // running a soft-AP (channel follows it)
+    bool wifiStartedByNowTP = false;   // NowTP initialized/started Wi-Fi and will stop it
+    std::string interface = "";         // "station" or "soft-AP": the interface ESP-NOW is bound to
 };
 
 // ESP-NOW through NowTP: the NowTp service's. The API is served to the nodes

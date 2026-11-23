@@ -55,6 +55,10 @@ public:
         // The same table, in the same order: Rate indexes NowTP's kRateNames.
         c.radio.broadcastRate = static_cast<nowtp::PhyRate>(config.broadcastRate);
         c.radio.unicastRate = static_cast<nowtp::PhyRate>(config.unicastRate);
+        c.radio.countryCode[0] = config.countryCode.empty() ? 0 : config.countryCode[0];
+        c.radio.countryCode[1] = config.countryCode.size() > 1 ? config.countryCode[1] : 0;
+        c.radio.countryCode[2] = 0;
+        c.radio.autoPowerFallback = config.autoPowerFallback;
         // Network applies /sys/network/wifi/powerSave, whose default is none
         // with NowTp (NowTp::needsStationAwake()): NowTP leaves it.
         c.radio.powerSave = nowtp::PowerSave::Leave;
@@ -184,6 +188,11 @@ public:
         nowtp::RadioInfo ri = radio_.radioInfo();
         s.txPowerDbm = ri.txPowerDbm;
         s.txPowerLimitDbm = ri.txPowerLimitDbm;
+        s.learnedTxCeilingDbm = ri.learnedTxCeilingDbm;
+        s.stationConnected = ri.stationConnected;
+        s.softApActive = ri.softApActive;
+        s.wifiStartedByNowTP = ri.wifiStartedByNowTP;
+        s.interface = ri.interface == WIFI_IF_STA ? "station" : "soft-AP";
         s.broadcastRate = static_cast<Rate>(radio_.broadcastRate());
         s.secured = radio_.secured();
         nowtp::TimeSyncStatus t = radio_.timeSyncStatus();
