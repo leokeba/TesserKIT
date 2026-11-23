@@ -11,6 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <string>
@@ -494,6 +495,82 @@ enum class Rate : uint8_t {
 };
 inline bool isLongRange(Rate r) { return r == Rate::LR250K || r == Rate::LR500K; }
 
+// Diagnostics (docs/DESIGN.md section 5.11): what a link diagnosis and an
+// optimize() find, as plain host-independent structs. Rate indexes NowTP's
+// PhyRate, whose kRateNames names them.
+
+// Frames delivered for one probing configuration, in one direction.
+struct ProbeResult {
+    Rate rate = Rate::Default;
+    float txPowerDbm = 0;  // 0: the driver's
+    uint8_t sent = 0;
+    uint8_t received = 0;
+    int8_t rssi = 0;  // average at the receiver, dBm; 0 if nothing arrived
+    float ratio() const { return sent ? static_cast<float>(received) / sent : 0.0f; }
+};
+
+// Highest transmit power at which a node's frames are still received.
+struct TxCeiling {
+    float limitDbm = 0;       // highest power the node's driver accepts
+    float dsssDbm = -1;       // 802.11b rates; -1 if no tested power worked
+    float ofdmDbm = -1;       // 802.11g/n rates; -1 if no tested power worked
+    float powerResponse = 0;  // RSSI change per dB of power setting (0: not measured)
+};
+
+// One issue found by a link diagnosis.
+struct LinkIssue {
+    enum class Kind : uint8_t {
+        PeerUnresponsive,
+        DoesNotHearUs,
+        HearsUsOnlyAtLowerPower,
+        TxPowerLimited,
+        OfdmPowerLimited,
+        PowerControlIneffective,
+        RateFailsForward,
+        RateFailsReverse,
+        WeakSignal,
+        OtherChannel,
+        OtherNetworkId,
+        OtherProtocolVersion,
+        LongRangeOnly,
+        LongRangeUnavailable,
+        SmallFramesOnly,
+        ChannelScanUnavailable,
+        ForeignTraffic,
+    };
+    Kind kind = Kind::PeerUnresponsive;
+    bool local = false;   // about this node rather than the peer
+    float value = 0;      // power in dBm, channel, network id... depending on the kind
+    Rate rate = Rate::Default;
+    std::string detail;   // human-readable explanation and suggested fix
+};
+
+// What a link diagnosis found, us and the peer.
+struct LinkDiagnosis {
+    std::array<uint8_t, 6> peer = {};
+    bool responds = false;
+    float requestPowerDbm = 0;  // our power at which the peer answered
+    float replyPowerDbm = 0;    // the peer's power at which its answer arrived
+    TxCeiling ours, theirs;
+    std::vector<ProbeResult> forward, reverse;  // rate tables, us to peer / peer to us
+    int8_t forwardRssi = 0;                     // at 1 Mbps
+    int8_t reverseRssi = 0;
+    std::vector<LinkIssue> issues;
+};
+
+// The settings chosen for one link.
+struct LinkProfile {
+    std::array<uint8_t, 6> peer = {};
+    Rate rateToPeer = Rate::Default;
+    Rate rateFromPeer = Rate::Default;
+    float txPowerDbm = 0;      // ours
+    float peerTxPowerDbm = 0;  // the peer's
+    float deliveryToPeer = 0;
+    float deliveryFromPeer = 0;
+    bool applied = false;
+    bool verified = false;  // a reliable message went through with the new settings
+};
+
 struct NowTpConfig {
     std::string name;      // announced to nodes nearby (the hostname)
     uint8_t channel = 1;   // when neither the station nor the access point fixes it
@@ -575,6 +652,11 @@ public:
     // Changes the channel ESP-NOW uses when nothing fixes it, telling the
     // nodes nearby; false if an access point fixes it.
     virtual bool channel(uint8_t ch) = 0;
+    // Tells the nodes nearby that we are about to move to `ch`, without
+    // switching: call before connecting the station to an access point on
+    // another channel, or starting a soft-AP there. False if the radio is
+    // not started.
+    virtual bool announceChannelChange(uint8_t ch) = 0;
     virtual bool longRange(bool on) = 0;
     // The radio's settings, at once while started (the status' live values
     // follow them): the transmit power in dBm (0: the driver's), and the PHY
@@ -590,11 +672,24 @@ public:
     // stopping the radio or forgetting the key then would pull NowTP from
     // under it, and another can't start.
     virtual bool pairing() { return false; }
+    // Whether a diagnostic runs (in the radio's own task): stopping the
+    // radio then would pull it from under the diagnosis, so the service
+    // waits.
+    virtual bool diagnosing() { return false; }
     // Forgets the installation key, here and in storage, started or not:
     // unsecured again.
     virtual bool forgetKey() = 0;
     // TesserAPI's endpoint: null before the first begin(), then kept.
     virtual tesser::DatagramEndpoint* endpoint() = 0;
+    // Diagnostics (blocking for up to a few seconds each: the radio runs
+    // them in a task of its own and calls `done` from that task with the
+    // result). False if the radio is off, or a diagnostic is already running.
+    // A peer that never answers is a result, not a failure: its diagnosis
+    // (responds false, an issue) comes with Ok.
+    virtual bool diagnose(const std::array<uint8_t, 6>& mac,
+                          const std::function<void(tesser::Status, const LinkDiagnosis&)>& done) = 0;
+    virtual bool optimize(const std::array<uint8_t, 6>& mac,
+                          const std::function<void(tesser::Status, const LinkProfile&)>& done) = 0;
     // Network time, in µs; the local clock's (esp_timer's) while stopped or
     // unsynchronized. From any task.
     virtual uint64_t networkTimeUs() = 0;

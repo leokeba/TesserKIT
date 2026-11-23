@@ -101,6 +101,9 @@ private:
     tesser::Check pairing(bool accept);
     // A pairing runs: stopping and forgetting the key wait for it.
     bool pairingRuns() const;
+    // A link diagnosis, or with `tune` an optimization: deferred, replied
+    // when the radio's task has the result.
+    void diagnoseLink(const std::string& mac, tesser::Call& call, bool tune);
 
     bool enabled_ = true;
     bool mountPeers_ = true;

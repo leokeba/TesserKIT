@@ -142,6 +142,11 @@ private:
     void join(uint32_t nowMs);
     bool startScan(bool forJoin, uint32_t nowMs);
     void scanDone(const std::vector<ScanResult>& results, uint32_t nowMs);
+    // Tells NowTP's nodes nearby that the station is about to join `n` on
+    // another channel, before the connection is attempted. Best-effort: the
+    // radio may not run, and a network the last scan didn't hear has no
+    // channel to announce.
+    void announceChannel(const WifiNetwork& n);
     void connectNext(uint32_t nowMs);
     void wait(uint32_t nowMs);
     void connected(uint32_t nowMs);
@@ -234,6 +239,7 @@ private:
     size_t candidate_ = 0;
     StaConfig current_;  // the network being joined or joined
     std::vector<std::array<uint8_t, 6>> heard_;  // the access points the last scan heard
+    std::vector<ScanResult> lastScan_;  // the last scan's results
     bool scanning_ = false;
     bool scanForJoin_ = false;
     bool scanWanted_ = false;

@@ -42,6 +42,81 @@ bool parseMac(const std::string& s, nowtp::Mac& m) {
     return true;
 }
 
+// The diagnostics' NowTP types, as plain structs the service can serialize.
+LinkDiagnosis toTesserkit(const nowtp::LinkDiagnosis& d) {
+    LinkDiagnosis out;
+    for (int i = 0; i < 6; i++) out.peer[i] = d.peer.bytes[i];
+    out.responds = d.responds;
+    out.requestPowerDbm = d.requestPowerDbm;
+    out.replyPowerDbm = d.replyPowerDbm;
+    out.ours.limitDbm = d.ours.limitDbm;
+    out.ours.dsssDbm = d.ours.dsssDbm;
+    out.ours.ofdmDbm = d.ours.ofdmDbm;
+    out.ours.powerResponse = d.ours.powerResponse;
+    out.theirs.limitDbm = d.theirs.limitDbm;
+    out.theirs.dsssDbm = d.theirs.dsssDbm;
+    out.theirs.ofdmDbm = d.theirs.ofdmDbm;
+    out.theirs.powerResponse = d.theirs.powerResponse;
+    for (const nowtp::ProbeResult& r : d.forward) {
+        ProbeResult p;
+        p.rate = static_cast<Rate>(r.step.rate);
+        p.txPowerDbm = r.step.txPowerDbm;
+        p.sent = r.sent;
+        p.received = r.received;
+        p.rssi = r.rssi;
+        out.forward.push_back(p);
+    }
+    for (const nowtp::ProbeResult& r : d.reverse) {
+        ProbeResult p;
+        p.rate = static_cast<Rate>(r.step.rate);
+        p.txPowerDbm = r.step.txPowerDbm;
+        p.sent = r.sent;
+        p.received = r.received;
+        p.rssi = r.rssi;
+        out.reverse.push_back(p);
+    }
+    out.forwardRssi = d.forwardRssi;
+    out.reverseRssi = d.reverseRssi;
+    for (const nowtp::Issue& i : d.issues) {
+        LinkIssue issue;
+        issue.kind = static_cast<LinkIssue::Kind>(static_cast<uint8_t>(i.kind));
+        issue.local = i.local;
+        issue.value = i.value;
+        issue.rate = static_cast<Rate>(i.rate);
+        issue.detail = i.detail;
+        out.issues.push_back(issue);
+    }
+    return out;
+}
+
+LinkProfile toTesserkit(const nowtp::LinkProfile& p) {
+    LinkProfile out;
+    for (int i = 0; i < 6; i++) out.peer[i] = p.peer.bytes[i];
+    out.rateToPeer = static_cast<Rate>(p.rateToPeer);
+    out.rateFromPeer = static_cast<Rate>(p.rateFromPeer);
+    out.txPowerDbm = p.txPowerDbm;
+    out.peerTxPowerDbm = p.peerTxPowerDbm;
+    out.deliveryToPeer = p.deliveryToPeer;
+    out.deliveryFromPeer = p.deliveryFromPeer;
+    out.applied = p.applied;
+    out.verified = p.verified;
+    return out;
+}
+
+// NowTP's diagnostics' failures, as the API's statuses: the radio off (it
+// stopped while the diagnostic ran), the peer busy with its own measurements
+// (retry later), or no answer.
+tesser::Status toTesserkit(nowtp::Status s) {
+    switch (s) {
+        case nowtp::Status::Ok: return tesser::Status::Ok;
+        case nowtp::Status::InvalidState: return tesser::Status::NotAllowed;
+        case nowtp::Status::QueueFull: return tesser::Status::Busy;
+        case nowtp::Status::Timeout: return tesser::Status::Timeout;
+        case nowtp::Status::AuthFailed: return tesser::Status::Timeout;  // another key: no answer
+        default: return tesser::Status::Internal;
+    }
+}
+
 class EspNowTp : public NowTpRadio {
 public:
     bool begin(tesser::Api& api, tesser::Object* peers, const NowTpConfig& config, EventSink sink) override {
@@ -213,6 +288,9 @@ public:
     }
 
     bool channel(uint8_t ch) override { return radio_.moveToChannel(ch) == nowtp::Status::Ok; }
+    bool announceChannelChange(uint8_t ch) override {
+        return radio_.announceChannelChange(ch) == nowtp::Status::Ok;
+    }
     bool longRange(bool on) override { return radio_.setLongRange(on) == nowtp::Status::Ok; }
     bool txPower(float dbm) override { return radio_.setTxPower(dbm) == nowtp::Status::Ok; }
     bool broadcastRate(Rate r) override {
@@ -224,6 +302,16 @@ public:
     bool pair(uint32_t timeoutMs) override { return spawnPairing(false, timeoutMs); }
     bool acceptPairing(uint32_t timeoutMs) override { return spawnPairing(true, timeoutMs); }
     bool pairing() override { return pairing_.load(); }
+    bool diagnosing() override { return diagnosing_.load(); }
+
+    bool diagnose(const std::array<uint8_t, 6>& mac,
+                  const std::function<void(tesser::Status, const LinkDiagnosis&)>& done) override {
+        return spawnDiagnostic(mac, done, nullptr);
+    }
+    bool optimize(const std::array<uint8_t, 6>& mac,
+                  const std::function<void(tesser::Status, const LinkProfile&)>& done) override {
+        return spawnDiagnostic(mac, nullptr, done);
+    }
 
     bool forgetKey() override {
         if (pairing_.load()) return false;  // the pairing task uses the key
@@ -277,6 +365,51 @@ private:
         vTaskDelete(nullptr);
     }
 
+    // A diagnosis or an optimization blocks for seconds: in a task of its own,
+    // one at a time, like a pairing.
+    struct Diagnostic {
+        EspNowTp* self;
+        nowtp::Mac mac;
+        std::function<void(tesser::Status, const LinkDiagnosis&)> diagnosed;
+        std::function<void(tesser::Status, const LinkProfile&)> optimized;
+    };
+
+    bool spawnDiagnostic(const std::array<uint8_t, 6>& mac,
+                         const std::function<void(tesser::Status, const LinkDiagnosis&)>& done,
+                         const std::function<void(tesser::Status, const LinkProfile&)>& optimized) {
+        if (!radio_.started()) return false;
+        if (diagnosing_.exchange(true)) return false;
+        auto* d = new Diagnostic{this, nowtp::Mac(), done, optimized};
+        for (int i = 0; i < 6; i++) d->mac.bytes[i] = mac[i];
+        // Its rate tables (up to a dozen probes each way), the issues' texts
+        // and NowTP's procedures take a few KB of stack.
+        if (xTaskCreate(diagnosticTask, "tk_diag", 8192, d, 4, nullptr) == pdPASS) return true;
+        delete d;
+        diagnosing_.store(false);
+        return false;
+    }
+    static void diagnosticTask(void* arg) {
+        std::unique_ptr<Diagnostic> d(static_cast<Diagnostic*>(arg));
+        if (d->optimized) {
+            nowtp::LinkProfile p;
+            nowtp::Status st = d->self->radio_.optimizeLink(d->mac, p);
+            if (st == nowtp::Status::Ok) d->optimized(tesser::Status::Ok, toTesserkit(p));
+            else d->optimized(toTesserkit(st), LinkProfile());
+        } else {
+            nowtp::LinkDiagnosis diag;
+            nowtp::Status st = d->self->radio_.diagnose(d->mac, diag);
+            // A peer that never answers still fills the diagnosis: that is
+            // the result (an issue plus responds false), not a failure.
+            if (st == nowtp::Status::Timeout) st = nowtp::Status::Ok;
+            if (st == nowtp::Status::Ok) d->diagnosed(tesser::Status::Ok, toTesserkit(diag));
+            else d->diagnosed(toTesserkit(st), LinkDiagnosis());
+        }
+        // Last: the radio, and the sink begin() sets, are no longer used.
+        d->self->diagnosing_.store(false);
+        d.reset();
+        vTaskDelete(nullptr);
+    }
+
     nowtp::EspNowTransport radio_;
     std::unique_ptr<tesser::NowTpTransport> transport_;
     bool polled_ = false;  // no worker tasks, NowTP's included: poll() does their work
@@ -285,6 +418,7 @@ private:
     bool served_ = false;  // serves a NetworkClock's TimeSync
     EventSink sink_;
     std::atomic<bool> pairing_{false};  // a pairing task runs
+    std::atomic<bool> diagnosing_{false};  // a diagnostic task runs
 };
 
 }  // namespace

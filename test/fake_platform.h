@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #include <algorithm>
+#include <array>
 #include <deque>
 #include <functional>
 #include <map>
@@ -652,6 +653,12 @@ struct NowTp : tesserkit::NowTpRadio {
         state.channel = ch;
         return true;
     }
+    std::vector<uint8_t> announced;  // channels announced, in order
+    bool announceChannelChange(uint8_t ch) override {
+        if (!state.started) return false;
+        announced.push_back(ch);
+        return true;
+    }
     bool longRange(bool on) override {
         config.longRange = on;
         return true;
@@ -686,6 +693,45 @@ struct NowTp : tesserkit::NowTpRadio {
         return true;
     }
     bool pairing() override { return pairingNow; }
+    // Diagnostics: the test finishes one, as the radio's task would.
+    int diagnoses = 0, optimizes = 0;
+    std::array<uint8_t, 6> diagPeer = {};
+    bool diagBusy = false;
+    std::function<void(tesser::Status, const tesserkit::LinkDiagnosis&)> diagDone;
+    std::function<void(tesser::Status, const tesserkit::LinkProfile&)> optDone;
+    bool diagnosing() override { return diagBusy; }
+    bool diagnose(const std::array<uint8_t, 6>& mac,
+                  const std::function<void(tesser::Status, const tesserkit::LinkDiagnosis&)>& done) override {
+        if (!state.started || diagBusy) return false;
+        diagnoses++;
+        diagPeer = mac;
+        diagDone = done;
+        diagBusy = true;
+        return true;
+    }
+    bool optimize(const std::array<uint8_t, 6>& mac,
+                  const std::function<void(tesser::Status, const tesserkit::LinkProfile&)>& done) override {
+        if (!state.started || diagBusy) return false;
+        optimizes++;
+        diagPeer = mac;
+        optDone = done;
+        diagBusy = true;
+        return true;
+    }
+    void diagnosed(tesser::Status s, tesserkit::LinkDiagnosis d) {
+        d.peer = diagPeer;  // the radio reports the node it was asked about
+        auto f = std::move(diagDone);
+        diagDone = nullptr;
+        diagBusy = false;
+        if (f) f(s, d);
+    }
+    void optimized(tesser::Status s, tesserkit::LinkProfile p) {
+        p.peer = diagPeer;
+        auto f = std::move(optDone);
+        optDone = nullptr;
+        diagBusy = false;
+        if (f) f(s, p);
+    }
     bool forgetKey() override {
         forgets++;
         keyStored = state.secured = false;

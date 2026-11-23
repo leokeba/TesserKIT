@@ -651,6 +651,7 @@ bool Network::startScan(bool forJoin, uint32_t nowMs) {
 
 void Network::scanDone(const std::vector<ScanResult>& results, uint32_t nowMs) {
     scanning_ = false;
+    lastScan_ = results;
     heard_.clear();
     for (const ScanResult& r : results) {
         std::array<uint8_t, 6> b;
@@ -740,11 +741,29 @@ void Network::scanDone(const std::vector<ScanResult>& results, uint32_t nowMs) {
     connectNext(nowMs);
 }
 
+void Network::announceChannel(const WifiNetwork& n) {
+    Platform& p = dev_.platform();
+    if (!p.nowtp) return;
+    // The strongest access point of this network the last scan heard, or
+    // the one we are about to join.
+    const ScanResult* best = nullptr;
+    for (const ScanResult& r : lastScan_) {
+        if (r.ssid != n.ssid) continue;
+        if (current_.bssidSet && memcmp(r.bssid, current_.bssid, sizeof(current_.bssid)) != 0) continue;
+        if (!best || r.rssi > best->rssi) best = &r;
+    }
+    if (!best || best->channel == 0) return;
+    // Already on the channel: nothing to tell.
+    if (p.nowtp->status().channel == best->channel) return;
+    p.nowtp->announceChannelChange(best->channel);
+}
+
 void Network::connectNext(uint32_t nowMs) {
     while (candidate_ < candidates_.size()) {
         const WifiNetwork* n = find(candidates_[candidate_++]);
         if (!n) continue;
         current_ = config(*n, true);  // applied
+        announceChannel(*n);
         if (wifi_->connect(current_)) {
             sta_ = Sta::Connecting;
             sinceMs_ = nowMs;

@@ -21,15 +21,35 @@ namespace {
 constexpr uint32_t kPollMs = 1000;    // the radio's status and the nodes nearby
 constexpr uint32_t kSettleMs = 20000;  // at the latest: the access point is up by then
 
+// "aa:bb:cc:dd:ee:ff", either case.
+bool isMacText(const std::string& v) {
+    if (v.size() != 17) return false;
+    for (size_t i = 0; i < v.size(); i++) {
+        char c = v[i];
+        if (i % 3 == 2 ? c != ':' : !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // "auto", "this", or a MAC ("aa:bb:cc:dd:ee:ff", either case).
 Check checkTimeReference(const std::string& v) {
     if (v == "auto" || v == "this") return Check::ok();
-    bool mac = v.size() == 17;
-    for (size_t i = 0; mac && i < v.size(); i++) {
-        char c = v[i];
-        mac = i % 3 == 2 ? c == ':' : (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-    }
-    return mac ? Check::ok() : Check::fail(Status::InvalidValue, "auto, this, or a node's MAC (aa:bb:cc:dd:ee:ff)");
+    return isMacText(v) ? Check::ok()
+                        : Check::fail(Status::InvalidValue, "auto, this, or a node's MAC (aa:bb:cc:dd:ee:ff)");
+}
+
+Check checkMac(const std::string& v) {
+    return isMacText(v) ? Check::ok() : Check::fail(Status::InvalidValue, "a node's MAC (aa:bb:cc:dd:ee:ff)");
+}
+
+std::array<uint8_t, 6> parseMac(const std::string& s) {
+    std::array<uint8_t, 6> m = {};
+    unsigned b[6] = {};
+    sscanf(s.c_str(), "%2x:%2x:%2x:%2x:%2x:%2x", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]);
+    for (int i = 0; i < 6; i++) m[i] = static_cast<uint8_t>(b[i]);
+    return m;
 }
 
 std::string macText(const uint8_t* m) {
@@ -47,6 +67,137 @@ const char* const kRateNames[] = {
     "MCS2 (19.5 Mbps)", "MCS3 (26 Mbps)", "MCS4 (39 Mbps)", "MCS5 (52 Mbps)", "MCS6 (58.5 Mbps)",
     "MCS7 (65 Mbps)", "LR 250 kbps", "LR 500 kbps",
 };
+constexpr size_t kRateCount = sizeof(kRateNames) / sizeof(kRateNames[0]);
+
+const char* rateName(Rate r) {
+    size_t i = static_cast<size_t>(r);
+    return i < kRateCount ? kRateNames[i] : "unknown";
+}
+
+// The diagnosis issues, in LinkIssue::Kind's order: a mirror of NowTP's
+// toString(IssueKind) (diagnostics.cpp).
+const char* const kIssueNames[] = {
+    "PeerUnresponsive", "DoesNotHearUs", "HearsUsOnlyAtLowerPower", "TxPowerLimited", "OfdmPowerLimited",
+    "PowerControlIneffective", "RateFailsForward", "RateFailsReverse", "WeakSignal", "OtherChannel",
+    "OtherNetworkId", "OtherProtocolVersion", "LongRangeOnly", "LongRangeUnavailable", "SmallFramesOnly",
+    "ChannelScanUnavailable", "ForeignTraffic",
+};
+
+// dBm have a 0.25 step, and a ratio a few hundredths: four significant
+// digits keep both exact enough (%.*g, as the writer formats numbers).
+void writeCeiling(tesser::JsonWriter& w, const TxCeiling& c) {
+    w.beginObject();
+    w.key("limitDbm");
+    w.number(c.limitDbm, 4);
+    w.key("dsssDbm");
+    w.number(c.dsssDbm, 4);
+    w.key("ofdmDbm");
+    w.number(c.ofdmDbm, 4);
+    w.key("powerResponse");
+    w.number(c.powerResponse, 4);
+    w.endObject();
+}
+
+void writeProbes(tesser::JsonWriter& w, const std::vector<ProbeResult>& list) {
+    w.beginArray();
+    for (const ProbeResult& r : list) {
+        w.beginObject();
+        w.key("rate");
+        w.string(rateName(r.rate));
+        w.key("txPowerDbm");
+        w.number(r.txPowerDbm, 4);
+        w.key("sent");
+        w.uinteger(r.sent);
+        w.key("received");
+        w.uinteger(r.received);
+        w.key("rssi");
+        w.integer(r.rssi);
+        w.key("delivery");
+        w.number(r.ratio(), 4);
+        w.endObject();
+    }
+    w.endArray();
+}
+
+void writeIssues(tesser::JsonWriter& w, const std::vector<LinkIssue>& issues) {
+    w.beginArray();
+    for (const LinkIssue& i : issues) {
+        w.beginObject();
+        w.key("kind");
+        size_t k = static_cast<size_t>(i.kind);
+        w.string(k < sizeof(kIssueNames) / sizeof(kIssueNames[0]) ? kIssueNames[k] : "Unknown");
+        w.key("local");
+        w.boolean(i.local);
+        w.key("value");
+        w.number(i.value, 4);
+        w.key("rate");
+        w.string(rateName(i.rate));
+        w.key("detail");
+        w.string(i.detail);
+        w.endObject();
+    }
+    w.endArray();
+}
+
+void writeDiagnosis(tesser::JsonWriter& w, const LinkDiagnosis& d) {
+    w.beginObject();
+    w.key("peer");
+    w.string(macText(d.peer.data()));
+    w.key("responds");
+    w.boolean(d.responds);
+    w.key("requestPowerDbm");
+    w.number(d.requestPowerDbm, 4);
+    w.key("replyPowerDbm");
+    w.number(d.replyPowerDbm, 4);
+    w.key("ours");
+    writeCeiling(w, d.ours);
+    w.key("theirs");
+    writeCeiling(w, d.theirs);
+    w.key("forward");
+    writeProbes(w, d.forward);
+    w.key("reverse");
+    writeProbes(w, d.reverse);
+    w.key("forwardRssi");
+    w.integer(d.forwardRssi);
+    w.key("reverseRssi");
+    w.integer(d.reverseRssi);
+    w.key("issues");
+    writeIssues(w, d.issues);
+    w.endObject();
+}
+
+// What to tell a client when a diagnosis fails.
+const char* diagFailure(Status s) {
+    switch (s) {
+        case Status::Timeout: return "no answer from the node";
+        case Status::Busy: return "the node is busy with another diagnosis: try again";
+        case Status::NotAllowed: return "NowTP stopped";
+        default: return "the diagnosis failed";
+    }
+}
+
+void writeProfile(tesser::JsonWriter& w, const LinkProfile& p) {
+    w.beginObject();
+    w.key("peer");
+    w.string(macText(p.peer.data()));
+    w.key("rateToPeer");
+    w.string(rateName(p.rateToPeer));
+    w.key("rateFromPeer");
+    w.string(rateName(p.rateFromPeer));
+    w.key("txPowerDbm");
+    w.number(p.txPowerDbm, 4);
+    w.key("peerTxPowerDbm");
+    w.number(p.peerTxPowerDbm, 4);
+    w.key("deliveryToPeer");
+    w.number(p.deliveryToPeer, 4);
+    w.key("deliveryFromPeer");
+    w.number(p.deliveryFromPeer, 4);
+    w.key("applied");
+    w.boolean(p.applied);
+    w.key("verified");
+    w.boolean(p.verified);
+    w.endObject();
+}
 
 }  // namespace
 
@@ -328,6 +479,17 @@ void NowTp::describe(tesser::Object& o) {
         .ui("confirm", "Leave the installation? Its nodes won't trust this one any more.")
         .ui("advanced");
 
+    auto& dg = o.object("diagnostics").label("Diagnostics").doc(
+        "Measures the link to a node nearby, and tunes it (Admin; the radio is busy for a few seconds)");
+    dg.action("diagnose", [this](const std::string& mac, tesser::Call& call) { diagnoseLink(mac, call, false); })
+        .label("Diagnose a link")
+        .doc("Probes every rate and power toward a paired node, and reports delivery, signal and issues")
+        .ui("advanced");
+    dg.action("optimize", [this](const std::string& mac, tesser::Call& call) { diagnoseLink(mac, call, true); })
+        .label("Tune a link")
+        .doc("Diagnoses the link, then applies the fastest reliable rate and the lowest working power to both ends")
+        .ui("advanced");
+
     nodesNode_ = &o.list("nodes", nodes_,
                          [](tesser::Object& e, Node& n) {
                              e.value("name", static_cast<const std::string&>(n.name));
@@ -539,6 +701,7 @@ void NowTp::setPairing(const std::string& s) {
 Check NowTp::pairing(bool accept) {
     if (!radio_ || !started_) return Check::fail(Status::NotAllowed, "NowTP is off");
     if (pairingRuns()) return Check::fail(Status::Busy, "a pairing is in progress");
+    if (radio_->diagnosing()) return Check::fail(Status::Busy, "a diagnosis is running");
     if (!(accept ? radio_->acceptPairing(kPairingMs) : radio_->pair(kPairingMs))) {
         return Check::fail(Status::Internal, "the pairing couldn't start");
     }
@@ -558,7 +721,9 @@ void NowTp::tick(uint32_t nowMs) {
         begin();
     }
     uint32_t gen = enabledNode_->generation();
-    if (gen != enabledGen_) {
+    // A diagnosis runs in the radio's own task: ending the radio now would
+    // pull it from under the diagnosis. Tried again next tick.
+    if (gen != enabledGen_ && !(!enabled_ && started_ && radio_->diagnosing())) {
         enabledGen_ = gen;
         if (enabled_ && !started_) {
             begin();
@@ -625,6 +790,32 @@ void NowTp::event(const Event& e) {
         default:
             return;
     }
+}
+
+// A link diagnosis or an optimization (docs/DESIGN.md section 5.11): the
+// radio runs it in a task of its own, for up to a few seconds, and calls
+// back with the result, which the client gets in its reply.
+void NowTp::diagnoseLink(const std::string& mac, tesser::Call& call, bool tune) {
+    if (!radio_ || !started_) return call.fail(Status::NotAllowed, "NowTP is off");
+    if (pairingRuns()) return call.fail(Status::Busy, "a pairing is in progress");
+    Check c = checkMac(mac);
+    if (!c.isOk()) return call.fail(c.status, c.message);
+    tesser::Pending p = call.defer();
+    if (!p) return;  // refused (too many pending, or a transport that can't wait): the call says why
+    std::array<uint8_t, 6> peer = parseMac(mac);
+    bool ok;
+    if (tune) {
+        ok = radio_->optimize(peer, [p](Status s, const LinkProfile& profile) mutable {
+            if (s != Status::Ok) return p.fail(s, diagFailure(s));
+            p.replyWith([&profile](tesser::JsonWriter& w) { writeProfile(w, profile); });
+        });
+    } else {
+        ok = radio_->diagnose(peer, [p](Status s, const LinkDiagnosis& d) mutable {
+            if (s != Status::Ok) return p.fail(s, diagFailure(s));
+            p.replyWith([&d](tesser::JsonWriter& w) { writeDiagnosis(w, d); });
+        });
+    }
+    if (!ok) p.fail(Status::Busy, "the diagnosis couldn't start: NowTP is off, or another runs");
 }
 
 // The key lives in NowTP's own storage, which the device's erase doesn't reach.

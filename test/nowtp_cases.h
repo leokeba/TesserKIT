@@ -54,6 +54,35 @@ TEST(nowtp_starts_once_joined) {
     CHECK_EQ(r.fake.nowtp.begins, 1);
 }
 
+TEST(nowtp_announces_the_channel_a_network_joins) {
+    NowTpRig r;
+    fake::Air home;
+    home.ssid = "Home";
+    home.password = "password1";
+    home.channel = 6;
+    fake::Air work;
+    work.ssid = "Work";
+    work.password = "password2";
+    work.channel = 11;
+    r.fake.wifi.air.push_back(home);
+    r.fake.wifi.air.push_back(work);
+    r.net.defaultNetwork("Home", "password1");
+    CHECK(r.dev.begin());
+    r.run(5000);
+    CHECK(r.net.connected());
+    CHECK_EQ(r.fake.nowtp.begins, 1);  // started once the network settled
+    // The first join: the radio wasn't started yet, so nothing was announced.
+    CHECK_EQ(r.fake.nowtp.announced.size(), 0u);
+    // Switching to a network on another channel tells the nodes nearby,
+    // before the connection is attempted.
+    CHECK_EQ(r.set("/sys/network/wifi/networks", "[{\"ssid\":\"Work\",\"password\":\"password2\"}]").status, Status::Ok);
+    r.settle();
+    CHECK(r.net.connected());
+    CHECK_EQ(r.fake.wifi.last.ssid, "Work");
+    CHECK_EQ(r.fake.nowtp.announced.size(), 1u);
+    CHECK_EQ(r.fake.nowtp.announced[0], 11);
+}
+
 TEST(nowtp_without_mounting_has_no_peers_object) {
     NowTpRig r;
     r.nowtp.mountPeers(false);
@@ -577,6 +606,168 @@ TEST(nowtp_status_shows_the_radio_as_it_runs) {
     CHECK_EQ(r.value("/sys/nowtp/status/softApActive"), "false");
     CHECK_EQ(r.value("/sys/nowtp/status/wifiStartedByNowTP"), "true");
     CHECK_EQ(r.value("/sys/nowtp/status/interface"), "\"station\"");
+}
+
+// --- Diagnostics: a link measured, and tuned --------------------------------
+
+// A deferred request: answered when the client gets its reply.
+std::shared_ptr<rig::Reply> callAsync(NowTpRig& r, const char* path, const std::string& body) {
+    auto out = std::make_shared<rig::Reply>();
+    r.admin.request(rig::Op::Set, path, body,
+                    [out](Status s, JsonVariantConst b) {
+                        out->status = s;
+                        serializeJson(b, out->body);
+                        out->done = true;
+                    });
+    r.admin.process();
+    return out;
+}
+
+TEST(nowtp_diagnoses_a_link) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    // The MAC, either case: the diagnosis runs in the radio's task meanwhile.
+    auto out = callAsync(r, "/sys/nowtp/diagnostics/diagnose", "\"AA:BB:CC:DD:EE:01\"");
+    CHECK(!out->done);
+    CHECK_EQ(r.fake.nowtp.diagnoses, 1);
+    CHECK_EQ(int(r.fake.nowtp.diagPeer[0]), 0xaa);
+    CHECK_EQ(int(r.fake.nowtp.diagPeer[5]), 0x01);
+    CHECK(r.fake.nowtp.diagBusy);
+    tesserkit::LinkDiagnosis d;
+    d.responds = true;
+    d.requestPowerDbm = -3.5f;
+    d.ours.limitDbm = 21;
+    d.ours.dsssDbm = 17;
+    d.theirs.limitDbm = 19.5f;
+    d.forward.push_back({tesserkit::Rate::G24M, 0, 20, 19, -50});
+    d.reverse.push_back({tesserkit::Rate::B1M, 0, 20, 20, -52});
+    d.forwardRssi = -50;
+    d.reverseRssi = -52;
+    d.issues.push_back({tesserkit::LinkIssue::Kind::WeakSignal, false, -90, tesserkit::Rate::B1M,
+                        "raise the power or move closer"});
+    r.fake.nowtp.diagnosed(Status::Ok, d);
+    r.admin.process();
+    CHECK(out->done);
+    CHECK_EQ(out->status, Status::Ok);
+    CHECK_EQ(at(out->body, "peer"), "\"aa:bb:cc:dd:ee:01\"");
+    CHECK_EQ(at(out->body, "responds"), "true");
+    CHECK_EQ(at(out->body, "requestPowerDbm"), "-3.5");
+    CHECK_EQ(at(out->body, "ours/dsssDbm"), "17");
+    CHECK_EQ(at(out->body, "theirs/limitDbm"), "19.5");
+    CHECK_EQ(at(out->body, "forward/0/rate"), "\"24 Mbps\"");
+    CHECK_EQ(at(out->body, "forward/0/delivery"), "0.95");
+    CHECK_EQ(at(out->body, "reverse/0/received"), "20");
+    CHECK_EQ(at(out->body, "forwardRssi"), "-50");
+    CHECK_EQ(at(out->body, "issues/0/kind"), "\"WeakSignal\"");
+    CHECK_EQ(at(out->body, "issues/0/local"), "false");
+    CHECK_EQ(at(out->body, "issues/0/detail"), "\"raise the power or move closer\"");
+    CHECK(!r.fake.nowtp.diagBusy);
+}
+
+// A peer that never answers is a result (responds false, an issue), and a
+// failure is the reply's status instead.
+TEST(nowtp_diagnosis_reports_a_failure) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    auto out = callAsync(r, "/sys/nowtp/diagnostics/diagnose", "\"aa:bb:cc:dd:ee:02\"");
+    CHECK(!out->done);
+    r.fake.nowtp.diagnosed(Status::Timeout, tesserkit::LinkDiagnosis());
+    r.admin.process();
+    CHECK(out->done);
+    CHECK_EQ(out->status, Status::Timeout);
+    CHECK_EQ(at(out->body, "message"), "\"no answer from the node\"");
+}
+
+TEST(nowtp_tunes_a_link) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    auto out = callAsync(r, "/sys/nowtp/diagnostics/optimize", "\"aa:bb:cc:dd:ee:03\"");
+    CHECK(!out->done);
+    CHECK_EQ(r.fake.nowtp.optimizes, 1);
+    tesserkit::LinkProfile p;
+    p.rateToPeer = tesserkit::Rate::G24M;
+    p.rateFromPeer = tesserkit::Rate::G12M;
+    p.txPowerDbm = 11;
+    p.peerTxPowerDbm = 13.5f;
+    p.deliveryToPeer = 1;
+    p.deliveryFromPeer = 0.99f;
+    p.applied = true;
+    p.verified = true;
+    r.fake.nowtp.optimized(Status::Ok, p);
+    r.admin.process();
+    CHECK(out->done);
+    CHECK_EQ(out->status, Status::Ok);
+    CHECK_EQ(at(out->body, "peer"), "\"aa:bb:cc:dd:ee:03\"");
+    CHECK_EQ(at(out->body, "rateToPeer"), "\"24 Mbps\"");
+    CHECK_EQ(at(out->body, "rateFromPeer"), "\"12 Mbps\"");
+    CHECK_EQ(at(out->body, "txPowerDbm"), "11");
+    CHECK_EQ(at(out->body, "peerTxPowerDbm"), "13.5");
+    CHECK_EQ(at(out->body, "deliveryFromPeer"), "0.99");
+    CHECK_EQ(at(out->body, "applied"), "true");
+    CHECK_EQ(at(out->body, "verified"), "true");
+}
+
+TEST(nowtp_diagnostics_need_a_mac_and_admin) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.set("/sys/nowtp/diagnostics/diagnose", "\"nope\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/nowtp/diagnostics/diagnose", "\"aa:bb:cc:dd:ee\"").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/nowtp/diagnostics/optimize", "\"\"").status, Status::InvalidValue);
+    CHECK_EQ(r.fake.nowtp.diagnoses + r.fake.nowtp.optimizes, 0);
+    CHECK_EQ(r.as(tesser::Access::User, rig::Op::Set, "/sys/nowtp/diagnostics/diagnose",
+                  "\"aa:bb:cc:dd:ee:04\"")
+                 .status,
+             Status::Unauthorized);
+    CHECK_EQ(r.fake.nowtp.diagnoses, 0);
+}
+
+TEST(nowtp_diagnostics_need_nowtp_running) {
+    NowTpRig r;
+    r.nowtp.enable(false);
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.set("/sys/nowtp/diagnostics/diagnose", "\"aa:bb:cc:dd:ee:05\"").status, Status::NotAllowed);
+    CHECK_EQ(r.set("/sys/nowtp/diagnostics/optimize", "\"aa:bb:cc:dd:ee:05\"").status, Status::NotAllowed);
+}
+
+// One at a time: the radio runs one in its own task, and a pairing would
+// pull it from under the diagnosis too.
+TEST(nowtp_one_diagnosis_at_a_time) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    auto first = callAsync(r, "/sys/nowtp/diagnostics/diagnose", "\"aa:bb:cc:dd:ee:06\"");
+    CHECK_EQ(r.fake.nowtp.diagnoses, 1);
+    CHECK_EQ(r.set("/sys/nowtp/diagnostics/diagnose", "\"aa:bb:cc:dd:ee:07\"").status, Status::Busy);
+    CHECK_EQ(r.set("/sys/nowtp/diagnostics/optimize", "\"aa:bb:cc:dd:ee:07\"").status, Status::Busy);
+    CHECK_EQ(r.set("/sys/nowtp/pairing/pair").status, Status::Busy);
+    CHECK_EQ(r.fake.nowtp.diagnoses, 1);
+    CHECK_EQ(r.fake.nowtp.optimizes, 0);
+    CHECK_EQ(r.fake.nowtp.pairings, 0);
+    r.fake.nowtp.diagnosed(Status::Ok, tesserkit::LinkDiagnosis());
+    r.admin.process();
+    CHECK(first->done);
+}
+
+// The radio isn't stopped under a diagnosis: the next tick does it.
+TEST(nowtp_a_diagnosis_delays_stopping_the_radio) {
+    NowTpRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    auto out = callAsync(r, "/sys/nowtp/diagnostics/diagnose", "\"aa:bb:cc:dd:ee:08\"");
+    CHECK_EQ(r.set("/sys/nowtp/enabled", "false").status, Status::Ok);
+    r.settle();
+    CHECK_EQ(r.fake.nowtp.ends, 0);
+    r.fake.nowtp.diagnosed(Status::Ok, tesserkit::LinkDiagnosis());
+    r.admin.process();
+    CHECK(out->done);
+    r.settle();
+    CHECK_EQ(r.fake.nowtp.ends, 1);
+    CHECK_EQ(r.value("/sys/nowtp/status/started"), "false");
 }
 
 }  // namespace nowtp_cases
