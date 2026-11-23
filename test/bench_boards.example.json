@@ -1,0 +1,12 @@
+{
+  "boards": [
+    {"name": "gledopto-d", "url": "http://192.168.1.30", "port": "/dev/cu.wchusbserial10",
+     "ble": null, "ethernet": "169.254.76.206"},
+    {"name": "gledopto-b", "url": "http://192.168.1.31", "port": "/dev/cu.wchusbserial11",
+     "ble": null, "ethernet": "169.254.192.2"},
+    {"name": "devkit-1", "url": "http://192.168.1.32", "port": "/dev/cu.usbserial-3",
+     "ble": "aa:bb:cc:dd:ee:ff", "ethernet": null},
+    {"name": "devkit-2", "url": "http://192.168.1.33", "port": "/dev/cu.usbserial-0001",
+     "ble": "aa:bb:cc:dd:ee:00", "ethernet": null}
+  ]
+}
