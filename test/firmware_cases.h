@@ -548,6 +548,44 @@ TEST(firmware_automatic_checks_wait_for_headroom) {
     tesser::setHeapFloor(0);
 }
 
+TEST(firmware_automatic_checks_wait_for_transfers) {
+    // A file transfer under way, local or relayed (Api::transferring()),
+    // holds an automatic check back until it ends: the check's TLS session
+    // beside a relayed firmware image took a gateway to 25 KB free on the
+    // bench (2026-11-25). Here a file the application serves.
+    GithubRig r;
+    r.fake.http.files[kLatest] = releaseJson("v1.0.0", {"fw-esp32.bin"});
+    std::string notes;
+    r.dev.api().file("notes").text([&notes] { return notes; },
+                                   [&notes](std::string_view text, tesser::JsonWriter&) {
+                                       notes = std::string(text);
+                                       return tesser::Check::ok();
+                                   });
+    CHECK(r.dev.begin());
+    tesser::FileTransfer t(r.dev.api());
+    tesser::Client c;
+    c.authenticated = true;
+    tesser::StringReply reply;
+    CHECK(t.openUpload("/notes", c, 8, reply) == tesser::FileTransfer::Open::Ok);
+    CHECK(t.write(reinterpret_cast<const uint8_t*>("abcd"), 4, reply));
+    r.run(61000);
+    CHECK(r.fake.core.tasks.empty());  // held back, not failed
+    CHECK(r.fw.release() != tesserkit::ReleaseState::Failed);
+    // A check asked for doesn't wait.
+    CHECK_EQ(r.check().status, Status::Ok);
+    CHECK_EQ(r.fw.release(), tesserkit::ReleaseState::Current);
+    r.skip(tesserkit::Firmware::kCheckEveryMs);
+    CHECK(r.fake.core.tasks.empty());
+    // The transfer ended, the automatic check goes.
+    CHECK(t.write(reinterpret_cast<const uint8_t*>("efgh"), 4, reply));
+    t.finish(reply);
+    CHECK_EQ(notes, "abcdefgh");
+    r.run(1000);
+    CHECK_EQ(r.fake.core.tasks.size(), 1u);
+    r.fake.core.runTasks();
+    CHECK_EQ(r.fw.release(), tesserkit::ReleaseState::Current);
+}
+
 TEST(firmware_auto_check_default) {
     FwRig r;
     r.fw.github("o/r", "fw-{target}.bin").autoCheck(false);

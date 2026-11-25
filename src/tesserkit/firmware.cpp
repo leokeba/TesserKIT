@@ -298,6 +298,11 @@ void Firmware::GithubFeed::describe(tesser::Object& o) {
 void Firmware::GithubFeed::tick(uint32_t nowMs) {
     if (!stateNode_ || !autoCheck_ || !idle() || state_ == ReleaseState::Checking) return;
     if (fw_.dev_.onlineMs() < kFirstCheckMs) return;
+    // Nor beside a file transfer, local or relayed: the headroom below is
+    // sampled once, between two of its chunks, and the session would take
+    // its room (a gateway relaying a firmware image fell to 25 KB free).
+    // The check goes once the transfer ends.
+    if (fw_.dev_.api().transferring()) return;
     if (checkDue_ || static_cast<int32_t>(nowMs - nextCheckMs_) >= 0) check(true);
 }
 
