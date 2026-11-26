@@ -136,7 +136,8 @@ def test_log(dev):
           got[0] if got else None)
     s.close()
     dev.request('PATCH', '/sys/mqtt', {'uri': mqtt.get('uri', ''), 'enabled': mqtt.get('enabled', False)})
-    check('log_nothing_dropped', (dev.value('/sys/log/dropped') or 0) == 0, dev.value('/sys/log/dropped'))
+    dropped = dev.value('/sys/log/dropped')
+    check('log_nothing_dropped', dropped == 0, dropped)  # None (no /sys/log, or no answer) fails
 
 
 # ---- Home Assistant discovery ----------------------------------------------

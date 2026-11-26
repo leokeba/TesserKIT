@@ -399,6 +399,19 @@ class Scripts(unittest.TestCase):
         self.assert_failed_cleanly(rc, out, '/sys/log/level')
         self.assertIn('DONE pass=', out)
 
+    def test_power_log_dropped_missing(self):
+        # A device without /sys/log must not pass log_nothing_dropped:
+        # (value or 0) == 0 was true when the read failed.
+        s = Server({'/sys/status': JSON}, default=(404, 'application/json', b'{"error":"not_found"}'))
+        try:
+            rc, out = self.run_script('e2e_power.py', s.url, '--only', 'log')
+        finally:
+            s.stop()
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn('DONE pass=', out)
+        self.assertIn('FAIL log_nothing_dropped', out)
+        self.assertNotIn('PASS log_nothing_dropped', out)
+
 
 if __name__ == '__main__':
     unittest.main()
