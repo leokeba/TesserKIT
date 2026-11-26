@@ -601,6 +601,22 @@ StaConfig Network::config(const WifiNetwork& n, bool warn) const {
     return c;
 }
 
+// A saved network the scan heard, but not the access point it is pinned to.
+bool Network::pinMissed(const std::vector<ScanResult>& results) const {
+    for (const WifiNetwork& n : networks_) {
+        uint8_t b[6];
+        if (!n.bssid[0] || !parseMac(n.bssid, b)) continue;
+        bool network = false, pinned = false;
+        for (const ScanResult& r : results) {
+            if (r.ssid != n.ssid) continue;
+            network = true;
+            pinned = pinned || memcmp(r.bssid, b, sizeof(b)) == 0;
+        }
+        if (network && !pinned) return true;
+    }
+    return false;
+}
+
 bool Network::stationKeptAway() const {
     return staMode_ == StationMode::Never || (staMode_ == StationMode::Fallback && ethOnline_ && ethLease_);
 }
@@ -634,6 +650,7 @@ void Network::join(uint32_t nowMs) {
         return;
     }
     sta_ = Sta::Scanning;
+    pinRescans_ = 0;
     if (!startScan(true, nowMs)) wait(nowMs);
 }
 
@@ -715,6 +732,17 @@ void Network::scanDone(const std::vector<ScanResult>& results, uint32_t nowMs) {
     if (!scanForJoin_) return;
     scanForJoin_ = false;
     if (sta_ != Sta::Scanning) return;
+    // A scan can miss an access point that is there (one in five, at
+    // -43 dBm, on the bench of 2026-11-25): a network heard without its
+    // pinned access point is scanned for again before any of its access
+    // points will do.
+    if (pinRescans_ < kPinRescans && pinMissed(results)) {
+        if (startScan(true, nowMs)) {
+            pinRescans_++;
+            return;
+        }
+        scanForJoin_ = false;
+    }
     // Saved networks in range, strongest first; if none is, every saved
     // network in order (hidden ones don't show in scans).
     candidates_.clear();

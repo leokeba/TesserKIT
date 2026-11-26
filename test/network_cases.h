@@ -431,6 +431,33 @@ TEST(network_joins_the_access_point_set) {
     CHECK_EQ(r.value("/sys/network/wifi/status/bssid"), "\"10:11:12:13:14:40\"");
 }
 
+// A scan can miss an access point that is there: on the bench of
+// 2026-11-25, one scan in five from a Gledopto missed the access point it
+// was pinned to, at -43 dBm, and the station joined the other one and stayed.
+TEST(network_pin_survives_a_scan_that_misses_its_access_point) {
+    MeshRig r;
+    CHECK(r.dev.begin());
+    r.settle();
+    CHECK_EQ(r.value("/sys/network/wifi/status/bssid"), "\"10:11:12:13:14:40\"");
+    // The join's scan doesn't hear the router: it scans again rather than
+    // joining the repeater.
+    r.fake.wifi.air.back().missed = 1;
+    CHECK_EQ(r.set("/sys/network/wifi/networks/Home/bssid", "\"10:11:12:13:14:24\"").status, Status::Ok);
+    r.settle();
+    CHECK(r.net.connected());
+    CHECK(r.fake.wifi.last.bssidSet);
+    CHECK_EQ(r.value("/sys/network/wifi/status/bssid"), "\"10:11:12:13:14:24\"");
+    // Missed by every scan of a join: any access point, after a few scans.
+    r.fake.wifi.air.back().missed = 100;
+    int scans = r.fake.wifi.scans;
+    r.fake.wifi.drop();
+    r.run(40000);
+    CHECK(r.net.connected());
+    CHECK(!r.fake.wifi.last.bssidSet);
+    CHECK_EQ(r.value("/sys/network/wifi/status/bssid"), "\"10:11:12:13:14:40\"");
+    CHECK(r.fake.wifi.scans - scans <= 3);
+}
+
 TEST(network_scan_waits_for_a_connection_attempt) {
     NetRig r;
     r.air("Home", "pw");

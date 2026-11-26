@@ -114,8 +114,12 @@ bool Wifi::scan() {
 std::vector<tesserkit::ScanResult> Wifi::scanResults() {
     resultsRead++;
     std::vector<tesserkit::ScanResult> out;
-    for (const Air& a : air) {
+    for (Air& a : air) {
         if (a.hidden) continue;
+        if (a.missed > 0) {
+            a.missed--;
+            continue;
+        }
         tesserkit::ScanResult r;
         r.ssid = a.ssid;
         memcpy(r.bssid, a.bssid, sizeof(r.bssid));

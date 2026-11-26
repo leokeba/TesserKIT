@@ -130,6 +130,9 @@ public:
     // after the API lock, so a new address could otherwise come first), and
     // a few quick patches make one reconnection.
     static constexpr uint32_t kApplyAfterMs = 150;
+    // Scans a join makes again when its network is heard without its pinned
+    // access point, before it joins any.
+    static constexpr uint8_t kPinRescans = 2;
 
 protected:
     void start() override;
@@ -161,6 +164,7 @@ private:
     void poll(uint32_t nowMs);
     void setApClients(int32_t n);
     bool stationKeptAway() const;
+    bool pinMissed(const std::vector<ScanResult>& results) const;
     bool ethWaits(uint32_t nowMs) const;
     void applyStation(uint32_t nowMs);
     void failed(const std::string& why);
@@ -242,6 +246,7 @@ private:
     std::vector<ScanResult> lastScan_;  // the last scan's results
     bool scanning_ = false;
     bool scanForJoin_ = false;
+    uint8_t pinRescans_ = 0;  // scans this join made again for a pinned access point not heard
     bool scanWanted_ = false;
     uint32_t scanStartMs_ = 0;
     std::vector<tesser::Pending> scanWaiters_;

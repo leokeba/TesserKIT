@@ -159,6 +159,7 @@ struct Air {
     int8_t rssi = -60;
     uint8_t channel = 6;
     bool hidden = false;
+    int missed = 0;  // the next scans that don't hear it (a busy channel, a lost probe response)
 };
 
 // What lwIP shares between the interfaces, as esp_netif treats it: one list
