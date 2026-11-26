@@ -235,6 +235,50 @@ TEST(artnet_answers_polls) {
     CHECK(b[212] & 0x08);  // 15-bit port-addresses
 }
 
+TEST(artnet_poll_reply_gives_the_interface_toward_the_controller) {
+    // Ethernet on a cable without DHCP (link-local, no gateway) and the
+    // station joined: Device::address() is Ethernet's, but a controller on
+    // the Wi-Fi side can only reach the station's (gledopto-d, 2026-11-25).
+    ArtNetRig r;
+    r.artnet.universe(1);
+    const uint8_t ethMac[6] = {0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5};
+    const uint8_t staMac[6] = {0x50, 0x51, 0x52, 0x53, 0x54, 0x55};
+    fake::UdpInterface eth, sta;
+    eth.ip = 0xA9FE4CCE;  // 169.254.76.206/16
+    eth.mask = 0xFFFF0000;
+    memcpy(eth.mac, ethMac, 6);
+    sta.ip = 0xC0A80A01;  // 192.168.10.1/24, the default route (Ethernet has no gateway)
+    sta.mask = 0xFFFFFF00;
+    memcpy(sta.mac, staMac, 6);
+    sta.route = true;
+    r.fake.udp.interfaces = {eth, sta};
+    CHECK(r.dev.begin());
+    r.dev.address(eth.ip, ethMac);  // as Network sets it with both up
+    struct Case {
+        uint32_t controller, ip;
+        const uint8_t* mac;
+    } cases[] = {
+        {0xC0A80A3B, sta.ip, staMac},  // 192.168.10.59, on the Wi-Fi side
+        {0xA9FE0102, eth.ip, ethMac},  // 169.254.1.2, on the cable
+        {0x0A000005, sta.ip, staMac},  // 10.0.0.5, beyond both: the default route
+    };
+    for (const Case& c : cases) {
+        r.fake.udp.sent.clear();
+        r.fake.udp.deliver(tesserkit::ArtNet::kPort, poll(), c.controller);
+        r.run(60);
+        CHECK_EQ(r.fake.udp.sent.size(), size_t(1));
+        if (r.fake.udp.sent.empty()) continue;
+        const fake::Datagram& d = r.fake.udp.sent[0];
+        CHECK_EQ(d.ip, c.controller);
+        const uint8_t* b = reinterpret_cast<const uint8_t*>(d.data.data());
+        uint32_t ip = static_cast<uint32_t>(b[10]) << 24 | b[11] << 16 | b[12] << 8 | b[13];
+        uint32_t bindIp = static_cast<uint32_t>(b[207]) << 24 | b[208] << 16 | b[209] << 8 | b[210];
+        CHECK_EQ(ip, c.ip);
+        CHECK_EQ(bindIp, c.ip);
+        CHECK(memcmp(b + 201, c.mac, 6) == 0);
+    }
+}
+
 TEST(artnet_can_be_turned_off) {
     ArtNetRig r;
     r.artnet.map(mapping("/led/brightness", 1, 0, 0, 255));

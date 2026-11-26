@@ -112,7 +112,15 @@ void ArtNet::pollReply(uint32_t ip) {
             ports.push_back({t.universe, good});
         }
     }
-    uint32_t me = dev_.address();
+    // The address of the interface the reply leaves by, which the
+    // controller reaches: with Ethernet up, dev_.address() is the cable's,
+    // even a link-local one a controller on the Wi-Fi side can't reach.
+    uint32_t me = 0;
+    uint8_t mac[6];
+    if (!socket_->source(ip, me, mac)) {
+        me = dev_.address();
+        memcpy(mac, dev_.addressMac(), sizeof(mac));
+    }
     uint8_t r[kPollReplySize] = {};
     memcpy(r, kId, sizeof(kId));
     r[8] = kOpPollReply & 0xFF;
@@ -132,7 +140,7 @@ void ArtNet::pollReply(uint32_t ip) {
              error_.empty() ? "OK" : error_.c_str());
     copyName(r + 108, report, 64);
     r[200] = 0x00;  // Style: a node
-    memcpy(r + 201, dev_.addressMac(), 6);  // the interface's, whose address the reply gives
+    memcpy(r + 201, mac, 6);  // the interface's, whose address the reply gives
     r[212] = 0x08;  // Status2: 15-bit port-addresses
     // Art-Net 4: a reply per four ports sharing a net and sub-net, told
     // apart by their bind index (1, the root, then 2, 3...).

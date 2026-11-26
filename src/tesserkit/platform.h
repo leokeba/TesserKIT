@@ -394,6 +394,10 @@ public:
     // `cap`), or 0 if none. `fromIp` is a.b.c.d as (a << 24) | ...
     virtual size_t receive(uint8_t* buf, size_t cap, uint32_t& fromIp, uint16_t& fromPort) = 0;
     virtual bool send(uint32_t ip, uint16_t port, const uint8_t* data, size_t len) = 0;
+    // The address and MAC of the interface a datagram to `to` leaves by, as
+    // the IP stack routes it: the first interface up whose subnet holds
+    // `to`, else the default route's. False if there is none.
+    virtual bool source(uint32_t to, uint32_t& ip, uint8_t mac[6]) = 0;
     // Hands each datagram to `fn` as it arrives, from a task of the
     // socket's (`name`, at `priority`, on `core`, -1 either, with
     // `stackBytes`) until the socket is destroyed, which waits for the task

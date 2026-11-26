@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <atomic>
 
@@ -11,10 +12,13 @@
 #include "tesserkit/platform/esp/esp_internal.h"
 
 #include "esp_netif.h"
+#include "esp_netif_net_stack.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "lwip/ip4.h"
+#include "lwip/netif.h"
 #include "lwip/sockets.h"
 
 namespace tesserkit {
@@ -54,6 +58,31 @@ public:
         to.sin_port = htons(port);
         to.sin_addr.s_addr = esp::toNetwork(ip);
         return sendto(fd_, data, len, 0, reinterpret_cast<sockaddr*>(&to), sizeof(to)) == static_cast<int>(len);
+    }
+
+    // lwIP's own choice (ip4_route(), in its task): the first interface up
+    // whose subnet holds `to`, else the default one, which Network sets.
+    bool source(uint32_t to, uint32_t& ip, uint8_t mac[6]) override {
+        struct Route {
+            uint32_t to, ip;
+            uint8_t mac[6];
+        } r = {esp::toNetwork(to), 0, {}};
+        esp_err_t err = esp_netif_tcpip_exec(
+            [](void* arg) {
+                Route* r = static_cast<Route*>(arg);
+                ip4_addr_t dest;
+                ip4_addr_set_u32(&dest, r->to);
+                netif* n = ip4_route(&dest);
+                if (!n || ip4_addr_isany_val(*netif_ip4_addr(n))) return ESP_FAIL;
+                r->ip = ip4_addr_get_u32(netif_ip4_addr(n));
+                memcpy(r->mac, n->hwaddr, n->hwaddr_len < 6 ? n->hwaddr_len : 6);
+                return ESP_OK;
+            },
+            &r);
+        if (err != ESP_OK) return false;
+        ip = esp::fromNetwork(r.ip);
+        memcpy(mac, r.mac, 6);
+        return true;
     }
 
     bool listen(const char* name, uint8_t priority, int8_t core, uint32_t stackBytes, UdpReceiver fn) override {

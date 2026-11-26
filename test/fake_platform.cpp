@@ -377,6 +377,22 @@ public:
         udp_.sent.push_back({ip, port, std::string(reinterpret_cast<const char*>(data), len)});
         return true;
     }
+    bool source(uint32_t to, uint32_t& ip, uint8_t mac[6]) override {
+        const UdpInterface* via = nullptr;
+        for (const UdpInterface& i : udp_.interfaces) {
+            if (i.ip && (i.ip & i.mask) == (to & i.mask)) {
+                via = &i;
+                break;
+            }
+        }
+        for (const UdpInterface& i : udp_.interfaces) {
+            if (!via && i.ip && i.route) via = &i;
+        }
+        if (!via) return false;
+        ip = via->ip;
+        memcpy(mac, via->mac, 6);
+        return true;
+    }
     bool listen(const char*, uint8_t, int8_t, uint32_t, tesserkit::UdpReceiver fn) override {
         if (udp_.listenFails) return false;
         udp_.listeners[port_] = std::move(fn);

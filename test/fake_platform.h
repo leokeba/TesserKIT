@@ -449,7 +449,17 @@ struct Datagram {
     std::string data;
 };
 
+// A network interface, for UdpSocket::source().
+struct UdpInterface {
+    uint32_t ip = 0, mask = 0;
+    uint8_t mac[6] = {};
+    bool route = false;  // the default route's
+};
+
 struct Udp : tesserkit::Udp {
+    // The interfaces, routed as lwIP does: the first whose subnet holds the
+    // destination, else the default route's. Empty: source() knows none.
+    std::vector<UdpInterface> interfaces;
     std::map<uint16_t, std::deque<Datagram>> inbox;  // by local port
     std::vector<Datagram> sent;
     std::map<uint16_t, bool> open_;  // ports with a socket
