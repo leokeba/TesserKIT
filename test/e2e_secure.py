@@ -25,19 +25,10 @@ import sys
 import time
 from urllib.parse import urlparse
 
-PASS = 0
-FAIL = 0
+import e2e_http as e2e
+from e2e_http import check
+
 ACCOUNT = {'name': 'e2e-secure', 'password': 'e2e-secure-pass', 'role': 'admin'}
-
-
-def check(name, ok, detail=''):
-    global PASS, FAIL
-    if ok:
-        PASS += 1
-        print(f'PASS {name}')
-    else:
-        FAIL += 1
-        print(f'FAIL {name}{": " + str(detail) if detail else ""}')
 
 
 class Device:
@@ -46,21 +37,28 @@ class Device:
         self.ip, self.port = u.hostname, u.port or 80
         self.token = ''
 
-    def request(self, method, path, body=None, headers=None, host=None):
-        """(status, text), with the Host header set as given (the address by default)."""
+    def request(self, method, path, body=None, headers=None, host=None, quiet=False):
+        """(status, text), with the Host header set as given (the address by
+        default); (None, '') when the device didn't answer, after a FAIL line
+        unless `quiet`."""
         c = http.client.HTTPConnection(self.ip, self.port, timeout=8)
-        c.putrequest(method, '/api' + path, skip_host=True)
-        c.putheader('Host', host or self.ip)
-        for k, v in (headers or {}).items():
-            c.putheader(k, v)
-        data = body.encode() if isinstance(body, str) else body
-        if data is not None:
-            c.putheader('Content-Length', str(len(data)))
-        c.endheaders(data)
-        r = c.getresponse()
-        text = r.read().decode(errors='replace')
-        c.close()
-        return r.status, text
+        try:
+            c.putrequest(method, '/api' + path, skip_host=True)
+            c.putheader('Host', host or self.ip)
+            for k, v in (headers or {}).items():
+                c.putheader(k, v)
+            data = body.encode() if isinstance(body, str) else body
+            if data is not None:
+                c.putheader('Content-Length', str(len(data)))
+            c.endheaders(data)
+            r = c.getresponse()
+            return r.status, r.read().decode(errors='replace')
+        except (OSError, http.client.HTTPException) as e:
+            if not quiet:
+                e2e.failed(method, path, e2e.describe(e))
+            return None, ''
+        finally:
+            c.close()
 
     def json(self, extra=None):
         h = {'Content-Type': 'application/json'}
@@ -70,8 +68,12 @@ class Device:
         return h
 
     def value(self, path, **kw):
-        s, t = self.request('GET', path, headers=self.json(), **kw)
-        return json.loads(t) if s == 200 and t else None
+        """The JSON of a 200 reply, else None: for polling."""
+        s, t = self.request('GET', path, headers=self.json(), quiet=True, **kw)
+        try:
+            return json.loads(t) if s == 200 and t else None
+        except ValueError:
+            return None
 
     def set(self, path, value, **kw):
         return self.request('POST', path, json.dumps(value), self.json(), **kw)[0]
@@ -87,6 +89,14 @@ class Device:
         return False
 
 
+def token(status, text):
+    """The token in a sign-in's reply, '' if there is none."""
+    try:
+        return json.loads(text).get('token', '') if status == 200 else ''
+    except (ValueError, AttributeError):
+        return ''
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
@@ -99,7 +109,7 @@ def main():
         time.sleep(2)  # its password hashed on the background task
         s, t = d.request('POST', '/sys/auth/login', json.dumps({k: ACCOUNT[k] for k in ('name', 'password')}),
                          d.json())
-        d.token = json.loads(t).get('token', '') if s == 200 else ''
+        d.token = token(s, t)
         check('signed in', bool(d.token), t)
         check('secure mode: no longer open', d.wait('/sys/auth/open', False))
         time.sleep(1.5)  # the device's loop switches the strict mode on
@@ -131,7 +141,7 @@ def main():
         check('a revoked token stops working', status in (401, 403), status)
         s, t = d.request('POST', '/sys/auth/login', json.dumps({k: ACCOUNT[k] for k in ('name', 'password')}),
                          {'Content-Type': 'application/json'})
-        d.token = json.loads(t).get('token', '') if s == 200 else ''
+        d.token = token(s, t)
         check('signed in again', bool(d.token), t)
     finally:
         # Open again, whatever failed.
@@ -143,8 +153,8 @@ def main():
     check('open: a set without JSON accepted', status == 200, status)
     status, _ = d.request('GET', '/sys/status/state', host='evil.example')
     check('open: any Host accepted', status == 200, status)
-    print(f'\n{PASS} passed, {FAIL} failed')
-    return 1 if FAIL else 0
+    print(f'\n{e2e.PASS} passed, {e2e.FAIL} failed')
+    return 1 if e2e.FAIL else 0
 
 
 if __name__ == '__main__':

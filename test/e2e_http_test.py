@@ -11,7 +11,6 @@ nothing naming the failure).
 import contextlib
 import http.server
 import io
-import json
 import os
 import socket
 import subprocess
@@ -202,7 +201,7 @@ class Scripts(unittest.TestCase):
     def assert_failed_cleanly(self, rc, out, path):
         self.assertNotEqual(rc, 0, out)
         self.assertNotIn('Traceback', out)
-        self.assertTrue(any(l.startswith('FAIL http ') and path in l for l in out.splitlines()), out)
+        self.assertTrue(any(line.startswith('FAIL http ') and path in line for line in out.splitlines()), out)
 
     def test_udp_gateway_restarting(self):
         # The first device answers its status reads, then stops answering

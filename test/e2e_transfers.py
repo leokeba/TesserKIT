@@ -31,23 +31,9 @@ import socket
 import struct
 import sys
 import time
-import urllib.error
-import urllib.request
 
-PASS = 0
-FAIL = 0
-
-
-def check(name, ok, detail=''):
-    global PASS, FAIL
-    if ok:
-        PASS += 1
-        print(f'PASS {name}')
-    else:
-        FAIL += 1
-        print(f'FAIL {name}: {detail}')
-    sys.stdout.flush()
-    return ok
+import e2e_http as e2e
+from e2e_http import check
 
 
 def b64(data):
@@ -59,11 +45,7 @@ class Http:
         self.base = base.rstrip('/')
 
     def get(self, path, timeout=5):
-        try:
-            with urllib.request.urlopen(self.base + '/api' + path, timeout=timeout) as r:
-                return json.loads(r.read() or b'null')
-        except (urllib.error.URLError, OSError, ValueError):
-            return None
+        return e2e.Device(self.base).value(path, timeout)
 
     def wait(self, pred, timeout, what):
         """Polls until pred() is true, printing progress; bounded."""
@@ -361,8 +343,8 @@ def main():
                                              'the peer under /peers')):
             return 1
         test_relay(dev, host, args.peer, args.peer_image or args.image)
-    print(f'E2E pass={PASS} fail={FAIL}')
-    return 1 if FAIL else 0
+    print(f'E2E pass={e2e.PASS} fail={e2e.FAIL}')
+    return 1 if e2e.FAIL else 0
 
 
 if __name__ == '__main__':

@@ -20,52 +20,23 @@ sacn-multicast sends to the universes' groups (239.255.0.x), out of the
 interface that reaches the device; the others are unicast to it.
 """
 import argparse
-import json
 import socket
 import struct
 import sys
 import threading
 import time
-import urllib.error
 import urllib.request
 
-PASS = 0
-FAIL = 0
+import e2e_http as e2e
+from e2e_http import check
+
 SYNC_UNIVERSE = 64000 - 1  # E1.31 universes go to 63999
 
 
-def check(name, ok, detail=''):
-    global PASS, FAIL
-    if ok:
-        PASS += 1
-        print(f'PASS {name}')
-    else:
-        FAIL += 1
-        print(f'FAIL {name}: {detail}')
-    return ok
-
-
-class Device:
+class Device(e2e.Device):
     def __init__(self, base):
-        self.base = base.rstrip('/')
-        self.host = self.base.split('://', 1)[1].split('/')[0].split(':')[0]
-
-    def request(self, method, path, body=None, timeout=10):
-        data = None if body is None else json.dumps(body).encode()
-        req = urllib.request.Request(self.base + '/api' + path, data=data, method=method)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                payload = r.read()
-                return r.status, json.loads(payload) if payload else None
-        except urllib.error.HTTPError as e:
-            return e.code, json.loads(e.read() or b'null')
-
-    def value(self, path):
-        try:
-            status, body = self.request('GET', path, timeout=5)
-        except (OSError, urllib.error.URLError):
-            return None
-        return body if status == 200 else None
+        super().__init__(base)
+        self.host = self.host.split(':')[0]
 
 
 def art_dmx(universe, seq, data):
@@ -278,8 +249,8 @@ def main():
         check('the page stayed served', ui.reads >= args.seconds * len(args.protocols.split(',')) * 0.8,
               f'{ui.reads} status reads, {ui.lines} notifications')
         print(f'  page: {ui.reads} status reads, {ui.lines} notifications')
-    print(f'DONE pass={PASS} fail={FAIL}')
-    sys.exit(1 if FAIL else 0)
+    print(f'DONE pass={e2e.PASS} fail={e2e.FAIL}')
+    sys.exit(1 if e2e.FAIL else 0)
 
 
 if __name__ == '__main__':

@@ -18,33 +18,22 @@ import socket
 import struct
 import sys
 import time
-import urllib.error
-import urllib.request
 
-PASS = 0
-FAIL = 0
+import e2e_http as e2e
+from e2e_http import check
+
 APP = '/led'  # the application's object, with `on` and `brightness`
 
 
-def check(name, ok, detail=''):
-    global PASS, FAIL
-    if ok:
-        PASS += 1
-        print(f'PASS {name}')
-    else:
-        FAIL += 1
-        print(f'FAIL {name}: {detail}')
-    return ok
-
-
-class Device:
+class Device(e2e.Device):
     def __init__(self, base):
-        self.base = base.rstrip('/')
-        self.host = self.base.split('://', 1)[1].split('/')[0]
-
-    token = None  # sent as Authorization: Bearer when set
+        super().__init__(base, timeout=20)
 
     def request(self, method, path, body=None, raw=False, headers=None, timeout=20):
+        """(status, headers, body) of `path` from the root (not under /api):
+        the payload as it is when `raw`, else JSON (an error's body that isn't
+        JSON comes back as it is). (None, {}, None, or b'' when `raw`) after a
+        FAIL line when there was no reply, or a 2xx reply that wasn't JSON."""
         headers = dict(headers or {})
         if self.token:
             headers['Authorization'] = 'Bearer ' + self.token
@@ -54,30 +43,25 @@ class Device:
             # A secure device refuses any other type of JSON body (DESIGN.md 7).
             if not isinstance(body, (bytes, bytearray)):
                 headers.setdefault('Content-Type', 'application/json')
-        req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                payload = r.read()
-                return r.status, r.headers, payload if raw else (json.loads(payload) if payload else None)
-        except urllib.error.HTTPError as e:
-            payload = e.read()
+            status, h, payload = e2e.fetch(self.base + path, method, data, headers, timeout)
+            if raw:
+                return status, h, payload
             try:
-                return e.code, e.headers, payload if raw else json.loads(payload)
-            except ValueError:
-                return e.code, e.headers, payload
+                return status, h, e2e.parse(payload)
+            except e2e.BadReply:
+                if status >= 400:
+                    return status, h, payload
+                raise
+        except (e2e.Unreachable, e2e.BadReply) as e:
+            e2e.failed(method, path, e)
+            return None, {}, b'' if raw else None
 
     def get(self, path, **kw):
         return self.request('GET', '/api' + path, **kw)
 
     def set(self, path, body=None, **kw):
         return self.request('POST', '/api' + path, body, **kw)
-
-    def value(self, path):
-        try:
-            status, _, body = self.get(path, timeout=5)
-        except (OSError, urllib.error.URLError):
-            return None  # restarting
-        return body if status == 200 else None
 
     def wait_restart(self, timeout=40):
         """Waits for the device to go away, then to answer again."""
@@ -97,20 +81,13 @@ class Device:
         return False
 
     def uptime(self):
-        try:
-            status, _, body = self.get('/sys/status/uptime', timeout=3)
-            return body if status == 200 else None
-        except (OSError, urllib.error.URLError):
-            return None
+        return self.value('/sys/status/uptime', timeout=3)
 
     def wait_online(self, timeout=60):
         start = time.time()
         while time.time() - start < timeout:
-            try:
-                if self.value('/sys/status/state') == 'online':
-                    return True
-            except (OSError, urllib.error.URLError):
-                pass
+            if self.value('/sys/status/state') == 'online':
+                return True
             time.sleep(1)
         return False
 
@@ -409,8 +386,8 @@ def main():
         test_update(d, image)
     if crash and (not only or 'test_crash_rollback' in only):
         test_crash_rollback(d, crash)
-    print(f'DONE pass={PASS} fail={FAIL}')
-    return 1 if FAIL else 0
+    print(f'DONE pass={e2e.PASS} fail={e2e.FAIL}')
+    return 1 if e2e.FAIL else 0
 
 
 if __name__ == '__main__':

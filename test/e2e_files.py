@@ -16,48 +16,26 @@ import os
 import socket
 import sys
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 
-PASS = 0
-FAIL = 0
+import e2e_http as e2e
+from e2e_http import check
 
 
-def check(name, ok, detail=''):
-    global PASS, FAIL
-    if ok:
-        PASS += 1
-        print(f'PASS {name}')
-    else:
-        FAIL += 1
-        print(f'FAIL {name}: {detail}')
-    return ok
-
-
-class Device:
+class Device(e2e.Device):
     def __init__(self, base):
-        self.base = base.rstrip('/')
-
-    token = None  # sent as Authorization: Bearer when set
+        super().__init__(base, timeout=20)
 
     def raw(self, method, path, data=None, timeout=20):
-        headers = {'Authorization': 'Bearer ' + self.token} if self.token else {}
-        req = urllib.request.Request(self.base + '/api' + path, data=data, method=method, headers=headers)
+        """(status, payload, headers); (None, b'', {}) after a FAIL line when
+        the device didn't answer."""
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.status, r.read(), dict(r.headers)
-        except urllib.error.HTTPError as e:
-            return e.code, e.read(), dict(e.headers)
-
-    def request(self, method, path, body=None, timeout=20):
-        data = None if body is None else json.dumps(body).encode()
-        status, payload, _ = self.raw(method, path, data, timeout)
-        return status, json.loads(payload) if payload else None
-
-    def value(self, path):
-        status, body = self.request('GET', path, timeout=5)
-        return body if status == 200 else None
+            status, headers, payload = self.exchange(method, path, data, timeout)
+            return status, payload, dict(headers)
+        except e2e.Unreachable as e:
+            e2e.failed(method, path, e)
+            return None, b'', {}
 
     def call(self, path, body=None):
         return self.request('POST', path, body)
@@ -66,15 +44,24 @@ class Device:
         if filename is not None:
             path += '?filename=' + urllib.parse.quote(filename)
         status, payload, _ = self.raw('PUT', path, data, timeout=60)
-        return status, json.loads(payload) if payload else None
+        try:
+            return status, e2e.parse(payload)
+        except e2e.BadReply as e:
+            e2e.failed('PUT', path, e)
+            return None, None
 
     # Sends only a PUT's headers, announcing `size` bytes; the status.
     def announce(self, path, size):
         host, _, port = self.base.split('://', 1)[1].partition(':')
-        with socket.create_connection((host, int(port or 80)), timeout=20) as sock:
-            auth = f'Authorization: Bearer {self.token}\r\n' if self.token else ''
-            sock.sendall(f'PUT /api{path} HTTP/1.1\r\nHost: {host}\r\n{auth}Content-Length: {size}\r\n\r\n'.encode())
-            head = sock.recv(1024).decode(errors='replace')
+        try:
+            with socket.create_connection((host, int(port or 80)), timeout=20) as sock:
+                auth = f'Authorization: Bearer {self.token}\r\n' if self.token else ''
+                sock.sendall(f'PUT /api{path} HTTP/1.1\r\nHost: {host}\r\n{auth}Content-Length: {size}\r\n\r\n'
+                             .encode())
+                head = sock.recv(1024).decode(errors='replace')
+        except OSError as e:
+            e2e.failed('PUT', path, e2e.describe(e))
+            return None
         return int(head.split(' ', 2)[1]) if head.startswith('HTTP/') else None
 
     def download(self, path):
@@ -213,8 +200,8 @@ def main():
         dev.token = body['token']
     test_files(dev)
     test_backups(dev)
-    print(f'DONE pass={PASS} fail={FAIL}')
-    sys.exit(1 if FAIL else 0)
+    print(f'DONE pass={e2e.PASS} fail={e2e.FAIL}')
+    sys.exit(1 if e2e.FAIL else 0)
 
 
 if __name__ == '__main__':

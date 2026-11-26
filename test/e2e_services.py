@@ -23,51 +23,12 @@ import struct
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 
-PASS = 0
-FAIL = 0
+import e2e_http as e2e
+from e2e_http import check
 
 
-def check(name, ok, detail=''):
-    global PASS, FAIL
-    if ok:
-        PASS += 1
-        print(f'PASS {name}')
-    else:
-        FAIL += 1
-        print(f'FAIL {name}: {detail}')
-    return ok
-
-
-class Device:
-    def __init__(self, base):
-        self.base = base.rstrip('/')
-        self.host = self.base.split('://', 1)[1].split('/')[0]
-
-    token = None  # sent as Authorization: Bearer when set
-
-    def request(self, method, path, body=None, timeout=10):
-        data = None if body is None else json.dumps(body).encode()
-        headers = {'Authorization': 'Bearer ' + self.token} if self.token else {}
-        req = urllib.request.Request(self.base + '/api' + path, data=data, method=method, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                payload = r.read()
-                return r.status, json.loads(payload) if payload else None
-        except urllib.error.HTTPError as e:
-            return e.code, json.loads(e.read() or b'null')
-
-    def value(self, path):
-        try:
-            status, body = self.request('GET', path, timeout=5)
-        except (OSError, urllib.error.URLError):
-            return None  # restarting
-        return body if status == 200 else None
-
-    def set(self, path, body):
-        return self.request('POST', path, body)[0]
+Device = e2e.Device
 
 
 def wait_for(fn, timeout=5.0, step=0.1):
@@ -279,8 +240,8 @@ def main():
             test_mqtt(dev, host, int(port or 1883))
         else:
             print('SKIP mqtt: no --broker')
-    print(f'DONE pass={PASS} fail={FAIL}')
-    sys.exit(1 if FAIL else 0)
+    print(f'DONE pass={e2e.PASS} fail={e2e.FAIL}')
+    sys.exit(1 if e2e.FAIL else 0)
 
 
 if __name__ == '__main__':

@@ -19,60 +19,20 @@ same network as this machine, whose DHCP server gives it the address above.
 Every wait is bounded and prints what it saw when it gives up.
 """
 import argparse
-import json
 import socket
 import sys
 import time
-import urllib.error
-import urllib.request
 
-PASS = 0
-FAIL = 0
+import e2e_http as e2e
+from e2e_http import check
 
 
-def check(name, ok, detail=''):
-    global PASS, FAIL
-    if ok:
-        PASS += 1
-        print(f'PASS {name}')
-    else:
-        FAIL += 1
-        print(f'FAIL {name}: {detail}')
-    return ok
-
-
-class Device:
-    token = None  # sent as Authorization: Bearer when set
-
+class Device(e2e.Device):
     def __init__(self, base):
-        self.base = base.rstrip('/')
+        super().__init__(base, timeout=5)
 
     def at(self, ip):
         self.base = 'http://' + ip
-
-    def request(self, method, path, body=None, timeout=5):
-        data = None if body is None else json.dumps(body).encode()
-        headers = {'Authorization': 'Bearer ' + self.token} if self.token else {}
-        req = urllib.request.Request(self.base + '/api' + path, data=data, method=method, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                payload = r.read()
-                return r.status, json.loads(payload) if payload else None
-        except urllib.error.HTTPError as e:
-            return e.code, json.loads(e.read() or b'null')
-
-    def value(self, path):
-        try:
-            status, body = self.request('GET', path)
-        except (OSError, urllib.error.URLError):
-            return None  # unreachable, or restarting
-        return body if status == 200 else None
-
-    def set(self, path, body=None):
-        try:
-            return self.request('POST', path, body)[0]
-        except (OSError, urllib.error.URLError):
-            return None
 
 
 def wait_for(what, fn, timeout=30.0, step=1.0):
@@ -186,8 +146,8 @@ def main():
                                 d.value('/sys/network/wifi/status')), timeout=10)
             check('station_leaves', wifi)
 
-    print(f'\n{PASS} passed, {FAIL} failed')
-    return 1 if FAIL else 0
+    print(f'\n{e2e.PASS} passed, {e2e.FAIL} failed')
+    return 1 if e2e.FAIL else 0
 
 
 if __name__ == '__main__':
