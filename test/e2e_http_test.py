@@ -11,8 +11,10 @@ nothing naming the failure).
 import contextlib
 import http.server
 import io
+import json
 import os
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -76,6 +78,151 @@ class Server(http.server.ThreadingHTTPServer):
         self.release.set()
         self.shutdown()
         self.server_close()
+
+
+class ArtNetServer(http.server.ThreadingHTTPServer):
+    """A Tesser device for host runs of test/e2e_services.py's Art-Net checks:
+    the HTTP surface the script reads, and an Art-Net node on port 6454 that
+    maps universe 0 as examples/idf/full does (channel 1 dims /led/brightness,
+    channel 2 at 128 or above switches /led/on) and answers Art-Poll.
+
+    The script binds its own socket to every address on the Art-Net port;
+    while this server holds the exact 127.0.0.1 binding, a reply addressed
+    there is delivered to it rather than to that wildcard socket, so a poll
+    reply goes out from an unbound socket just after letting go of the
+    binding (which comes back for the next packet).
+    """
+
+    daemon_threads = True
+    NAME = 'fake-tesser'
+
+    def __init__(self):
+        super().__init__(('127.0.0.1', 0), self.Handler)
+        self.lock = threading.Lock()
+        self.brightness = 128
+        self.on = False
+        self.packets = 0
+        self.universe = 0
+        self.last_frame = None
+        self.stopped = False
+        self.udp_failed = False
+        self.http_thread = threading.Thread(target=self.serve_forever, daemon=True)
+        self.http_thread.start()
+        self.udp_thread = threading.Thread(target=self._udp, daemon=True)
+        self.udp_thread.start()
+
+    @property
+    def url(self):
+        return f'http://127.0.0.1:{self.server_address[1]}'
+
+    def stop(self):
+        self.stopped = True
+        self.shutdown()
+        self.server_close()
+        self.http_thread.join(1)
+        self.udp_thread.join(1)
+
+    # ---- Art-Net on 6454 --------------------------------------------------
+
+    def _udp(self):
+        while not self.stopped:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(('127.0.0.1', 6454))
+            except OSError:
+                self.udp_failed = True
+                return
+            s.settimeout(0.2)
+            while not self.stopped:
+                try:
+                    data, addr = s.recvfrom(640)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+                if not self._handle(data, addr, s):
+                    break  # a poll reply closed s; rebind below
+            s.close()
+
+    def _handle(self, data, addr, s):
+        """One datagram. False when it closed `s` (a poll reply)."""
+        if len(data) < 12 or data[:8] != b'Art-Net\0':
+            return True
+        op = struct.unpack('<H', data[8:10])[0]
+        if op == 0x5000:  # Art-DMX
+            if len(data) < 18:
+                return True
+            universe = data[14] | (data[15] & 0x7F) << 8
+            n = min(data[16] << 8 | data[17], len(data) - 18, 512)
+            with self.lock:
+                self.packets += 1
+                self.universe = universe
+                self.last_frame = time.time()
+                if universe == 0 and n >= 2:
+                    self.brightness = data[18]
+                    self.on = data[19] >= 128
+            return True
+        if op != 0x2000:  # Art-Poll
+            return True
+        s.close()
+        reply = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            reply.sendto(self._poll_reply(), addr)
+        finally:
+            reply.close()
+        return False
+
+    @staticmethod
+    def _poll_reply():
+        r = bytearray(239)
+        r[0:8] = b'Art-Net\0'
+        r[8:10] = struct.pack('<H', 0x2100)
+        r[10:14] = socket.inet_aton('127.0.0.1')
+        for at in (26, 44):  # short and long name, NUL padded
+            r[at:at + len(ArtNetServer.NAME)] = ArtNetServer.NAME.encode()
+        return bytes(r)
+
+    # ---- HTTP ---------------------------------------------------------------
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+
+        def log_message(self, *args):
+            pass
+
+        def answer(self):
+            n = int(self.headers.get('Content-Length') or 0)
+            if n:
+                self.rfile.read(n)
+            path = self.path[len('/api'):] if self.path.startswith('/api') else self.path
+            dev = self.server
+            status = 200
+            with dev.lock:
+                if path == '/sys/auth/open':
+                    body = b'true'
+                elif path == '/led':
+                    body = json.dumps({'brightness': dev.brightness, 'on': dev.on}).encode()
+                elif path == '/sys/artnet/status/packets':
+                    body = str(dev.packets).encode()
+                elif path == '/sys/artnet/status':
+                    age = -1 if dev.last_frame is None else int(time.time() - dev.last_frame)
+                    body = json.dumps({'packets': dev.packets, 'universe': dev.universe,
+                                       'age': age, 'received': dev.last_frame is not None}).encode()
+                elif path == '/sys/name':
+                    body = b'""'
+                elif path == '/sys/network/host':
+                    body = json.dumps(ArtNetServer.NAME).encode()
+                else:
+                    body = b'{"error": "not_found"}'
+                    status = 404
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = answer
 
 
 def dead_url():
@@ -221,6 +368,26 @@ class Scripts(unittest.TestCase):
             b.stop()
         self.assert_failed_cleanly(rc, out, '/sys/udp/send')
         self.assertIn('DONE pass=', out)  # it went on to the end
+
+    def test_services_artnet_url_with_port(self):
+        # A URL with an explicit port: Device.host kept it, and the Art-Net
+        # sends died on a gaierror before any check ran.
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(('127.0.0.1', 6454))
+        except OSError:
+            self.skipTest('port 6454 is in use')
+        finally:
+            probe.close()
+        s = ArtNetServer()
+        try:
+            rc, out = self.run_script('e2e_services.py', s.url, '--only', 'artnet')
+        finally:
+            s.stop()
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn('Traceback', out)
+        self.assertIn('DONE pass=8 fail=0', out)
 
     def test_power_error_body(self):
         # e2e_power.py died on json.loads of an HTTP error's body.
