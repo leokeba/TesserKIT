@@ -28,7 +28,10 @@ import e2e_http as e2e
 from e2e_http import check
 
 
-Device = e2e.Device
+class Device(e2e.Device):
+    def __init__(self, base):
+        super().__init__(base)
+        self.host = self.host.split(':')[0]
 
 
 def wait_for(fn, timeout=5.0, step=0.1):
