@@ -30,6 +30,12 @@ need, and print a SKIP line saying what is missing otherwise:
     and psram profiles): true, or test/e2e_dmx.py's options as {"universes":
     24, "fps": 44, "seconds": 20, "protocols": "artnet,sacn", "spread": true,
     "noUi": true}. This machine is the sender.
+The ethernet suite expects a DHCP server on the board's cable, and its
+"staticIp" adds the static checks. A cable without one (two boards cabled
+to each other, or to a computer) is "linkLocal" on the ethernet board: true,
+or the name of the board at the cable's other end, whose Ethernet is then
+checked with it (test/e2e_ethernet.py --link-local --peer). Its "url" is
+then the station's address: this machine reaches it over Wi-Fi.
 Waits are bounded; every step prints what it saw. Exit status: 0 when every
 suite passed and no board fell below the floor.
 """
@@ -225,6 +231,10 @@ def main():
     # A board may hold several roles ("role": ["gateway", "ethernet"]) when
     # fewer boards are plugged in.
     by_role = {r: b for b in boards for r in ([b['role']] if isinstance(b['role'], str) else b['role'])}
+    for b in boards:
+        ll = b.get('linkLocal')
+        if isinstance(ll, str) and not any(o['name'] == ll and o is not b for o in boards):
+            sys.exit(f"{b['name']}: linkLocal names {ll!r}, not another board of the boards file")
 
     log('== siblings (deps.lock)')
     siblings = fetch_siblings(work)
@@ -262,7 +272,12 @@ def main():
         suite('secure', ['test/e2e_secure.py', gw['url']], boards, floors, work)
     if eth and want('ethernet'):
         cmd = ['test/e2e_ethernet.py', eth['url']]
-        if eth.get('staticIp'):
+        ll = eth.get('linkLocal')
+        if ll:
+            cmd += ['--link-local']
+            if isinstance(ll, str):
+                cmd += ['--peer', next(b for b in boards if b['name'] == ll)['url']]
+        elif eth.get('staticIp'):
             cmd += ['--static', eth['staticIp']]
         suite('ethernet', cmd, boards, floors, work)
     if gw and peer and want('transfers'):
