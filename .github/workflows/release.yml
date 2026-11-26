@@ -129,17 +129,16 @@ jobs:
   # Bluetooth or the network, with no interface of their own needed, and
   # firmware installed over USB (section 9.7.1). After the release, which it
   # offers; deployed even when the release failed, with the releases there are.
-  pages:
+  # Built in one job and deployed from another: since 2026-11-22 GitHub's
+  # artifact lookup often misses an artifact finalized a second earlier
+  # (actions/deploy-pages#451), and a re-run of a job that uploads too
+  # finds two and refuses. A re-run of `pages` only deploys again.
+  pages-site:
     needs: [host-tests, firmware]
     if: ${{ !cancelled() && needs.host-tests.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
       - id: pins
@@ -173,5 +172,24 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
+
+  pages:
+    needs: pages-site
+    if: ${{ !cancelled() && needs.pages-site.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url || steps.again.outputs.page_url }}
+    steps:
       - id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+      # The lookup has been measured missing an artifact for over 5 s.
+      - if: steps.deploy.outcome == 'failure'
+        run: sleep 30
+      - id: again
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@v4
