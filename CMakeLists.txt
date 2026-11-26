@@ -211,4 +211,9 @@ if(TESSERKIT_BUILD_TESTS)
     # Checks that the generator runs cleanly; the committed fixtures are
     # regenerated with `./build/tesserkit_fixtures fixtures`.
     add_test(NAME tesserkit_fixtures COMMAND tesserkit_fixtures ${CMAKE_CURRENT_BINARY_DIR}/fixtures)
+    # The e2e scripts' HTTP helpers, against fake devices: no board.
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME e2e_http COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/e2e_http_test.py)
+    endif()
 endif()

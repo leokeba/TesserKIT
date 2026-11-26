@@ -13,49 +13,16 @@ the others through /peers. The LEDs are left off.
 import json
 import sys
 import time
-import urllib.error
-import urllib.request
 
-PASS = 0
-FAIL = 0
+import e2e_http as e2e
+from e2e_http import check
 
 
-def check(name, ok, detail=''):
-    global PASS, FAIL
-    if ok:
-        PASS += 1
-        print(f'PASS {name}')
-    else:
-        FAIL += 1
-        print(f'FAIL {name}: {detail}')
-    return ok
-
-
-class Device:
+class Device(e2e.Device):
     def __init__(self, base):
-        self.base = base.rstrip('/')
-        self.host = self.base.split('://', 1)[1].split('/')[0].split(':')[0]
+        super().__init__(base)
+        self.host = self.host.split(':')[0]
         self.name = None
-
-    def request(self, method, path, body=None, timeout=10):
-        data = None if body is None else json.dumps(body).encode()
-        req = urllib.request.Request(self.base + '/api' + path, data=data, method=method)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                payload = r.read()
-                return r.status, json.loads(payload) if payload else None
-        except urllib.error.HTTPError as e:
-            return e.code, json.loads(e.read() or b'null')
-
-    def value(self, path):
-        try:
-            status, body = self.request('GET', path, timeout=5)
-        except (OSError, urllib.error.URLError):
-            return None
-        return body if status == 200 else None
-
-    def set(self, path, body):
-        return self.request('POST', path, body)[0]
 
     def send(self, path, value, to=''):
         return self.request('POST', '/sys/udp/send', {'path': path, 'value': json.dumps(value), 'to': to})
@@ -137,8 +104,8 @@ def main():
         d.set('/led/on', False)
         st = d.value('/sys/udp/status')
         check(f'nothing_failed_{d.name}', st and st['failed'] == d.failed_before, st)
-    print(f'DONE pass={PASS} fail={FAIL}')
-    sys.exit(1 if FAIL else 0)
+    print(f'DONE pass={e2e.PASS} fail={e2e.FAIL}')
+    sys.exit(1 if e2e.FAIL else 0)
 
 
 if __name__ == '__main__':

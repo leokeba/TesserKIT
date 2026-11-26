@@ -18,56 +18,10 @@ import socket
 import sys
 import threading
 import time
-import urllib.error
 import urllib.request
 
-PASS = 0
-FAIL = 0
-
-
-def check(name, ok, detail=''):
-    global PASS, FAIL
-    if ok:
-        PASS += 1
-        print(f'PASS {name}')
-    else:
-        FAIL += 1
-        print(f'FAIL {name}: {detail}')
-    return ok
-
-
-class Device:
-    def __init__(self, base):
-        self.base = base.rstrip('/')
-        self.host = self.base.split('://', 1)[1].split('/')[0]
-
-    token = None
-
-    def headers(self):
-        return {'Authorization': 'Bearer ' + self.token} if self.token else {}
-
-    def request(self, method, path, body=None, timeout=10):
-        data = None if body is None else json.dumps(body).encode()
-        req = urllib.request.Request(self.base + '/api' + path, data=data, method=method, headers=self.headers())
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                payload = r.read()
-                ctype = r.headers.get('Content-Type', '')
-                if payload and 'json' in ctype:
-                    return r.status, json.loads(payload)
-                return r.status, payload.decode(errors='replace') if payload else None
-        except urllib.error.HTTPError as e:
-            return e.code, json.loads(e.read() or b'null')
-
-    def value(self, path):
-        try:
-            status, body = self.request('GET', path, timeout=5)
-        except (OSError, urllib.error.URLError):
-            return None  # asleep or restarting
-        return body if status == 200 else None
-
-    def set(self, path, body):
-        return self.request('POST', path, body)[0]
+import e2e_http as e2e
+from e2e_http import check
 
 
 def wait_for(fn, timeout=5.0, step=0.2):
@@ -88,7 +42,12 @@ class Stream:
         self.lock = threading.Lock()
         url = dev.base + '/api' + path + '?sub&changes=false&snapshot=false&interval=60000'
         req = urllib.request.Request(url, headers=dev.headers())
-        self.resp = urllib.request.urlopen(req, timeout=30)
+        try:
+            self.resp = urllib.request.urlopen(req, timeout=30)
+        except OSError as e:  # HTTPError and URLError too: no events, the checks fail
+            self.resp = None
+            e2e.failed('GET', path + '?sub', e2e.describe(e))
+            return
         threading.Thread(target=self.read, daemon=True).start()
 
     def read(self):
@@ -111,7 +70,8 @@ class Stream:
 
     def close(self):
         try:
-            self.resp.close()
+            if self.resp:
+                self.resp.close()
         except OSError:
             pass
 
@@ -308,7 +268,7 @@ def main():
     ap.add_argument('--user')
     ap.add_argument('--password')
     args = ap.parse_args()
-    dev = Device(args.base)
+    dev = e2e.Device(args.base)
     if args.user:
         status, body = dev.request('POST', '/sys/auth/login', {'name': args.user, 'password': args.password})
         if status != 200:
@@ -330,8 +290,8 @@ def main():
         print('SKIP battery: no /sys/battery (build with -DBATTERY_GPIO=<n>)')
     if args.only in (None, 'sleep'):
         test_sleep(dev)
-    print(f'DONE pass={PASS} fail={FAIL}')
-    sys.exit(1 if FAIL else 0)
+    print(f'DONE pass={e2e.PASS} fail={e2e.FAIL}')
+    sys.exit(1 if e2e.FAIL else 0)
 
 
 if __name__ == '__main__':
