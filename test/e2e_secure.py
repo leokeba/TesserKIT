@@ -101,8 +101,10 @@ def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     d = Device(sys.argv[1])
-    if d.value('/sys/auth/open') is not True:
-        sys.exit('the device must be open (no admin account) to start')
+    is_open = d.value('/sys/auth/open')
+    if is_open is not True:
+        check('device open to start', False, 'not answering' if is_open is None else 'it has an admin account')
+        return 1
     host = d.value('/sys/network/host') or ''
     try:
         check('an admin account added', d.set('/sys/auth/users', [ACCOUNT]) == 200)

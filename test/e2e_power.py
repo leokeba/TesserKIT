@@ -272,10 +272,12 @@ def main():
     if args.user:
         status, body = dev.request('POST', '/sys/auth/login', {'name': args.user, 'password': args.password})
         if status != 200:
-            sys.exit(f'sign-in failed: {status} {body}')
+            check('sign-in', False, (status, body))
+            sys.exit(1)
         dev.token = body if isinstance(body, str) else body.get('token')
     if not dev.value('/sys/status'):
-        sys.exit(f'no device at {args.base}')
+        check('device answers', False, f'no device at {args.base}')
+        sys.exit(1)
     if args.only in (None, 'log'):
         test_log(dev)
     if args.only in (None, 'discovery'):

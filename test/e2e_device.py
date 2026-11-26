@@ -375,7 +375,7 @@ def main():
         APP = args[args.index('--app') + 1]
     d = Device(args[0])
     if not d.wait_online():
-        print('device not online')
+        check('device online', False, f'nothing online at {d.base}')
         return 1
     tests = [test_status, test_ui, test_websocket, test_scan, test_time, test_coredump, test_backup, test_bad_image,
              test_auth, test_timers, test_persistence]
