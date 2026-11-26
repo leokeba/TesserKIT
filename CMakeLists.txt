@@ -215,5 +215,7 @@ if(TESSERKIT_BUILD_TESTS)
     find_package(Python3 COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
         add_test(NAME e2e_http COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/e2e_http_test.py)
+        # hil.py's broker probe and its SKIP lines, against fake brokers: no board.
+        add_test(NAME hil COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/hil_test.py)
     endif()
 endif()

@@ -22,7 +22,9 @@ The services, power and dmx suites run when the boards file has what they
 need, and print a SKIP line saying what is missing otherwise:
   - "broker": "<host>[:port]", an anonymous MQTT broker (`uvx --from amqtt
     amqtt`) at an address both this machine and the boards reach: MQTT in
-    services (Art-Net runs without it), Home Assistant discovery in power;
+    services (Art-Net runs without it), Home Assistant discovery in power.
+    hil sends it an MQTT CONNECT first and, without a CONNACK, skips those
+    parts with a line instead of failing them;
   - power runs Log and Sleep on the board with the role "power", else the
     gateway; that board's "battery": true (its build has -DBATTERY_GPIO=<n>)
     adds the battery checks;
@@ -41,6 +43,7 @@ suite passed and no board fell below the floor.
 """
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -149,6 +152,53 @@ def status(board, timeout=3):
             return json.loads(r.read())
     except Exception:
         return None
+
+
+def _recv_exact(s, n):
+    """n bytes, or None when the connection ends short of them."""
+    buf = b''
+    while len(buf) < n:
+        chunk = s.recv(n - len(buf))
+        if not chunk:
+            return None
+        buf += chunk
+    return buf
+
+
+def broker_reachable(broker, timeout=5):
+    """(ok, why): True only when the broker answers an MQTT CONNECT.
+
+    A TCP connect alone would accept a port held by something else, or a
+    broker that hangs before answering. Stdlib only, so ctest needs no paho."""
+    host, sep, port = broker.rpartition(':')
+    if not sep:
+        host, port = broker, '1883'
+    try:
+        s = socket.create_connection((host, int(port)), timeout=timeout)
+    except (socket.timeout, TimeoutError):
+        return False, f'timed out after {timeout} s'
+    except ValueError as e:
+        return False, f'bad broker address {broker!r}: {e}'
+    except OSError as e:
+        return False, f'{type(e).__name__}: {e}'
+    try:
+        # CONNECT: protocol MQTT 3.1.1, clean session, keepalive 60 s.
+        s.sendall(b'\x10\x19\x00\x04MQTT\x04\x02\x00\x3c\x00\x0dtesserkit-hil')
+        connack = _recv_exact(s, 4)
+    except (socket.timeout, TimeoutError):
+        return False, f'timed out after {timeout} s'
+    except OSError as e:
+        return False, f'{type(e).__name__}: {e}'
+    finally:
+        s.close()
+    if connack is None:
+        return False, 'no CONNACK (the connection ended)'
+    if connack[:2] != b'\x20\x02':
+        return False, f'unexpected reply {connack.hex()}'
+    rc = connack[3]
+    if rc:
+        return False, f'refused (CONNACK code {rc})'
+    return True, ''
 
 
 def wait_up(boards, settle):
@@ -293,11 +343,20 @@ def main():
     if len(boards) >= 2 and want('udp'):
         suite('udp', ['test/e2e_udp.py'] + [b['url'] for b in boards], boards, floors, work)
     broker = cfg.get('broker')
+    # Without a broker answering, the MQTT parts would fail on reconnect
+    # loops: skip them with a line instead.
+    if broker and (want('services') or want('power')):
+        ok, why = broker_reachable(broker)
+        if not ok:
+            log(f'broker {broker} unreachable ({why})')
+            broker = None
     # Art-Net needs nothing but the gateway; MQTT a broker.
     if gw and want('services'):
         cmd = ['test/e2e_services.py', gw['url']]
         if broker:
             cmd += ['--broker', broker]
+        elif cfg.get('broker'):
+            log(f'SKIP services/mqtt: broker {cfg["broker"]} unreachable (see above)')
         else:
             log('SKIP services/mqtt: no "broker" in the boards file')
         suite('services', cmd, boards, floors, work)
@@ -308,6 +367,8 @@ def main():
         cmd = ['test/e2e_power.py', power['url']]
         if broker:
             cmd += ['--broker', broker]
+        elif cfg.get('broker'):
+            log(f'SKIP power/discovery: broker {cfg["broker"]} unreachable (see above)')
         else:
             log('SKIP power/discovery: no "broker" in the boards file')
         if power.get('battery'):
