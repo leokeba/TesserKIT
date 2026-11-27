@@ -27,7 +27,7 @@ import threading
 import time
 
 import e2e_http as e2e
-from e2e_http import check, mqtt_begin, mqtt_end
+from e2e_http import check, field, mqtt_begin, mqtt_end
 
 
 def wait_for(fn, timeout=5.0, step=0.1):
@@ -58,31 +58,34 @@ def test_artnet(dev):
     sock.bind(('', 6454))  # replies come to the Art-Net port
     sock.settimeout(2)
     target = (dev.host, 6454)
-    before = dev.value('/sys/artnet/status/packets') or 0
+    raw = dev.value('/sys/artnet/status/packets')
+    before = raw if isinstance(raw, (int, float)) else 0
 
     sock.sendto(art_dmx(0, [100, 200]), target)
-    led = wait_for(lambda: (lambda v: v if v and v['brightness'] == 100 else None)(dev.value('/led')))
-    check('artnet_channel_to_brightness', led and led['brightness'] == 100, led)
-    check('artnet_gate_on', led and led['on'] is True, led)
+    led = wait_for(lambda: (lambda v: v if field(v, 'brightness') == 100 else None)(dev.value('/led')))
+    check('artnet_channel_to_brightness', field(led, 'brightness') == 100, led)
+    check('artnet_gate_on', field(led, 'on') is True, led)
 
     sock.sendto(art_dmx(0, [37, 10]), target)
-    led = wait_for(lambda: (lambda v: v if v and not v['on'] else None)(dev.value('/led')))
-    check('artnet_gate_off', led and led['on'] is False and led['brightness'] == 37, led)
+    led = wait_for(lambda: (lambda v: v if v and not field(v, 'on') else None)(dev.value('/led')))
+    check('artnet_gate_off', field(led, 'on') is False and field(led, 'brightness') == 37, led)
 
     sock.sendto(art_dmx(5, [250, 250]), target)  # another universe
     time.sleep(0.5)
     led = dev.value('/led')
-    check('artnet_other_universe_ignored', led and led['brightness'] == 37, led)
+    check('artnet_other_universe_ignored', field(led, 'brightness') == 37, led)
     st = dev.value('/sys/artnet/status')
-    check('artnet_status', st and st['packets'] >= before + 3 and st['universe'] == 5 and st['age'] >= 0, st)
+    pkts, uni, age = field(st, 'packets'), field(st, 'universe'), field(st, 'age')
+    check('artnet_status', isinstance(pkts, (int, float)) and pkts >= before + 3 and uni == 5
+          and isinstance(age, (int, float)) and age >= 0, st)
 
     # A stream at 40 frames a second, as a console sends.
     t0 = time.time()
     for i in range(80):
         sock.sendto(art_dmx(0, [i + 1, 255], sequence=i % 255 + 1), target)
         time.sleep(0.025)
-    led = wait_for(lambda: (lambda v: v if v and v['brightness'] == 80 else None)(dev.value('/led')))
-    check('artnet_stream_last_value', led and led['brightness'] == 80 and led['on'], led)
+    led = wait_for(lambda: (lambda v: v if field(v, 'brightness') == 80 else None)(dev.value('/led')))
+    check('artnet_stream_last_value', field(led, 'brightness') == 80 and field(led, 'on'), led)
     print(f'     ({80 / (time.time() - t0):.0f} frames/s sent)')
 
     sock.sendto(art_poll(), target)
@@ -153,14 +156,14 @@ def test_mqtt(dev, host, port):
     ip = socket.gethostbyname(host)
     uri = f'mqtt://{ip}:{port}'
     token = mqtt_begin(dev, uri, ours=(uri, f'mqtt://{host}:{port}', f'mqtt://{host}'))
-    st = wait_for(lambda: (lambda v: v if v and v['connected'] else None)(dev.value('/sys/mqtt/status')), 15)
-    check('mqtt_connected', st and st['connected'], st)
+    st = wait_for(lambda: (lambda v: v if field(v, 'connected') else None)(dev.value('/sys/mqtt/status')), 15)
+    check('mqtt_connected', field(st, 'connected'), st)
 
     b = Broker(host, port)
     b.subscribe(pre + '/#')
     check('mqtt_online_retained', b.wait(pre + '/status', 'online') == 'online', b.last(pre + '/status'))
     led = dev.value('/led')
-    check('mqtt_leaves_retained', b.wait(pre + '/led/brightness') == str(led['brightness']),
+    check('mqtt_leaves_retained', b.wait(pre + '/led/brightness') == str(field(led, 'brightness')),
           (b.last(pre + '/led/brightness'), led))
     check('mqtt_status_published', b.wait(pre + '/sys/status/state') == '"online"', b.last(pre + '/sys/status/state'))
 
@@ -172,12 +175,12 @@ def test_mqtt(dev, host, port):
     b.publish(pre + '/led/brightness/set', '42')
     result = b.wait(pre + '/led/brightness/result', since=t)
     check('mqtt_command_result', result and json.loads(result)['status'] == 'ok', result)
-    check('mqtt_command_applied', wait_for(lambda: (dev.value('/led') or {}).get('brightness') == 42), dev.value('/led'))
+    check('mqtt_command_applied', wait_for(lambda: field(dev.value('/led'), 'brightness') == 42), dev.value('/led'))
 
     t = time.time()
     b.publish(pre + '/led/on/set', 'false')
     b.wait(pre + '/led/on/result', since=t)
-    check('mqtt_command_boolean', (dev.value('/led') or {}).get('on') is False, dev.value('/led'))
+    check('mqtt_command_boolean', field(dev.value('/led'), 'on') is False, dev.value('/led'))
 
     t = time.time()
     b.publish(pre + '/sys/mqtt/enabled/set', 'false')

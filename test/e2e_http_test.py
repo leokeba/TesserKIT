@@ -399,6 +399,23 @@ class Scripts(unittest.TestCase):
         self.assertNotIn('Traceback', out)
         self.assertTrue(any(line.startswith('FAIL http ') and path in line for line in out.splitlines()), out)
 
+    def assert_clean_failure(self, rc, out):
+        """A broken device: non-zero exit, FAIL lines naming what broke, no traceback."""
+        self.assertNotEqual(rc, 0, out)
+        self.assertNotIn('Traceback', out)
+        self.assertTrue(any(line.startswith('FAIL ') for line in out.splitlines()), out)
+
+    def skip_if_artnet_port_busy(self):
+        # e2e_services.py binds the Art-Net port on every address.
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(('127.0.0.1', 6454))
+        except OSError:
+            self.skipTest('port 6454 is in use')
+        finally:
+            probe.close()
+
     def test_udp_gateway_restarting(self):
         # The first device answers its status reads, then stops answering
         # writes (it is restarting): its sends time out.
@@ -703,6 +720,64 @@ class Scripts(unittest.TestCase):
         self.assertNotIn('Traceback', out)
         self.assertIn('E2E pass=', out)  # it went on to the end
         self.assertIn('FAIL relay: websocket', out)
+
+    # e2e_power.py and e2e_services.py against a dead device, one that answers
+    # HTML on every route, and one that closes every connection: each run must
+    # end with FAIL lines, never a traceback (a missing value fails its check
+    # and the script goes on to the next one).
+
+    def test_power_dead(self):
+        rc, out = self.run_script('e2e_power.py', dead_url())
+        self.assert_clean_failure(rc, out)
+        self.assertIn('FAIL device answers', out)
+
+    def test_power_html(self):
+        # 200 with a non-JSON content type: value() hands the HTML page to the
+        # checks as a string; they must fail on it, not crash.
+        s = Server(default=(200, 'text/html', b'<html>Internal error</html>'))
+        try:
+            rc, out = self.run_script('e2e_power.py', s.url)
+        finally:
+            s.stop()
+        self.assert_clean_failure(rc, out)
+        self.assertIn('FAIL log_level', out)
+        self.assertIn('FAIL sleep_reset_reason', out)  # it went on past test_log
+        self.assertIn('DONE pass=', out)
+
+    def test_power_close(self):
+        s = Server(default='close')
+        try:
+            rc, out = self.run_script('e2e_power.py', s.url)
+        finally:
+            s.stop()
+        self.assert_clean_failure(rc, out)
+        self.assertIn('FAIL device answers', out)
+
+    def test_services_dead(self):
+        self.skip_if_artnet_port_busy()
+        rc, out = self.run_script('e2e_services.py', dead_url(), '--only', 'artnet')
+        self.assert_clean_failure(rc, out)
+        self.assertIn('DONE pass=0 fail=7', out)
+
+    def test_services_html(self):
+        self.skip_if_artnet_port_busy()
+        s = Server(default=(200, 'text/html', b'<html>Internal error</html>'))
+        try:
+            rc, out = self.run_script('e2e_services.py', s.url, '--only', 'artnet')
+        finally:
+            s.stop()
+        self.assert_clean_failure(rc, out)
+        self.assertIn('DONE pass=0 fail=7', out)
+
+    def test_services_close(self):
+        self.skip_if_artnet_port_busy()
+        s = Server(default='close')
+        try:
+            rc, out = self.run_script('e2e_services.py', s.url, '--only', 'artnet')
+        finally:
+            s.stop()
+        self.assert_clean_failure(rc, out)
+        self.assertIn('DONE pass=0 fail=7', out)
 
 class MqttFake(http.server.ThreadingHTTPServer):
     """A device's /sys/mqtt with mutable settings, for mqtt_begin/mqtt_end:

@@ -90,6 +90,13 @@ def decode(headers, payload):
     return parse(payload)
 
 
+def field(v, key):
+    """v[key] when v is a dict with the key; None when the reply was missing
+    or garbled (a string body, say) or the key isn't there: the check that
+    used it fails, and the script goes on."""
+    return v.get(key) if isinstance(v, dict) else None
+
+
 def failed(method, path, error):
     check(f'http {method} {path}', False, error)
 

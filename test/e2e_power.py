@@ -23,7 +23,7 @@ import time
 import urllib.request
 
 import e2e_http as e2e
-from e2e_http import check, mqtt_begin, mqtt_end
+from e2e_http import check, field, mqtt_begin, mqtt_end
 
 
 def wait_for(fn, timeout=5.0, step=0.2):
@@ -114,7 +114,7 @@ class Broker:
 
 def test_log(dev):
     log = dev.value('/sys/log')
-    check('log_level', log and log['level'] in ('error', 'warn', 'info', 'debug', 'verbose'), log)
+    check('log_level', field(log, 'level') in ('error', 'warn', 'info', 'debug', 'verbose'), log)
     status, recent = dev.request('GET', '/sys/log/recent')
     check('log_recent_download', status == 200 and isinstance(recent, str) and '\n' in recent, (status, recent))
     check('log_recent_without_colours', isinstance(recent, str) and '\x1b' not in recent, repr(recent)[:200])
@@ -122,13 +122,14 @@ def test_log(dev):
     check('log_recent_lines', first[:3] in ('E (', 'W (', 'I (', 'D (', 'V ('), first)
 
     # Above what the build keeps: refused (the example logs warnings).
-    if log and log['level'] == 'warn':
+    if field(log, 'level') == 'warn':
         check('log_level_above_build_refused', dev.set('/sys/log/level', 'verbose') == 422)
     check('log_level_set', dev.set('/sys/log/level', 'error') == 200 and dev.value('/sys/log/level') == 'error')
-    check('log_level_back', dev.set('/sys/log/level', log['level'] if log else 'warn') == 200)
+    check('log_level_back', dev.set('/sys/log/level', field(log, 'level') or 'warn') == 200)
 
     # Lines as events: an MQTT broker that can't be resolved logs errors.
-    mqtt = dev.value('/sys/mqtt') or {}
+    mqtt = dev.value('/sys/mqtt')
+    mqtt = mqtt if isinstance(mqtt, dict) else {}
     s = Stream(dev, '/sys/log')
     time.sleep(0.5)
     dev.request('PATCH', '/sys/mqtt', {'uri': 'mqtt://nowhere.invalid:1883', 'enabled': True})
@@ -155,42 +156,44 @@ def test_discovery(dev, host, port):
     t = time.time()
     token = mqtt_begin(dev, uri, ours=(uri, f'mqtt://{host}:{port}', f'mqtt://{host}'),
                        extra={'homeAssistant': True}, name='discovery')
-    st = wait_for(lambda: (lambda v: v if v and v['connected'] else None)(dev.value('/sys/mqtt/status')), 20)
-    check('discovery_connected', st and st['connected'], st)
+    st = wait_for(lambda: (lambda v: v if field(v, 'connected') else None)(dev.value('/sys/mqtt/status')), 20)
+    check('discovery_connected', field(st, 'connected'), st)
 
     def config(component, oid):
         raw = b.wait(f'homeassistant/{component}/{hostname}/{oid}/config', since=t, timeout=15)
         try:
-            return json.loads(raw) if raw else None
+            v = json.loads(raw) if raw else None
         except ValueError:
             return None
+        return v if isinstance(v, dict) else None
 
     sw = config('switch', 'led_on')
-    check('discovery_switch', sw and sw['command_topic'] == pre + '/led/on/set' and sw['state_topic'] == pre + '/led/on'
-          and sw['payload_on'] == 'true', sw)
-    check('discovery_device', sw and sw['device']['identifiers'] == [hostname] and
-          sw['device'].get('configuration_url', '').startswith('http://'), sw and sw['device'])
+    check('discovery_switch', field(sw, 'command_topic') == pre + '/led/on/set' and
+          field(sw, 'state_topic') == pre + '/led/on' and field(sw, 'payload_on') == 'true', sw)
+    sw_device = field(sw, 'device')
+    check('discovery_device', isinstance(sw_device, dict) and sw_device.get('identifiers') == [hostname] and
+          str(sw_device.get('configuration_url', '')).startswith('http://'), sw and sw_device)
     num = config('number', 'led_brightness')
-    check('discovery_number', num and num['min'] == 0 and num['max'] == 255 and num['step'] == 5, num)
+    check('discovery_number', field(num, 'min') == 0 and field(num, 'max') == 255 and field(num, 'step') == 5, num)
     heap = config('sensor', 'sys_status_heap')
-    check('discovery_sensor', heap and heap['unit_of_measurement'] == 'B' and heap['entity_category'] == 'diagnostic',
-          heap)
+    check('discovery_sensor', field(heap, 'unit_of_measurement') == 'B' and
+          field(heap, 'entity_category') == 'diagnostic', heap)
     state = config('sensor', 'sys_status_state')
-    check('discovery_enum_sensor', state and state.get('device_class') == 'enum' and 'online' in state['options'],
-          state)
-    count = (dev.value('/sys/mqtt/status') or {}).get('entities')
-    check('discovery_entities', count and count >= 10, count)
-    check('discovery_nothing_dropped', (dev.value('/sys/mqtt/status') or {}).get('dropped') == 0,
+    check('discovery_enum_sensor', field(state, 'device_class') == 'enum' and
+          'online' in (field(state, 'options') or []), state)
+    count = field(dev.value('/sys/mqtt/status'), 'entities')
+    check('discovery_entities', isinstance(count, int) and count >= 10, count)
+    check('discovery_nothing_dropped', field(dev.value('/sys/mqtt/status'), 'dropped') == 0,
           dev.value('/sys/mqtt/status'))
 
     # Home Assistant switches the LED as it would: "true" on the command topic.
     t2 = time.time()
     b.publish(pre + '/led/on/set', 'true')
-    check('discovery_command', wait_for(lambda: (dev.value('/led') or {}).get('on') is True, 5), dev.value('/led'))
+    check('discovery_command', wait_for(lambda: field(dev.value('/led'), 'on') is True, 5), dev.value('/led'))
     check('discovery_state_back', b.wait(pre + '/led/on', 'true', since=t2) == 'true', b.last(pre + '/led/on'))
     t3 = time.time()
     b.publish(pre + '/led/brightness/set', '100')  # what the config's command_template makes of 100.0
-    check('discovery_number_command', wait_for(lambda: (dev.value('/led') or {}).get('brightness') == 100, 5),
+    check('discovery_number_command', wait_for(lambda: field(dev.value('/led'), 'brightness') == 100, 5),
           (dev.value('/led'), b.last(pre + '/led/brightness/result', since=t3)))
 
     # Off: every config emptied, which removes the entities.
@@ -198,7 +201,7 @@ def test_discovery(dev, host, port):
     dev.set('/sys/mqtt/homeAssistant', False)
     check('discovery_removed', b.wait(f'homeassistant/switch/{hostname}/led_on/config', '', since=t4) == '',
           b.last(f'homeassistant/switch/{hostname}/led_on/config', since=t4))
-    check('discovery_entities_zero', wait_for(lambda: (dev.value('/sys/mqtt/status') or {}).get('entities') == 0),
+    check('discovery_entities_zero', wait_for(lambda: field(dev.value('/sys/mqtt/status'), 'entities') == 0),
           dev.value('/sys/mqtt/status'))
     mqtt_end(dev, token, name='discovery')
     b.client.loop_stop()
@@ -209,7 +212,7 @@ def test_discovery(dev, host, port):
 def test_sleep(dev):
     sl = dev.value('/sys/sleep')
     check('sleep_tree', sl and 'wakePin' in sl and 'wakeCause' in sl, sl)
-    pin = sl['wakePin'] if sl else 0
+    pin = field(sl, 'wakePin') or 0
     dev.set('/sys/sleep/wakePin', -1)
     check('sleep_needs_a_wake', dev.set('/sys/sleep/sleep', 0) == 422)
     check('sleep_bad_pin', dev.set('/sys/sleep/wakePin', 6) == 422)  # flash pins can't wake it
@@ -229,11 +232,11 @@ def test_sleep(dev):
     back = wait_for(lambda: dev.value('/sys/status'), 90, step=1) if gone else None
     took = time.time() - t
     check('sleep_back', back is not None, f'after {took:.0f} s')
-    print(f'      asleep after {asleep:.1f} s, back after {took:.0f} s, uptime {back and back["uptime"]} s')
-    check('sleep_reset_reason', back and back['resetReason'] == 'deep-sleep', back)
+    print(f'      asleep after {asleep:.1f} s, back after {took:.0f} s, uptime {field(back, "uptime")} s')
+    check('sleep_reset_reason', field(back, 'resetReason') == 'deep-sleep', back)
     check('sleep_woken_by_timer', dev.value('/sys/sleep/wakeCause') == 'timer', dev.value('/sys/sleep/wakeCause'))
     check('sleep_long_enough', back is not None and took >= 8, took)
-    check('sleep_parked_the_led', (dev.value('/led') or {}).get('on') is False, dev.value('/led'))
+    check('sleep_parked_the_led', field(dev.value('/led'), 'on') is False, dev.value('/led'))
 
     # Woken by the pin: a devkit's BOOT button (GPIO 0) has a pull-up, so
     # waking on high wakes it at once.
@@ -244,7 +247,7 @@ def test_sleep(dev):
         gone = wait_for(lambda: dev.value('/sys/status/uptime') is None, 5)
         back = wait_for(lambda: dev.value('/sys/status'), 90, step=1) if gone else None
         print(f'      back after {time.time() - t:.0f} s')
-        check('sleep_woken_by_pin', back and back['resetReason'] == 'deep-sleep' and
+        check('sleep_woken_by_pin', field(back, 'resetReason') == 'deep-sleep' and
               dev.value('/sys/sleep/wakeCause') == 'pin', (back, dev.value('/sys/sleep/wakeCause')))
         dev.set('/sys/sleep/wakeLevel', 'low')
 
@@ -254,8 +257,9 @@ def test_sleep(dev):
 def test_battery(dev):
     bat = dev.value('/sys/battery')
     check('battery_tree', bat and 'soc' in bat and 'voltage' in bat, bat)
-    check('battery_soc_range', bat and 0 <= bat['soc'] <= 100, bat)
-    check('battery_voltage', bat and isinstance(bat['voltage'], (int, float)) and bat['voltage'] >= 0, bat)
+    soc, voltage = field(bat, 'soc'), field(bat, 'voltage')
+    check('battery_soc_range', isinstance(soc, (int, float)) and 0 <= soc <= 100, bat)
+    check('battery_voltage', isinstance(voltage, (int, float)) and voltage >= 0, bat)
     samples = []
     for _ in range(5):
         time.sleep(1.1)
