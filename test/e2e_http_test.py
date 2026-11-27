@@ -493,6 +493,30 @@ class Scripts(unittest.TestCase):
         rc, out = self.run_script('e2e_ethernet.py', dead_url())
         self.assert_survives(rc, out)
 
+    def test_ethernet_link_local(self):
+        # --link-local against a device on a cable without DHCP, Wi-Fi beside
+        # it: the mode ran to its summary, then died on names it never
+        # imported (PASS, FAIL).
+        eth = json.dumps({'link': True, 'connected': True, 'ip': '169.254.7.9', 'state': 'link-local',
+                          'speed': 100, 'mac': '04:b2:47:84:92:6b'}).encode()
+        s = Server({'/sys/network/ethernet/status': (200, 'application/json', eth),
+                    '/sys/network/wifi/status': (200, 'application/json', b'{"connected": true, "ip": "127.0.0.1"}'),
+                    '/sys/auth/open': (200, 'application/json', b'true'),
+                    '/sys/status/state': ONLINE,
+                    '/sys/status/heap': (200, 'application/json', b'60000'),
+                    '/sys/status/minHeap': (200, 'application/json', b'50000'),
+                    '/sys/network/host': (200, 'application/json', b'"tesserkit-9268"'),
+                    '/sys/network/mdns': (200, 'application/json', b'false'),
+                    '/sys/status/uptime': (200, 'application/json', b'1'),
+                    '/sys/time': (200, 'application/json', b'{"synced": true, "source": "sntp"}')})
+        try:
+            rc, out = self.run_script('e2e_ethernet.py', '--link-local', s.url)
+        finally:
+            s.stop()
+        self.assertNotIn('Traceback', out)
+        self.assertIn(' passed, 0 failed', out)
+        self.assertEqual(rc, 0, out)
+
     def test_ethernet_html_replies(self):
         s = Server({}, HTML_PAGE)
         try:

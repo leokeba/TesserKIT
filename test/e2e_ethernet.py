@@ -31,6 +31,7 @@ same network as this machine, whose DHCP server gives it the address above.
 Every wait is bounded and prints what it saw when it gives up.
 """
 import argparse
+import json
 import socket
 import sys
 import time
@@ -105,7 +106,7 @@ def cable_writes(a, b):
     try:
         status, body = a.request('POST', '/sys/udp/send', {'path': '/led/brightness', 'value': json.dumps(want),
                                                             'to': b_ip}, timeout=15)
-    except (OSError, urllib.error.URLError) as e:
+    except OSError as e:
         status, body = None, str(e)
     took = (time.time() - t) * 1000
     check(f'cable_write_{a_name}_to_{b_name}', status == 200 and body == want, (b_ip, status, body))
@@ -177,7 +178,7 @@ def run_link_local(d, args):
     t0 = time.time()
     try:
         status = d.request('POST', '/sys/restart', timeout=15)[0]
-    except (OSError, urllib.error.URLError) as e:
+    except OSError as e:
         status = e
     check('restart', status == 200, status)
     time.sleep(3)
@@ -223,8 +224,8 @@ def main():
 
     if args.link_local:
         run_link_local(d, args)
-        print(f'\n{PASS} passed, {FAIL} failed')
-        return 1 if FAIL else 0
+        print(f'\n{e2e.PASS} passed, {e2e.FAIL} failed')
+        return 1 if e2e.FAIL else 0
 
     st = d.value('/sys/network/ethernet/status')
     if not check('ethernet_tree', isinstance(st, dict), st):
