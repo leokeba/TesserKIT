@@ -1,4 +1,4 @@
-// Host test runner: ./tesserkit_tests [filter]
+// Host test runner: ./tesserkit_tests [-v] [filter] (test/check.h)
 #include "device_cases.h"
 #include "network_cases.h"
 #include "time_cases.h"
@@ -26,4 +26,16 @@
 #include "board_cases.h"
 #include "clock_cases.h"
 
-int main(int argc, char** argv) { return check::run(argc > 1 ? argv[1] : nullptr) ? 1 : 0; }
+int main(int argc, char** argv) {
+    const char* env = getenv("CHECK_VERBOSE");
+    bool verbose = env && *env && strcmp(env, "0") != 0;
+    const char* filter = nullptr;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-v") == 0) {
+            verbose = true;
+        } else {
+            filter = argv[i];
+        }
+    }
+    return check::run(filter, verbose) ? 1 : 0;
+}

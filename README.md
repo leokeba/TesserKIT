@@ -134,6 +134,9 @@ cmake -S . -B build && cmake --build build -j && ctest --test-dir build
 ```
 
 The services are platform-independent and tested against a fake platform.
+`./build/tesserkit_tests [filter]` runs the cases whose names contain `filter` (`peers`, `network_`).
+It's quiet: a passing run prints one `DONE` line, and a failing case prints its first failed check and the end of its log.
+`-v` shows every case and its log as it runs.
 
 **On hardware:**
 
