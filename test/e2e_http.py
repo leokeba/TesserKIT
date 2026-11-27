@@ -152,6 +152,41 @@ class Device:
         return self.request('POST', path, body, timeout)[0]
 
 
+def mqtt_begin(dev, uri, ours=(), extra=None, name='mqtt'):
+    """Point `dev`'s MQTT at `uri` (enabled, no prefix, plus `extra`) for an
+    MQTT check, unless it already is. Returns a token for mqtt_end(): the
+    settings found, to put them back; or None when they couldn't be read, or
+    the device was left pointing at one of `ours` by an interrupted run: then
+    mqtt_end() leaves MQTT off, since the broker only runs during the check
+    and a board pointed at it reconnects every few seconds, logging resets.
+
+    `ours` are the spellings of the test broker's uri (by IP and by host
+    name), since the stored one may be either; every `extra` setting must
+    already hold its value for the device to count as configured."""
+    body = {'uri': uri, 'enabled': True, 'prefix': ''}
+    body.update(extra or {})
+    before = dev.value('/sys/mqtt')
+    if not isinstance(before, dict):  # a failed or garbled read
+        before = None
+    if not (before and before.get('enabled') and before.get('uri') in ours and not before.get('prefix')
+            and all(before.get(k) == v for k, v in (extra or {}).items())):
+        check(f'{name}_configured', dev.request('PATCH', '/sys/mqtt', body)[0] == 200)
+    if not before or (before.get('enabled') and before.get('uri') in ours):
+        return None  # unreadable, or an interrupted run left it on here
+    keys = ('uri', 'enabled', 'prefix') + tuple(extra or ())
+    return {k: before[k] for k in keys if k in before}
+
+
+def mqtt_end(dev, token, name='mqtt'):
+    """Put back what mqtt_begin found; leave MQTT off when it returned None
+    (the settings were unreadable, or the device was left pointing at the
+    test broker by an interrupted run)."""
+    if token is None:
+        check(f'{name}_left_off', dev.request('PATCH', '/sys/mqtt', {'enabled': False})[0] == 200)
+    else:
+        check(f'{name}_settings_restored', dev.request('PATCH', '/sys/mqtt', token)[0] == 200)
+
+
 def _report_crash(kind, value, tb):
     if not issubclass(kind, KeyboardInterrupt):
         global FAIL

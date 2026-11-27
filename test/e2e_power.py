@@ -10,7 +10,9 @@ Home Assistant discovery), built with -DBATTERY_GPIO=<n> for the battery
 checks: they run when the device has /sys/battery, and --battery makes its
 absence a failure. The broker must accept anonymous clients (`uvx --from amqtt
 amqtt`); the device is pointed at it for the discovery checks and its MQTT
-settings are put back after. The device sleeps once, for a few seconds.
+settings are put back after - or left off when they were unreadable or an
+interrupted run had already pointed the device here, since the broker is
+gone between runs. The device sleeps once, for a few seconds.
 """
 import argparse
 import json
@@ -21,7 +23,7 @@ import time
 import urllib.request
 
 import e2e_http as e2e
-from e2e_http import check
+from e2e_http import check, mqtt_begin, mqtt_end
 
 
 def wait_for(fn, timeout=5.0, step=0.2):
@@ -144,16 +146,15 @@ def test_log(dev):
 
 def test_discovery(dev, host, port):
     hostname = dev.value('/sys/network/host') or dev.value('/sys/network/hostname')
-    before = dev.value('/sys/mqtt') or {}
     b = Broker(host, port)
     b.subscribe('homeassistant/#')
     pre = f'tesser/{hostname}'
     b.subscribe(pre + '/#')
     mac_ip = socket.gethostbyname(host) if not host[0].isdigit() else host
+    uri = f'mqtt://{mac_ip}:{port}'
     t = time.time()
-    status = dev.request('PATCH', '/sys/mqtt',
-                         {'uri': f'mqtt://{mac_ip}:{port}', 'enabled': True, 'homeAssistant': True, 'prefix': ''})[0]
-    check('discovery_configured', status == 200, status)
+    token = mqtt_begin(dev, uri, ours=(uri, f'mqtt://{host}:{port}', f'mqtt://{host}'),
+                       extra={'homeAssistant': True}, name='discovery')
     st = wait_for(lambda: (lambda v: v if v and v['connected'] else None)(dev.value('/sys/mqtt/status')), 20)
     check('discovery_connected', st and st['connected'], st)
 
@@ -199,7 +200,7 @@ def test_discovery(dev, host, port):
           b.last(f'homeassistant/switch/{hostname}/led_on/config', since=t4))
     check('discovery_entities_zero', wait_for(lambda: (dev.value('/sys/mqtt/status') or {}).get('entities') == 0),
           dev.value('/sys/mqtt/status'))
-    dev.request('PATCH', '/sys/mqtt', {k: before[k] for k in ('uri', 'enabled', 'homeAssistant', 'prefix') if k in before})
+    mqtt_end(dev, token, name='discovery')
     b.client.loop_stop()
 
 

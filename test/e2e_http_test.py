@@ -460,5 +460,132 @@ class Scripts(unittest.TestCase):
         self.assertNotIn('PASS log_nothing_dropped', out)
 
 
+class MqttFake(http.server.ThreadingHTTPServer):
+    """A device's /sys/mqtt with mutable settings, for mqtt_begin/mqtt_end:
+    GET answers the current settings (or fails when `read_ok` is false),
+    PATCH merges its body into them."""
+
+    daemon_threads = True
+
+    def __init__(self, settings=None, read_ok=True):
+        super().__init__(('127.0.0.1', 0), self.Handler)
+        self.settings = dict(settings or {})
+        self.read_ok = read_ok
+        self.lock = threading.Lock()
+        threading.Thread(target=self.serve_forever, daemon=True).start()
+
+    @property
+    def url(self):
+        return f'http://127.0.0.1:{self.server_address[1]}'
+
+    def stop(self):
+        self.shutdown()
+        self.server_close()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+
+        def log_message(self, *args):
+            pass
+
+        def answer(self):
+            n = int(self.headers.get('Content-Length') or 0)
+            body = self.rfile.read(n) if n else b''
+            path = self.path[len('/api'):] if self.path.startswith('/api') else self.path
+            dev = self.server
+            with dev.lock:
+                if path == '/sys/mqtt' and self.command == 'PATCH':
+                    dev.settings.update(json.loads(body))
+                    payload, status = b'{}', 200
+                elif path == '/sys/mqtt' and not dev.read_ok:
+                    payload, status = b'', 500
+                else:
+                    payload, status = json.dumps(dev.settings).encode(), 200
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = answer
+
+
+class MqttCleanup(unittest.TestCase):
+    """mqtt_begin/mqtt_end against a fake device: the test broker only runs
+    during the check, so a run must leave MQTT off unless it found settings
+    that point somewhere else."""
+
+    URI = 'mqtt://127.0.0.1:1883'
+    OURS = (URI,)
+
+    def setUp(self):
+        e2e_http.PASS = e2e_http.FAIL = 0
+        self.out = io.StringIO()
+        self.fakes = []
+
+    def tearDown(self):
+        for s in self.fakes:
+            s.stop()
+
+    def fake(self, **kw):
+        s = MqttFake(**kw)
+        self.fakes.append(s)
+        return s
+
+    def begin_end(self, s, extra=None, name='mqtt'):
+        dev = e2e_http.Device(s.url)
+        with contextlib.redirect_stdout(self.out):
+            token = e2e_http.mqtt_begin(dev, self.URI, ours=self.OURS, extra=extra, name=name)
+            e2e_http.mqtt_end(dev, token, name=name)
+
+    def lines(self):
+        return self.out.getvalue().splitlines()
+
+    def test_already_pointed_at_broker_ends_off(self):
+        # An interrupted run left it pointed at the test broker.
+        s = self.fake(settings={'uri': self.URI, 'enabled': True, 'prefix': ''})
+        self.begin_end(s)
+        self.assertFalse(s.settings['enabled'], s.settings)
+        self.assertEqual(e2e_http.FAIL, 0, self.lines())
+
+    def test_failed_first_read_ends_off(self):
+        # The first read fails: what it was before is unknown, so off.
+        s = self.fake(settings={'uri': 'mqtt://elsewhere:1883', 'enabled': True}, read_ok=False)
+        self.begin_end(s)
+        self.assertFalse(s.settings['enabled'], s.settings)
+        self.assertEqual(e2e_http.FAIL, 0, self.lines())
+
+    def test_users_settings_are_put_back(self):
+        found = {'uri': 'mqtt://mine.example:1883', 'enabled': True, 'prefix': 'home'}
+        s = self.fake(settings=dict(found))
+        self.begin_end(s)
+        for k, v in found.items():
+            self.assertEqual(s.settings.get(k), v, (k, s.settings))
+        self.assertEqual(e2e_http.FAIL, 0, self.lines())
+
+    def test_off_stays_off(self):
+        # It was off: the run turned it on, so it goes back off.
+        found = {'uri': 'mqtt://mine.example:1883', 'enabled': False}
+        s = self.fake(settings=dict(found))
+        self.begin_end(s)
+        for k, v in found.items():
+            self.assertEqual(s.settings.get(k), v, (k, s.settings))
+        self.assertEqual(e2e_http.FAIL, 0, self.lines())
+
+    def test_discovery_home_assistant_round_trip(self):
+        # e2e_power's discovery: homeAssistant on during the check, back after.
+        found = {'uri': 'mqtt://mine.example:1883', 'enabled': True, 'prefix': '', 'homeAssistant': False}
+        s = self.fake(settings=dict(found))
+        dev = e2e_http.Device(s.url)
+        with contextlib.redirect_stdout(self.out):
+            token = e2e_http.mqtt_begin(dev, self.URI, ours=self.OURS,
+                                        extra={'homeAssistant': True}, name='discovery')
+            self.assertTrue(s.settings['homeAssistant'], s.settings)
+            e2e_http.mqtt_end(dev, token, name='discovery')
+        for k, v in found.items():
+            self.assertEqual(s.settings.get(k), v, (k, s.settings))
+        self.assertEqual(e2e_http.FAIL, 0, self.lines())
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -12,9 +12,11 @@ taking commands. Without --broker only the Art-Net checks run. The broker
 must accept anonymous clients (for instance `uvx --from amqtt amqtt`) and be
 reachable at the same address from this machine and from the device: a
 device not already connected to it (MQTT_URI in the example's secrets.h) is
-pointed at it, and its MQTT settings are put back after. The device restarts
-once. A device with an admin account (as test/e2e_device.py leaves it) is
-signed in to with --user and --password.
+pointed at it, and its MQTT settings are put back after - or left off when
+they were unreadable or an interrupted run had already pointed the device
+here, since the broker is gone between runs. The device restarts once. A
+device with an admin account (as test/e2e_device.py leaves it) is signed in
+to with --user and --password.
 """
 import argparse
 import json
@@ -25,7 +27,7 @@ import threading
 import time
 
 import e2e_http as e2e
-from e2e_http import check
+from e2e_http import check, mqtt_begin, mqtt_end
 
 
 def wait_for(fn, timeout=5.0, step=0.1):
@@ -146,16 +148,11 @@ class Broker:
 def test_mqtt(dev, host, port):
     hostname = dev.value('/sys/network/host') or dev.value('/sys/network/hostname')
     pre = f'tesser/{hostname}'
-    # Pointed at the broker unless it already is (MQTT_URI), and put back after.
-    before = dev.value('/sys/mqtt') or {}
+    # Pointed at the broker unless it already is (MQTT_URI); put back after,
+    # or left off when it was unreadable or an interrupted run left it here.
     ip = socket.gethostbyname(host)
     uri = f'mqtt://{ip}:{port}'
-    restore = None
-    if not (before.get('enabled') and before.get('uri') in (uri, f'mqtt://{host}:{port}', f'mqtt://{host}') and
-            not before.get('prefix')):
-        restore = {k: before[k] for k in ('uri', 'enabled', 'prefix') if k in before}
-        status = dev.request('PATCH', '/sys/mqtt', {'uri': uri, 'enabled': True, 'prefix': ''})[0]
-        check('mqtt_configured', status == 200, status)
+    token = mqtt_begin(dev, uri, ours=(uri, f'mqtt://{host}:{port}', f'mqtt://{host}'))
     st = wait_for(lambda: (lambda v: v if v and v['connected'] else None)(dev.value('/sys/mqtt/status')), 15)
     check('mqtt_connected', st and st['connected'], st)
 
@@ -208,8 +205,7 @@ def test_mqtt(dev, host, port):
     time.sleep(3)
     check('mqtt_online_after_restart', b.wait(pre + '/status', 'online', since=t, timeout=60) == 'online',
           b.last(pre + '/status'))
-    if restore is not None:
-        check('mqtt_settings_restored', dev.request('PATCH', '/sys/mqtt', restore)[0] == 200)
+    mqtt_end(dev, token)
     b.client.loop_stop()
 
 
