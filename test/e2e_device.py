@@ -25,6 +25,15 @@ from e2e_http import check
 APP = '/led'  # the application's object, with `on` and `brightness`
 
 
+def _dig(obj, *keys):
+    """obj[key1][key2]... or None when any step is missing."""
+    for k in keys:
+        if not isinstance(obj, dict) or k not in obj:
+            return None
+        obj = obj[k]
+    return obj
+
+
 class Device(e2e.Device):
     def __init__(self, base):
         super().__init__(base, timeout=20)
@@ -155,12 +164,15 @@ class WebSocket:
 
 def test_status(d):
     status, _, body = d.get('/sys/status')
-    check('status', status == 200 and body['state'] == 'online' and body['chip'].startswith('ESP32'), body)
-    check('status_mac', len(body.get('mac', '')) == 17, body)
+    chip = body.get('chip') if isinstance(body, dict) else None
+    check('status', status == 200 and isinstance(body, dict) and body.get('state') == 'online'
+          and isinstance(chip, str) and chip.startswith('ESP32'), body)
+    check('status_mac', isinstance(body, dict) and len(body.get('mac') or '') == 17, body)
     h = d.value('/?view=hash')
     check('schema_hash', isinstance(h, str) and len(h) == 8, h)
     status, _, schema = d.get('/sys?view=schema')
-    check('sys_schema', status == 200 and schema.get('ui', {}).get('page') is True, str(schema)[:200])
+    ui = schema.get('ui') if isinstance(schema, dict) else None
+    check('sys_schema', status == 200 and isinstance(ui, dict) and ui.get('page') is True, str(schema)[:200])
 
 
 def test_ui(d):
@@ -200,8 +212,9 @@ def test_scan(d):
     check('scan', status == 200 and isinstance(body, list) and body and {'ssid', 'rssi', 'channel', 'secure'} <= set(body[0]),
           (status, body))
     st = d.value('/sys/network/wifi/status')
-    check('wifi_status', st and st['connected'] and st['ip'] == d.host, st)
-    check('wifi_password_hidden', all(n.get('password') is None for n in d.value('/sys/network/wifi/networks')))
+    check('wifi_status', isinstance(st, dict) and st.get('connected') and st.get('ip') == d.host, st)
+    nets = d.value('/sys/network/wifi/networks')
+    check('wifi_password_hidden', isinstance(nets, list) and all(isinstance(n, dict) and n.get('password') is None for n in nets), nets)
 
 
 def test_time(d):
@@ -209,8 +222,10 @@ def test_time(d):
     while time.time() < deadline and d.value('/sys/time/synced') is not True:
         time.sleep(1)
     t = d.value('/sys/time')
-    check('time_synced', t['synced'] and t['source'] == 'sntp' and t['epoch'] > 1.7e9, t)
-    check('time_now_local', abs(t['epoch'] - time.time()) < 30, (t['epoch'], time.time()))
+    epoch = t.get('epoch') if isinstance(t, dict) else None
+    check('time_synced', isinstance(t, dict) and t.get('synced') and t.get('source') == 'sntp'
+          and isinstance(epoch, (int, float)) and epoch > 1.7e9, t)
+    check('time_now_local', isinstance(epoch, (int, float)) and abs(epoch - time.time()) < 30, (epoch, time.time()))
 
 
 def test_persistence(d):
@@ -232,14 +247,22 @@ def test_backup(d):
     check('backup_download', status == 200 and ('"' + APP[1:] + '"').encode() in raw, raw[:200])
     disposition = headers.get('Content-Disposition', '')
     check('backup_filename', '-settings.json' in disposition, disposition)
-    backup = json.loads(raw)
-    check('backup_has_secrets', any(n.get('password') for n in backup['sys']['network']['wifi']['networks']))
+    try:
+        backup = json.loads(raw) if raw else None
+    except ValueError:
+        backup = None
+    nets = _dig(backup, 'sys', 'network', 'wifi', 'networks')
+    check('backup_has_secrets', isinstance(nets, list) and any(isinstance(n, dict) and n.get('password') for n in nets), raw[:200])
     d.set('/sys/backup/restartAfter', False)
-    backup[APP[1:]]['brightness'] = 42
-    backup[APP[1:]]['gone'] = 1
-    status, _, body = d.request('PUT', '/api/sys/backup/settings', json.dumps(backup).encode())
-    check('restore', status == 200 and body == {'skipped': [APP + '/gone'], 'restart': False}, (status, body))
-    check('restored_value', d.value(APP + '/brightness') == 42)
+    if not isinstance(_dig(backup, APP[1:]), dict):
+        check('restore', False, 'no settings backup to restore')
+        check('restored_value', False)
+    else:
+        backup[APP[1:]]['brightness'] = 42
+        backup[APP[1:]]['gone'] = 1
+        status, _, body = d.request('PUT', '/api/sys/backup/settings', json.dumps(backup).encode())
+        check('restore', status == 200 and body == {'skipped': [APP + '/gone'], 'restart': False}, (status, body))
+        check('restored_value', d.value(APP + '/brightness') == 42)
     status, _, body = d.request('PUT', '/api/sys/backup/settings', b'not json')
     check('restore_garbage', status == 400, (status, body))
     d.set('/sys/backup/restartAfter', True)
@@ -247,9 +270,9 @@ def test_backup(d):
 
 def test_bad_image(d):
     status, _, body = d.request('PUT', '/api/sys/firmware/image', os.urandom(4096))
-    check('bad_image', status == 422 and body.get('message') == 'not an app image', (status, body))
+    check('bad_image', status == 422 and isinstance(body, dict) and body.get('message') == 'not an app image', (status, body))
     fw = d.value('/sys/firmware')
-    check('bad_image_state', fw['state'] == 'failed' and fw['error'] == 'not an app image', fw)
+    check('bad_image_state', isinstance(fw, dict) and fw.get('state') == 'failed' and fw.get('error') == 'not an app image', fw)
     check('bad_image_running', d.value('/sys/status/state') == 'online')
 
 
@@ -298,6 +321,9 @@ def test_auth(d):
 def test_timers(d):
     # Due at the next minute, local time.
     now = d.value('/sys/time/now')  # "2026-10-10T20:11:57+02:00"
+    if not isinstance(now, str) or len(now) < 19:
+        check('timer_set', False, f'no local time to aim at: {now!r}')
+        return
     h, m, sec = int(now[11:13]), int(now[14:16]), int(now[17:19])
     if sec > 50:  # too close: aim for the one after
         time.sleep(61 - sec)
@@ -333,8 +359,9 @@ def test_update(d, image):
     check('upload', status == 200, (status, body))
     check('upload_restart', d.wait_restart(60) and d.wait_online())
     fw = d.value('/sys/firmware')
-    check('upload_slot', fw['slot'] != before, fw)
-    check('upload_pending', fw['pending'] is True, fw)
+    slot = fw.get('slot') if isinstance(fw, dict) else None
+    check('upload_slot', slot is not None and slot != before, fw)
+    check('upload_pending', isinstance(fw, dict) and fw.get('pending') is True, fw)
     check('confirm', d.set('/sys/firmware/confirm')[0] == 200 and d.value('/sys/firmware/pending') is False)
     status, _, body = d.set('/sys/firmware/rollback')
     check('rollback', status == 200, (status, body))

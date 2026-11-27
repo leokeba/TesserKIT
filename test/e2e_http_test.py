@@ -285,6 +285,7 @@ def dead_url():
 GARBAGE = (200, 'application/json', b'<html>Internal error</html>')
 EMPTY_ERROR = (500, '', b'')
 JSON = (200, 'application/json', b'{"state": "online"}')
+ONLINE = (200, 'application/json', b'"online"')
 
 
 class Helpers(unittest.TestCase):
@@ -540,6 +541,77 @@ class Scripts(unittest.TestCase):
         for name in ('sleep_unreachable', 'sleep_back', 'sleep_long_enough'):
             self.assertIn('FAIL ' + name, out)
 
+
+    def assert_no_traceback_done(self, rc, out):
+        self.assertNotEqual(rc, 0, out)
+        self.assertNotIn('Traceback', out)
+        self.assertIn('DONE pass=', out)  # it went on to the end
+        self.assertTrue(any(line.startswith('FAIL ') for line in out.splitlines()), out)
+
+    def test_device_html(self):
+        # Online, then HTML on every other route: the bodies aren't JSON. (A
+        # device that never comes online stops the script at its first check.)
+        s = Server({'/sys/status/state': ONLINE}, default=GARBAGE)
+        try:
+            rc, out = self.run_script('e2e_device.py', s.url, '--only',
+                                      'test_status,test_scan,test_backup,test_bad_image,test_timers')
+        finally:
+            s.stop()
+        self.assert_no_traceback_done(rc, out)
+
+    def test_device_closed(self):
+        # Online, then every other connection closed without a reply.
+        s = Server({'/sys/status/state': ONLINE}, default='close')
+        try:
+            rc, out = self.run_script('e2e_device.py', s.url, '--only',
+                                      'test_status,test_scan,test_backup,test_bad_image,test_timers')
+        finally:
+            s.stop()
+        self.assert_no_traceback_done(rc, out)
+
+    def assert_github_clean(self, rc, out):
+        self.assertNotEqual(rc, 0, out)
+        self.assertNotIn('Traceback', out)
+        self.assertIn(' failed', out)  # the summary line "N passed, M failed"
+        self.assertTrue(any(line.startswith('FAIL ') for line in out.splitlines()), out)
+
+    def test_github_check_only_dead(self):
+        rc, out = self.run_script('e2e_github.py', dead_url(), '--check-only')
+        self.assert_github_clean(rc, out)
+        self.assertIn('FAIL firmware has a release feed', out)
+
+    def test_github_check_only_html(self):
+        s = Server(default=GARBAGE)
+        try:
+            rc, out = self.run_script('e2e_github.py', s.url, '--check-only')
+        finally:
+            s.stop()
+        self.assert_github_clean(rc, out)
+        self.assertIn('FAIL firmware has a release feed', out)
+
+    def test_github_check_only_closed(self):
+        s = Server(default='close')
+        try:
+            rc, out = self.run_script('e2e_github.py', s.url, '--check-only')
+        finally:
+            s.stop()
+        self.assert_github_clean(rc, out)
+        self.assertIn('FAIL firmware has a release feed', out)
+
+    def test_github_check_only_garbled_rest(self):
+        # /sys/firmware answers with a feed but every other route with HTML:
+        # the check's reply and /sys/firmware/github are unreadable. Without a
+        # feed answer the script stops at the first check and never reaches
+        # these, so the plain scenarios above don't cover them.
+        s = Server({'/sys/firmware': (200, 'application/json', b'{"version": "1.0", "github": {"repo": "x/y"}}')},
+                   default=GARBAGE)
+        try:
+            rc, out = self.run_script('e2e_github.py', s.url, '--check-only')
+        finally:
+            s.stop()
+        self.assert_github_clean(rc, out)
+        self.assertIn('FAIL http POST /sys/firmware/github/check', out)
+        self.assertIn('FAIL check answers', out)
 
 class MqttFake(http.server.ThreadingHTTPServer):
     """A device's /sys/mqtt with mutable settings, for mqtt_begin/mqtt_end:

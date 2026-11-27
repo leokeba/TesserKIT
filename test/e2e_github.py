@@ -122,16 +122,19 @@ def main():
         check('sign in', dev.sign_in(args.user, args.password) == 200)
 
     fw = dev.value('/sys/firmware')
-    if not check('firmware has a release feed', fw and 'github' in fw, fw):
+    if not check('firmware has a release feed', isinstance(fw, dict) and 'github' in fw, fw):
         return
-    print(f"running {fw['version']}, feed {fw['github']['repo']}")
+    github = fw.get('github')
+    print(f"running {fw.get('version')}, feed {github.get('repo') if isinstance(github, dict) else None}")
     heap_before = dev.value('/sys/status/heap')
 
     if args.check_only:
         status, body, took = check_now(dev)
         g = dev.value('/sys/firmware/github')
         check('check answers', status == 200, (status, body))
-        print(f'check took {took:.1f} s: {body}; status {g["status"]}, error {g.get("error")!r}')
+        if not isinstance(g, dict):
+            g = {}
+        print(f'check took {took:.1f} s: {body}; status {g.get("status")}, error {g.get("error")!r}')
         heap_after = dev.value('/sys/status/heap')
         print(f'free heap {heap_before} before, {heap_after} after; '
               f'minimum {dev.value("/sys/status/minHeap")}')
