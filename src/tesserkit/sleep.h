@@ -4,6 +4,8 @@
 
 namespace tesserkit {
 
+class Network;
+
 // /sys/sleep: deep sleep for a time or until a pin wakes the device
 // (docs/DESIGN.md section 5.14). The application parks its hardware in
 // Device::onSleep().
@@ -12,7 +14,10 @@ public:
     // The longest sleep the action takes: a year.
     static constexpr uint32_t kMaxSeconds = 31536000;
 
-    explicit Sleep(Device& dev) : Service(dev, "sleep") {}
+    // `net`: the Network whose Ethernet board's pins can't wake the device
+    // (a clock or data line toggles all the time and would wake it at once;
+    // GPIO 0 is the RMII clock input on most Ethernet boards).
+    explicit Sleep(Device& dev, Network* net = nullptr) : Service(dev, "sleep"), net_(net) {}
 
     // Factory defaults, before Device::begin(): the pin that wakes the
     // device, at `high` or low, held at the other level by the chip's pull
@@ -33,6 +38,9 @@ protected:
 private:
     enum class Level : uint8_t { Low, High };
 
+    bool ethernets(int8_t pin) const;
+
+    Network* net_;
     Power* power_ = nullptr;
     int8_t pin_ = -1;
     Level level_ = Level::Low;

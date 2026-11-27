@@ -235,7 +235,11 @@ def test_sleep(dev):
     print(f'      asleep after {asleep:.1f} s, back after {took:.0f} s, uptime {field(back, "uptime")} s')
     check('sleep_reset_reason', field(back, 'resetReason') == 'deep-sleep', back)
     check('sleep_woken_by_timer', dev.value('/sys/sleep/wakeCause') == 'timer', dev.value('/sys/sleep/wakeCause'))
-    check('sleep_long_enough', back is not None and took >= 8, took)
+    # From the request to the boot: `took` alone counts the boot and the
+    # network too (33 s for a chip that woke after 3 s, 2026-11-27).
+    uptime = field(back, 'uptime')
+    slept = took - uptime if isinstance(uptime, (int, float)) else None
+    check('sleep_long_enough', slept is not None and slept >= 8, (took, uptime))
     check('sleep_parked_the_led', field(dev.value('/led'), 'on') is False, dev.value('/led'))
 
     # Woken by the pin: a devkit's BOOT button (GPIO 0) has a pull-up, so

@@ -1056,7 +1056,7 @@ Two addresses in one subnet confuse routing: give the cable its own subnet, or l
 ```
 /sys/sleep              label "Sleep", ui.icon "moon", write Admin
   sleep                 action (integer 0–31 536 000 s): deep sleep for that long, 0 until the wake pin; ui.confirm
-  wakePin *(p)          integer -1–63: the GPIO that wakes the device (-1 none), checked against the chip
+  wakePin *(p)          integer -1–63: the GPIO that wakes the device (-1 none), checked against the chip and Ethernet's pins
   wakeLevel *(p)        enum low, high (default low)
   wakePull *(p)         boolean (default true): the chip's pull resistor holds the pin at the other level (advanced)
   wakeCause             enum none, timer, pin, other, read-only: how this boot woke (none: not from deep sleep)
@@ -1068,6 +1068,8 @@ Two addresses in one subnet confuse routing: give the cable its own subnet, or l
 - **Wake pin:** ext1 on chips that have it (ESP32, ESP32-S3: RTC GPIOs only; on the ESP32 a single pin's "all low" is that pin low), the GPIO wake-up of the others (ESP32-C3: GPIO 0–5).
   The pull resistor stays on through sleep (the ESP32's RTC peripherals are kept powered for it).
   A devkit's BOOT button (GPIO 0, pulled up) wakes it at `low`: `sleep.wakePin(0)`.
+  A pin the Ethernet board uses is refused, when Sleep is given the Network (`Sleep sleeper(dev, &net)`): on most RMII boards GPIO 0 is the clock input, which wakes the chip at once (a Gledopto "woken by pin" 3 s into a timer sleep).
+  A pin set in code that turns out to be Ethernet's is logged at boot, and a sleep is refused until it's changed.
 - **Composition:** being an action, sleep is what a timer (§5.6) or a sequence step (§5.13) can call: "every night at 23:00, sleep 8 hours".
 - **Platform:** `Power` (§3.3).
 - **Factory default:** `sleep.wakePin(pin, high, pull)`.

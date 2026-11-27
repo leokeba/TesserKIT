@@ -236,6 +236,27 @@ TEST(sleep_until_a_pin) {
     CHECK_EQ(r.as(tesser::Access::User, Op::Set, "/sys/sleep/sleep", "10").status, Status::Unauthorized);
 }
 
+// A Gledopto's GPIO 0 is the RMII clock input: as a wake pin it woke the chip
+// at once (HIL, 2026-11-27: "woken by pin" after a timer sleep).
+TEST(sleep_refuses_ethernets_pins) {
+    struct Rig : rig::Rig {
+        tesserkit::Network net{dev};
+        tesserkit::Sleep sleep{dev, &net};
+    } r;
+    r.net.ethernet(tesserkit::boards::gledopto());
+    r.sleep.wakePin(0);  // set in code: begin() logs it, a sleep refuses it
+    CHECK(r.dev.begin());
+    CHECK_EQ(r.set("/sys/sleep/sleep", "8").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/sleep/wakePin", "23").status, Status::InvalidValue);  // MDC
+    CHECK_EQ(r.set("/sys/sleep/wakePin", "-1").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/sleep/wakePin", "0").status, Status::InvalidValue);
+    CHECK_EQ(r.set("/sys/sleep/wakePin", "4").status, Status::Ok);
+    CHECK_EQ(r.set("/sys/sleep/sleep", "8").status, Status::Ok);
+    r.run(600);
+    CHECK_EQ(r.fake.power.sleeps, 1);
+    CHECK_EQ(r.fake.power.pin, 4);
+}
+
 TEST(sleep_waits_for_an_update_and_saves) {
     SleepRig r;
     r.sleep.wakePin(4);

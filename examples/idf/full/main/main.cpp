@@ -182,7 +182,7 @@ tesserkit::Sequencer sequencer(dev);  // /sequencer: steps played in turn
 tesserkit::Log logs(dev);             // the firmware's log, as events and a file
 #endif
 #if CONFIG_FULL_SLEEP
-tesserkit::Sleep sleeper(dev);        // deep sleep, woken by a timer or the BOOT button
+tesserkit::Sleep sleeper(dev, &net);  // deep sleep, woken by a timer or the BOOT button
 #endif
 #if CONFIG_FULL_BATTERY_GPIO >= 0
 tesserkit::Battery battery(dev);      // charge and voltage
@@ -281,7 +281,9 @@ extern "C" void app_main() {
     espNow.pairingCode(NOWTP_PAIRING_CODE);
 #endif
 #if CONFIG_FULL_SLEEP
-    sleeper.wakePin(0);  // the BOOT button, low when pressed
+    // The BOOT button, low when pressed. On most Ethernet boards GPIO 0 is
+    // the RMII clock input instead, which would wake the chip at once.
+    if (!net.ethernetBoard() || !net.ethernetBoard()->uses(0)) sleeper.wakePin(0);
 #endif
 #if CONFIG_FULL_BATTERY_GPIO >= 0
     battery.adc(CONFIG_FULL_BATTERY_GPIO, 2.0f);

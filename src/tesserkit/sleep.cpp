@@ -1,5 +1,7 @@
 #include "tesserkit/sleep.h"
 
+#include "tesserkit/network.h"
+
 namespace tesserkit {
 
 using tesser::Access;
@@ -37,7 +39,8 @@ void Sleep::describe(tesser::Object& o) {
     o.value("wakePin", pin_)
         .range(-1, 63)
         .ui("labels", "-1=none")
-        .validate([power](int8_t v) {
+        .validate([this, power](int8_t v) {
+            if (ethernets(v)) return Check::fail(Status::InvalidValue, "this pin is Ethernet's");
             return v < 0 || !power || power->wakePin(v)
                        ? Check::ok()
                        : Check::fail(Status::InvalidValue, "this pin can't wake the chip from deep sleep");
@@ -59,8 +62,14 @@ void Sleep::describe(tesser::Object& o) {
         .doc("How this boot woke from deep sleep (none: it didn't)");
 }
 
+bool Sleep::ethernets(int8_t pin) const {
+    const EthernetBoard* eth = net_ ? net_->ethernetBoard() : nullptr;
+    return eth && eth->uses(pin);
+}
+
 void Sleep::start() {
     if (!power_) tesser::logError("tesserkit: Sleep has no power management in this build");
+    if (ethernets(pin_)) tesser::logError("tesserkit: Sleep's wake pin, GPIO %d, is Ethernet's", pin_);
 }
 
 Check Sleep::sleep(uint32_t seconds) {
@@ -68,6 +77,7 @@ Check Sleep::sleep(uint32_t seconds) {
     if (seconds > kMaxSeconds) return Check::fail(Status::InvalidValue, "at most a year");
     if (!seconds && pin_ < 0) return Check::fail(Status::InvalidValue, "nothing would wake it: give a time or a wake pin");
     if (pin_ >= 0 && !power_->wakePin(pin_)) return Check::fail(Status::InvalidValue, "the wake pin can't wake the chip");
+    if (ethernets(pin_)) return Check::fail(Status::InvalidValue, "the wake pin is Ethernet's");
     if (dev_.state() == State::Updating) return Check::fail(Status::Busy, "an update is running");
     seconds_ = seconds;
     armNow_ = true;
