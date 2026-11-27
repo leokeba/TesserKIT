@@ -217,27 +217,32 @@ def test_sleep(dev):
     dev.set('/led/on', True)
     time.sleep(2.5)  # saved
     t = time.time()
-    check('sleep_accepted', dev.set('/sys/sleep/sleep', 8) == 200)
-    gone = wait_for(lambda: dev.value('/sys/status/uptime') is None, 5)
-    check('sleep_unreachable', gone)
+    accepted = dev.set('/sys/sleep/sleep', 8) == 200
+    check('sleep_accepted', accepted)
+    # Only meaningful if it actually slept: an unreachable (or missing) uptime
+    # passes at once, and the wait_for timeout below inflates took into a pass.
+    gone = wait_for(lambda: dev.value('/sys/status/uptime') is None, 5) if accepted else False
+    check('sleep_unreachable', accepted and gone, gone)
     asleep = time.time() - t
-    back = wait_for(lambda: dev.value('/sys/status'), 90, step=1)
+    # Back only after it went away: a device that never slept is "back" at
+    # once, and a dead one would cost the whole wait for nothing.
+    back = wait_for(lambda: dev.value('/sys/status'), 90, step=1) if gone else None
     took = time.time() - t
     check('sleep_back', back is not None, f'after {took:.0f} s')
     print(f'      asleep after {asleep:.1f} s, back after {took:.0f} s, uptime {back and back["uptime"]} s')
     check('sleep_reset_reason', back and back['resetReason'] == 'deep-sleep', back)
     check('sleep_woken_by_timer', dev.value('/sys/sleep/wakeCause') == 'timer', dev.value('/sys/sleep/wakeCause'))
-    check('sleep_long_enough', took >= 8, took)
+    check('sleep_long_enough', back is not None and took >= 8, took)
     check('sleep_parked_the_led', (dev.value('/led') or {}).get('on') is False, dev.value('/led'))
 
     # Woken by the pin: a devkit's BOOT button (GPIO 0) has a pull-up, so
     # waking on high wakes it at once.
-    if pin == 0:
+    if pin == 0 and sl:
         dev.set('/sys/sleep/wakeLevel', 'high')
         t = time.time()
         check('sleep_until_pin', dev.set('/sys/sleep/sleep', 0) == 200)
-        wait_for(lambda: dev.value('/sys/status/uptime') is None, 5)
-        back = wait_for(lambda: dev.value('/sys/status'), 90, step=1)
+        gone = wait_for(lambda: dev.value('/sys/status/uptime') is None, 5)
+        back = wait_for(lambda: dev.value('/sys/status'), 90, step=1) if gone else None
         print(f'      back after {time.time() - t:.0f} s')
         check('sleep_woken_by_pin', back and back['resetReason'] == 'deep-sleep' and
               dev.value('/sys/sleep/wakeCause') == 'pin', (back, dev.value('/sys/sleep/wakeCause')))

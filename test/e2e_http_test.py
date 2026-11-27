@@ -226,6 +226,53 @@ class ArtNetServer(http.server.ThreadingHTTPServer):
         do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = answer
 
 
+class DyingServer(http.server.ThreadingHTTPServer):
+    """Answers its very first request, then stops answering at all: a device
+    that is already unreachable when test_sleep's checks run, with no
+    /sys/sleep to have accepted them."""
+
+    daemon_threads = True
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+
+        def log_message(self, *args):
+            pass
+
+        def answer(self):
+            n = int(self.headers.get('Content-Length') or 0)
+            if n:
+                self.rfile.read(n)
+            with self.server.lock:
+                first = not self.server.answered
+                self.server.answered = True
+            if first:
+                body = b'{"state": "online"}'
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self.close_connection = True
+
+        do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = answer
+
+    def __init__(self):
+        super().__init__(('127.0.0.1', 0), self.Handler)
+        self.lock = threading.Lock()
+        self.answered = False
+        threading.Thread(target=self.serve_forever, daemon=True).start()
+
+    @property
+    def url(self):
+        return f'http://127.0.0.1:{self.server_address[1]}'
+
+    def stop(self):
+        self.shutdown()
+        self.server_close()
+
+
 def dead_url():
     """An address where nothing listens: connections are refused at once."""
     s = socket.socket()
@@ -458,6 +505,40 @@ class Scripts(unittest.TestCase):
         self.assertIn('DONE pass=', out)
         self.assertIn('FAIL log_nothing_dropped', out)
         self.assertNotIn('PASS log_nothing_dropped', out)
+
+    def test_power_sleep_vacuous(self):
+        # A device that stops answering after its first probe (and has no
+        # /sys/sleep) must not pass sleep_unreachable -- uptime is None for
+        # want of a reply, not because the device slept -- nor
+        # sleep_long_enough, whose took >= 8 only because the 90 s wait_for
+        # timed out after sleep_back failed.
+        s = DyingServer()
+        try:
+            rc, out = self.run_script('e2e_power.py', s.url, '--only', 'sleep')
+        finally:
+            s.stop()
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn('DONE pass=', out)  # it went on to the end
+        self.assertIn('FAIL sleep_accepted', out)
+        self.assertIn('FAIL sleep_unreachable', out)
+        self.assertNotIn('PASS sleep_unreachable', out)
+        self.assertIn('FAIL sleep_long_enough', out)
+        self.assertNotIn('PASS sleep_long_enough', out)
+        self.assertNotIn('PASS sleep_back', out)
+
+    def test_power_sleep_never_left(self):
+        # A device that keeps answering but has no /sys/sleep never went
+        # away: sleep_back must not pass because it "came back" at once.
+        s = Server({'/sys/status': JSON}, default=(404, 'application/json', b'{"error":"not_found"}'))
+        try:
+            rc, out = self.run_script('e2e_power.py', s.url, '--only', 'sleep')
+        finally:
+            s.stop()
+        self.assertNotEqual(rc, 0, out)
+        self.assertNotIn('Traceback', out)
+        self.assertIn('DONE pass=', out)
+        for name in ('sleep_unreachable', 'sleep_back', 'sleep_long_enough'):
+            self.assertIn('FAIL ' + name, out)
 
 
 class MqttFake(http.server.ThreadingHTTPServer):
