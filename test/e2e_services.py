@@ -28,12 +28,6 @@ import e2e_http as e2e
 from e2e_http import check
 
 
-class Device(e2e.Device):
-    def __init__(self, base):
-        super().__init__(base)
-        self.host = self.host.split(':')[0]
-
-
 def wait_for(fn, timeout=5.0, step=0.1):
     end = time.time() + timeout
     while time.time() < end:
@@ -227,7 +221,7 @@ def main():
     ap.add_argument('--user', default='e2e')
     ap.add_argument('--password', default='e2e-pass')
     args = ap.parse_args()
-    dev = Device(args.url)
+    dev = e2e.Device(args.url)
     if dev.value('/sys/auth/open') is False:
         status, body = dev.request('POST', '/sys/auth/login', {'name': args.user, 'password': args.password})
         if not check('login', status == 200, body):

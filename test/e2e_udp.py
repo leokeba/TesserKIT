@@ -21,7 +21,6 @@ from e2e_http import check
 class Device(e2e.Device):
     def __init__(self, base):
         super().__init__(base)
-        self.host = self.host.split(':')[0]
         self.name = None
 
     def send(self, path, value, to=''):

@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 PASS = 0
@@ -96,6 +97,9 @@ def failed(method, path, error):
 class Device:
     """A device's HTTP API at `base` (http://<ip>[:port]); paths are under /api.
 
+    `host` is the address without the port, and `port` the one in `base`
+    (80 or 443 by scheme when it has none): scripts that dial a socket to the
+    device use (host, port), and a device reports its ip without the port.
     Bearer `token` when set. JSON bodies are sent as application/json; bytes
     are sent as they are.
     """
@@ -104,7 +108,9 @@ class Device:
 
     def __init__(self, base, timeout=10):
         self.base = base.rstrip('/')
-        self.host = self.base.split('://', 1)[1].split('/')[0]
+        u = urllib.parse.urlparse(self.base)
+        self.host = u.hostname
+        self.port = u.port or (443 if u.scheme == 'https' else 80)
         self.timeout = timeout
 
     def headers(self):

@@ -33,12 +33,6 @@ from e2e_http import check
 SYNC_UNIVERSE = 64000 - 1  # E1.31 universes go to 63999
 
 
-class Device(e2e.Device):
-    def __init__(self, base):
-        super().__init__(base)
-        self.host = self.host.split(':')[0]
-
-
 def art_dmx(universe, seq, data):
     return (b'Art-Net\0' + struct.pack('<H', 0x5000) + struct.pack('>H', 14) + bytes([seq, 0]) +
             struct.pack('<H', universe) + struct.pack('>H', len(data)) + data)
@@ -188,7 +182,7 @@ def main():
     ap.add_argument('--no-ui', action='store_true')
     ap.add_argument('--spread', action='store_true', help="each frame's universes evenly through the period")
     args = ap.parse_args()
-    dev = Device(args.device)
+    dev = e2e.Device(args.device)
     if not check('device answers', dev.value('/sys/status') is not None, 'no /sys/status'):
         sys.exit(1)
     if not check('device has the DMX probe', dev.value('/dmx') is not None,

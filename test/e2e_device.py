@@ -178,7 +178,7 @@ def test_ui(d):
 
 def test_websocket(d):
     try:
-        ws = WebSocket(d.host)
+        ws = WebSocket(d.host, port=d.port)
         ws.send({'id': 1, 'op': 'sub', 'path': '/sys/status', 'keys': 'uptime,heap', 'interval': 500})
         snap = ws.recv()
         check('ws_snapshot', snap.get('id') == 1 and snap.get('status') == 'ok' and 'uptime' in snap['body'], snap)
@@ -282,7 +282,7 @@ def test_auth(d):
     check('auth_whoami', d.set('/sys/auth/whoami')[2] == {'access': 'admin'})
     check('auth_users_hidden_without_token', 'users' not in (Device(d.base).value('/sys/auth') or {}))
     try:
-        ws = WebSocket(d.host, path='/ws?token=' + (d.token or ''))
+        ws = WebSocket(d.host, path='/ws?token=' + (d.token or ''), port=d.port)
         ws.send({'id': 1, 'op': 'get', 'path': '/sys/auth/users'})
         m = ws.recv()
         check('auth_websocket_token', m.get('status') == 'ok', m)

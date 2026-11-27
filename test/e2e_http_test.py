@@ -17,6 +17,7 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -388,6 +389,52 @@ class Scripts(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertNotIn('Traceback', out)
         self.assertIn('DONE pass=8 fail=0', out)
+
+    def test_device_ported_url(self):
+        # A URL with an explicit port: Device.host kept it, so the WebSocket
+        # dialed (host, 80) and wifi_status compared 'ip' against 'host:port'.
+        routes = {
+            '/sys/status/state': (200, 'application/json', b'"online"'),
+            '/sys/network/wifi/status': (200, 'application/json', b'{"connected": true, "ip": "127.0.0.1"}'),
+            '/sys/network/wifi/networks': (200, 'application/json', b'[]'),
+        }
+        s = Server(routes)
+        try:
+            rc, out = self.run_script('e2e_device.py', s.url, '--only', 'test_websocket,test_scan')
+        finally:
+            s.stop()
+        self.assertNotIn('Traceback', out)
+        self.assertIn('PASS wifi_status', out)  # st['ip'] == d.host, without the port
+        self.assertIn('DONE pass=', out)  # it went on to the end
+
+    def test_github_ported_url(self):
+        # A URL with an explicit port: Device.host kept it, and local_ip()
+        # died on a gaierror before any check ran.
+        probe = socket.socket()
+        try:
+            probe.bind(('127.0.0.1', 8765))
+        except OSError:
+            self.skipTest('port 8765 is in use')
+        finally:
+            probe.close()
+        routes = {
+            '/sys/firmware': (200, 'application/json', b'{"version": "9.9.8", "github": {"repo": "leokeba/TesserKIT"}}'),
+            '/sys/firmware/github': (200, 'application/json', b'{"status": "available", "latest": "v9.9.9"}'),
+            '/sys/firmware/state': (200, 'application/json', b'"failed"'),
+            '/sys/firmware/version': (200, 'application/json', b'"9.9.9"'),
+        }
+        s = Server(routes)
+        with tempfile.TemporaryDirectory(prefix='e2e-github-') as tmp:
+            image = os.path.join(tmp, 'fw.bin')
+            with open(image, 'wb') as f:
+                f.write(b'\x00' * 16)
+            try:
+                rc, out = self.run_script('e2e_github.py', s.url, '--image', image)
+            finally:
+                s.stop()
+        self.assertNotIn('Traceback', out)
+        self.assertIn('PASS release offered', out)  # it got past local_ip(dev.host)
+        self.assertIn('passed,', out)  # it went on to the end
 
     def test_power_error_body(self):
         # e2e_power.py died on json.loads of an HTTP error's body.
