@@ -613,6 +613,97 @@ class Scripts(unittest.TestCase):
         self.assertIn('FAIL http POST /sys/firmware/github/check', out)
         self.assertIn('FAIL check answers', out)
 
+    def assert_files_clean(self, rc, out):
+        self.assertNotEqual(rc, 0, out)
+        self.assertNotIn('Traceback', out)
+        self.assertIn('DONE pass=', out)  # it went on to the end
+        self.assertTrue(any(line.startswith('FAIL ') for line in out.splitlines()), out)
+        self.assertIn('FAIL max size', out)  # the old crash site now fails a check
+
+    def test_files_dead(self):
+        # The script against an address nobody answers: every check fails on a
+        # missing body, none crashes, and the run goes on to DONE.
+        rc, out = self.run_script('e2e_files.py', dead_url())
+        self.assert_files_clean(rc, out)
+
+    def test_files_html(self):
+        # A server answering HTML on every route: the bodies aren't JSON.
+        s = Server(default=GARBAGE)
+        try:
+            rc, out = self.run_script('e2e_files.py', s.url)
+        finally:
+            s.stop()
+        self.assert_files_clean(rc, out)
+
+    def test_files_closed(self):
+        # A server that closes every connection without a reply.
+        s = Server(default='close')
+        try:
+            rc, out = self.run_script('e2e_files.py', s.url)
+        finally:
+            s.stop()
+        self.assert_files_clean(rc, out)
+
+    def test_files_backup_garbled_rest(self):
+        # /sys/backup/save answers with a name but every other route HTML: the
+        # stored backup's content is unreadable. The plain scenarios stop at
+        # 'save' and never reach these, so only this one covers them.
+        s = Server({'/sys/backup/save': (200, 'application/json', b'"2026-11-27.json"')}, default=GARBAGE)
+        try:
+            rc, out = self.run_script('e2e_files.py', s.url)
+        finally:
+            s.stop()
+        self.assertNotEqual(rc, 0, out)
+        self.assertNotIn('Traceback', out)
+        self.assertIn('DONE pass=', out)  # it went on to the end
+        self.assertIn('PASS save, named after the date', out)
+        self.assertIn('FAIL download stored', out)
+        self.assertNotIn('PASS gone', out)  # a missing listing is not "gone"
+
+    def test_transfers_http_dead(self):
+        # --http only (no serial line on the host): no check runs yet, but the
+        # script must still end cleanly against a dead address.
+        rc, out = self.run_script('e2e_transfers.py', '--http', dead_url())
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn('Traceback', out)
+        self.assertIn('E2E pass=0 fail=0', out)
+
+    def test_transfers_http_html(self):
+        s = Server(default=GARBAGE)
+        try:
+            rc, out = self.run_script('e2e_transfers.py', '--http', s.url)
+        finally:
+            s.stop()
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn('Traceback', out)
+        self.assertIn('E2E pass=0 fail=0', out)
+
+    def test_transfers_http_closed(self):
+        s = Server(default='close')
+        try:
+            rc, out = self.run_script('e2e_transfers.py', '--http', s.url)
+        finally:
+            s.stop()
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn('Traceback', out)
+        self.assertIn('E2E pass=0 fail=0', out)
+
+    def test_transfers_relay_garbled_rest(self):
+        # /peers/x/sys/status/state answers so 'peer online' passes; the
+        # WebSocket upgrade gets HTML. The relay must fail its checks, not die
+        # on the handshake: without the state answer the script stops at
+        # 'peer online' and never reaches test_relay, so the plain scenarios
+        # above don't cover it.
+        s = Server({'/peers/x/sys/status/state': JSON}, default=GARBAGE)
+        try:
+            rc, out = self.run_script('e2e_transfers.py', '--http', s.url, '--peer', 'x')
+        finally:
+            s.stop()
+        self.assertNotEqual(rc, 0, out)
+        self.assertNotIn('Traceback', out)
+        self.assertIn('E2E pass=', out)  # it went on to the end
+        self.assertIn('FAIL relay: websocket', out)
+
 class MqttFake(http.server.ThreadingHTTPServer):
     """A device's /sys/mqtt with mutable settings, for mqtt_begin/mqtt_end:
     GET answers the current settings (or fails when `read_ok` is false),

@@ -290,9 +290,15 @@ def test_serial(line, dev, image):
     check(f'serial: restarted by software, not a panic ({reason})', reason == 'software', reason)
 
 
-def test_relay(dev, host, peer, image):
+def test_relay(dev, host, port, peer, image):
     base = '/peers/' + peer
-    ws = WebSocket(host)
+    try:
+        ws = WebSocket(host, port)
+    except OSError as e:
+        # A dead or non-websocket endpoint: fail the check and stop here, the
+        # relay's checks all need this connection.
+        check('relay: websocket', False, e2e.describe(e))
+        return
     file_round_trip(ws.envelope, base, 'relay')
     if not image:
         return
@@ -328,7 +334,9 @@ def main():
     ap.add_argument('--no-serial-firmware', action='store_true')
     args = ap.parse_args()
     dev = Http(args.http)
-    host = args.http.split('//', 1)[-1].split('/')[0]
+    # The device's WebSocket listens on the same address and port as its HTTP.
+    url = e2e.Device(args.http)
+    host, port = url.host, url.port
 
     if args.serial:
         line = Serial(args.serial)
@@ -342,7 +350,7 @@ def main():
         if not check('peer online', dev.wait(lambda: dev.get(f'/peers/{args.peer}/sys/status/state') is not None, 90,
                                              'the peer under /peers')):
             return 1
-        test_relay(dev, host, args.peer, args.peer_image or args.image)
+        test_relay(dev, host, port, args.peer, args.peer_image or args.image)
     print(f'E2E pass={e2e.PASS} fail={e2e.FAIL}')
     return 1 if e2e.FAIL else 0
 

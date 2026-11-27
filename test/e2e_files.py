@@ -135,7 +135,8 @@ def test_files(dev):
     check('no folder', put(dev, '/nowhere/a.txt', b'x')[0] == 404)
     check('no such folder', dev.call('/sys/files/list', '/nowhere')[0] == 404)
     schema = dev.request('GET', FILE + '?view=schema')[1]
-    check('max size', schema.get('maxSize') == total, schema)
+    # Guarded: when both reads failed, maxSize == total would be None == None.
+    check('max size', isinstance(schema, dict) and schema.get('maxSize') == total and total is not None, schema)
     # Refused on the announced size. A refused body is drained up to 256 KB
     # (then the connection is closed before the client reads the reply): a
     # filler file first, so what is refused is below that.
@@ -144,9 +145,11 @@ def test_files(dev):
     filler = b'f' * 64 * 1024
     got = put(dev, base + '/filler.bin', filler)
     check('filler', got[0] == 200, got)
-    free = total - dev.value('/sys/files/used')
-    check('too large', put(dev, base + '/huge.bin', b'x' * (free + 1))[0] == 413, free)
-    check('nothing left behind', 'huge.bin' not in names(ls(dev, base)))
+    used = dev.value('/sys/files/used')
+    free = total - used if total is not None and used is not None else None
+    check('too large', free is not None and put(dev, base + '/huge.bin', b'x' * (free + 1))[0] == 413, free)
+    listing = ls(dev, base)
+    check('nothing left behind', listing is not None and 'huge.bin' not in names(listing), listing)
     dev.call('/sys/files/delete', base + '/filler.bin')
     check('missing', get(dev, base + '/nope.txt')[0] == 404)
 
@@ -159,7 +162,8 @@ def test_files(dev):
     check('moved', 'moved.bin' in names(ls(dev, '/')) and get(dev, '/moved.bin')[1] == b'small')
     dev.call('/sys/files/delete', '/moved.bin')
     check('delete folder', dev.call('/sys/files/delete', base)[0] == 200)
-    check('deleted', base[1:] not in names(ls(dev, '/')), ls(dev, '/'))
+    listing = ls(dev, '/')
+    check('deleted', listing is not None and base[1:] not in names(listing), listing)
 
 
 def test_backups(dev):
@@ -167,20 +171,25 @@ def test_backups(dev):
     restart = dev.value('/sys/backup/restartAfter')
     dev.call('/sys/backup/restartAfter', False)
     status, name = dev.call('/sys/backup/save', '')
-    check('save, named after the date', status == 200 and name[:2] == '20', (status, name))
-    if status != 200:  # refused (busy on a short heap): nothing to go on with
+    check('save, named after the date', status == 200 and isinstance(name, str) and name[:2] == '20', (status, name))
+    if status != 200 or not isinstance(name, str):  # refused (busy on a short heap): nothing to go on with
         dev.call('/sys/backup/restartAfter', restart)
         return
     stored = dev.value('/sys/backup/stored')
     check('stored', name in names(stored), stored)
     status, data, headers = dev.download('/sys/backup/stored/' + name + '/content')
-    check('download stored', status == 200 and json.loads(data).get('sys') is not None, status)
+    try:
+        stored = json.loads(data) if data else None  # an empty or non-JSON body fails the check below
+    except ValueError:
+        stored = None
+    check('download stored', status == 200 and isinstance(stored, dict) and stored.get('sys') is not None, status)
     check('stored name', name + '.json"' in headers.get('Content-Disposition', ''), headers)
     status, body = dev.call('/sys/backup/stored/' + name + '/restore')
     check('restore stored', status == 200 and body == {'skipped': [], 'restart': False}, (status, body))
     check('before-restore kept', 'before-restore' in names(dev.value('/sys/backup/stored')))
     check('delete stored', dev.call('/sys/backup/stored/' + name + '/delete')[0] == 200)
-    check('gone', name not in names(dev.value('/sys/backup/stored')))
+    stored = dev.value('/sys/backup/stored')
+    check('gone', stored is not None and name not in names(stored), stored)
     dev.call('/sys/backup/restartAfter', restart)
     # The device is still up: nothing restarted.
     check('still up', dev.value('/sys/status/uptime') is not None)
