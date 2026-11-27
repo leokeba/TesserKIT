@@ -286,6 +286,7 @@ GARBAGE = (200, 'application/json', b'<html>Internal error</html>')
 EMPTY_ERROR = (500, '', b'')
 JSON = (200, 'application/json', b'{"state": "online"}')
 ONLINE = (200, 'application/json', b'"online"')
+HTML_PAGE = (200, 'text/html', b'<html>Internal error</html>')
 
 
 class Helpers(unittest.TestCase):
@@ -415,6 +416,14 @@ class Scripts(unittest.TestCase):
             self.skipTest('port 6454 is in use')
         finally:
             probe.close()
+    def assert_survives(self, rc, out, done=False):
+        """Against a broken device the script ends without a traceback, with
+        FAIL lines naming what broke; `done` when it must run to its summary."""
+        self.assertNotIn('Traceback', out)
+        self.assertTrue(any(line.startswith('FAIL ') for line in out.splitlines()), out)
+        if done:
+            self.assertIn('DONE pass=', out)  # it went on to the end
+        self.assertNotEqual(rc, 0, out)
 
     def test_udp_gateway_restarting(self):
         # The first device answers its status reads, then stops answering
@@ -434,6 +443,93 @@ class Scripts(unittest.TestCase):
             b.stop()
         self.assert_failed_cleanly(rc, out, '/sys/udp/send')
         self.assertIn('DONE pass=', out)  # it went on to the end
+
+    # e2e_udp needs two devices: the same broken one twice.
+
+    def test_udp_dead_address(self):
+        d = dead_url()
+        rc, out = self.run_script('e2e_udp.py', d, d, timeout=300)
+        self.assert_survives(rc, out, done=True)
+
+    def test_udp_html_replies(self):
+        # A device whose HTTP server answers HTML on every route: the script
+        # crashed indexing the HTML string as a dict (st['running']).
+        s = Server({}, HTML_PAGE)
+        try:
+            rc, out = self.run_script('e2e_udp.py', s.url, s.url, timeout=300)
+        finally:
+            s.stop()
+        self.assert_survives(rc, out, done=True)
+
+    def test_udp_closed_connections(self):
+        s = Server({}, 'close')
+        try:
+            rc, out = self.run_script('e2e_udp.py', s.url, s.url, timeout=300)
+        finally:
+            s.stop()
+        self.assert_survives(rc, out, done=True)
+
+    def test_secure_dead_address(self):
+        rc, out = self.run_script('e2e_secure.py', dead_url())
+        self.assert_survives(rc, out)
+
+    def test_secure_html_replies(self):
+        s = Server({}, HTML_PAGE)
+        try:
+            rc, out = self.run_script('e2e_secure.py', s.url)
+        finally:
+            s.stop()
+        self.assert_survives(rc, out)
+
+    def test_secure_closed_connections(self):
+        s = Server({}, 'close')
+        try:
+            rc, out = self.run_script('e2e_secure.py', s.url)
+        finally:
+            s.stop()
+        self.assert_survives(rc, out)
+
+    def test_ethernet_dead_address(self):
+        rc, out = self.run_script('e2e_ethernet.py', dead_url())
+        self.assert_survives(rc, out)
+
+    def test_ethernet_html_replies(self):
+        s = Server({}, HTML_PAGE)
+        try:
+            rc, out = self.run_script('e2e_ethernet.py', s.url)
+        finally:
+            s.stop()
+        self.assert_survives(rc, out)
+
+    def test_ethernet_closed_connections(self):
+        s = Server({}, 'close')
+        try:
+            rc, out = self.run_script('e2e_ethernet.py', s.url)
+        finally:
+            s.stop()
+        self.assert_survives(rc, out)
+
+    def test_dmx_dead_address(self):
+        rc, out = self.run_script('e2e_dmx.py', dead_url())
+        self.assert_survives(rc, out)
+
+    def test_dmx_html_replies(self):
+        # A device whose HTTP server answers HTML on every route: the script
+        # took the HTML strings for the counters and crashed indexing them.
+        s = Server({}, HTML_PAGE)
+        try:
+            rc, out = self.run_script('e2e_dmx.py', s.url)
+        finally:
+            s.stop()
+        self.assert_survives(rc, out)
+
+    def test_dmx_closed_connections(self):
+        s = Server({}, 'close')
+        try:
+            rc, out = self.run_script('e2e_dmx.py', s.url)
+        finally:
+            s.stop()
+        self.assert_survives(rc, out)
 
     def test_services_artnet_url_with_port(self):
         # A URL with an explicit port: Device.host kept it, and the Art-Net

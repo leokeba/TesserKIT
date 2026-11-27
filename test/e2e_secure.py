@@ -135,7 +135,10 @@ def main():
         check('access point: securePassword readable by the admin', isinstance(secret, str), secret)
         status, _ = d.request('GET', '/sys/network/ap/securePassword')
         check('access point: securePassword hidden from Public', status in (401, 403), status)
-        check('UDP: peerAccess auto', d.value('/sys/udp/peerAccess') in ('auto', None))
+        # A build without UDP has no /sys/udp (404); a failed read must fail.
+        status, text = d.request('GET', '/sys/udp/peerAccess', headers=d.json(), quiet=True)
+        check('UDP: peerAccess auto', status == 404 or (status == 200 and text.strip() == '"auto"'),
+              (status, text[:80]))
 
         old = d.token
         check('logoutAll', d.set('/sys/auth/logoutAll', None) == 200)

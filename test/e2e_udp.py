@@ -37,6 +37,13 @@ def wait_for(fn, timeout=5.0, step=0.05):
     return fn()
 
 
+def _dict(v):
+    """v when it is a dict from the device, else {}: a failed read (None) or
+    a garbled one (an HTML page comes back as a string) fails the check that
+    used it, instead of raising."""
+    return v if isinstance(v, dict) else {}
+
+
 def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)
@@ -44,9 +51,15 @@ def main():
     for d in devs:
         d.name = d.value('/sys/network/host') or d.value('/sys/network/hostname')
         st = d.value('/sys/udp/status')
-        check(f'running_{d.name}', st and st['running'], st)
+        check(f'running_{d.name}', _dict(st).get('running'), st)
         # Failures before this run (a peer restarted by another test) don't count.
-        d.failed_before = st['failed'] if st else 0
+        d.failed_before = _dict(st).get('failed', 0)
+        d.answered = isinstance(st, dict)
+    # A device that doesn't answer (or has no UDP) can't take part: every
+    # check below would only wait out its timeouts.
+    if not all(d.answered for d in devs):
+        print(f'DONE pass={e2e.PASS} fail={e2e.FAIL}')
+        sys.exit(1)
 
     # Every device shows the others under /peers (by UDP, or NowTP first).
     for d in devs:
@@ -73,10 +86,10 @@ def main():
             t = time.time()
             status, body = d.send('/led/on', lit)
             check(f'broadcast_sent_{d.name}_{lit}', status == 200, (status, body))
-            got = wait_for(lambda: all((o.value('/led') or {}).get('on') is lit for o in others), 5)
+            got = wait_for(lambda: all(_dict(o.value('/led')).get('on') is lit for o in others), 5)
             took = time.time() - t
             check(f'broadcast_applied_{d.name}_{lit}', got, [(o.name, o.value('/led')) for o in others])
-            check(f'broadcast_not_self_{d.name}_{lit}', (d.value('/led') or {}).get('on') is (not lit),
+            check(f'broadcast_not_self_{d.name}_{lit}', _dict(d.value('/led')).get('on') is (not lit),
                   d.value('/led'))
             print(f'      every other LED {"on" if lit else "off"} within {took * 1000:.0f} ms (HTTP polling)')
 
@@ -84,7 +97,7 @@ def main():
     b = devs[1]
     status, body = a.send('/led/brightness', 77, to=b.host)
     check('unicast_reply', status == 200 and body == 77, (status, body))
-    check('unicast_applied', (b.value('/led') or {}).get('brightness') == 77, b.value('/led'))
+    check('unicast_applied', _dict(b.value('/led')).get('brightness') == 77, b.value('/led'))
     status, body = a.send('/nope', 1, to=b.host)
     check('unicast_error', status == 404 and body and body.get('error') == 'not_found', (status, body))
     status, body = a.send('/led/on', True, to='not-an-address')
@@ -92,17 +105,17 @@ def main():
 
     # A sequence started on every other node at once, then stopped.
     status, _ = a.send('/sequencer/play', 'on')
-    running = wait_for(lambda: all((o.value('/sequencer/status') or {}).get('running') for o in devs[1:]), 5)
+    running = wait_for(lambda: all(_dict(o.value('/sequencer/status')).get('running') for o in devs[1:]), 5)
     check('sequence_started_everywhere', running,
-          [(o.name, (o.value('/sequencer/status') or {}).get('running')) for o in devs[1:]])
+          [(o.name, _dict(o.value('/sequencer/status')).get('running')) for o in devs[1:]])
     a.send('/sequencer/stop', None)
-    stopped = wait_for(lambda: all(not (o.value('/sequencer/status') or {}).get('running') for o in devs[1:]), 5)
+    stopped = wait_for(lambda: all(not _dict(o.value('/sequencer/status')).get('running') for o in devs[1:]), 5)
     check('sequence_stopped_everywhere', stopped)
 
     for d in devs:
         d.set('/led/on', False)
         st = d.value('/sys/udp/status')
-        check(f'nothing_failed_{d.name}', st and st['failed'] == d.failed_before, st)
+        check(f'nothing_failed_{d.name}', _dict(st).get('failed') == d.failed_before, st)
     print(f'DONE pass={e2e.PASS} fail={e2e.FAIL}')
     sys.exit(1 if e2e.FAIL else 0)
 

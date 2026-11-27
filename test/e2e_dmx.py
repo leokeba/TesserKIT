@@ -118,13 +118,22 @@ class Ui(threading.Thread):
 
 
 def counters(dev):
+    """The four counters the checks below read, or None when any is missing
+    or not an object (a failed or garbled read, an HTML page among them):
+    the check that waited for it fails and the protocol is skipped."""
     d = dev.value('/dmx')
     a = dev.value('/sys/artnet/status')
     s = dev.value('/sys/sacn/status')
     st = dev.value('/sys/status')
-    if not (d and a and s and st):
+    need = {'dmx': ('artnet', 'sacn', 'syncs', 'least', 'most', 'longestUs'),
+            'artnet': ('packets', 'sequenceErrors'),
+            'sacn': ('packets', 'sequenceErrors'),
+            'status': ('uptime', 'heap', 'minHeap', 'resetReason')}
+    vals = {'dmx': d, 'artnet': a, 'sacn': s, 'status': st}
+    if not all(isinstance(vals[k], dict) and all(f in vals[k] for f in fs)
+               for k, fs in need.items()):
         return None
-    return {'dmx': d, 'artnet': a, 'sacn': s, 'status': st}
+    return vals
 
 
 SEQUENCES = {}
@@ -183,9 +192,10 @@ def main():
     ap.add_argument('--spread', action='store_true', help="each frame's universes evenly through the period")
     args = ap.parse_args()
     dev = e2e.Device(args.device)
-    if not check('device answers', dev.value('/sys/status') is not None, 'no /sys/status'):
+    # A dict: an HTML page or other non-JSON answer is no answer at all.
+    if not check('device answers', isinstance(dev.value('/sys/status'), dict), 'no /sys/status'):
         sys.exit(1)
-    if not check('device has the DMX probe', dev.value('/dmx') is not None,
+    if not check('device has the DMX probe', isinstance(dev.value('/dmx'), dict),
                  'build examples/idf/full with -DDMX_PROBE=<n>'):
         sys.exit(1)
 
